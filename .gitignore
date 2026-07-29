@@ -220,4 +220,7 @@ __marimo__/
 data/csv_to_parquet.py
 data/verify_integrity.py
 data/verify_integrity_fast.py
-.
+database/*.duckdb
+database/*.parquet
+
+.venv/
