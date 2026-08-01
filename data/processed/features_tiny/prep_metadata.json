@@ -1,0 +1,66 @@
+{
+  "created_utc": "2026-07-30T02:41:14.481155+00:00",
+  "profile": "tiny",
+  "frozen": {
+    "profile": "tiny",
+    "grid_start": "2021-01-02 00:00",
+    "grid_end": "2021-03-31 23:59",
+    "train_end": "2021-02-15 23:59",
+    "val_end": "2021-03-07 23:59",
+    "test_end": "2021-03-31 23:59",
+    "seq_len": 120,
+    "pred_len": 15,
+    "blocks": [
+      "btc_price",
+      "btc_volume",
+      "btc_momentum",
+      "gold",
+      "cross_asset",
+      "dxy",
+      "macro",
+      "temporal"
+    ],
+    "macro_n_pca": 4,
+    "fracdiff_grid": [
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6
+    ],
+    "fracdiff_width": 128,
+    "winsor_q": 0.001,
+    "collinear_thresh": 0.98,
+    "gold_utc_offset_h": 0
+  },
+  "raw_sha256": {
+    "btc_usdt_binance_2018.parquet": "55411fefb39689cc21010e3be508a94e68590e0b7a24f275dca357d3b528e94b",
+    "btc_usdt_binance_2019.parquet": "b804a5f4625a029f4fb16d72436d88bcc5818865daf7153b20ebc6354b7ed023",
+    "btc_usdt_binance_2020.parquet": "7c7330d6ad1b409c9a27802cd8c396c326709ac0b8501198d737e855158a8757",
+    "btc_usdt_binance_2021.parquet": "2b1603a3fcf60a505f708453969f3b030ed2c1d68622ed37c6fa472535b0d1ec",
+    "btc_usdt_binance_2022.parquet": "da65cc93aa5f8aacb0511530873db7617a7ec4579889fccc8415de0321c28c1c",
+    "btc_usdt_binance_2023.parquet": "310a53977ab48b6071904abb074106c05649777e4f847d84593be7cdfc7bbe99",
+    "btc_usdt_binance_2024.parquet": "07db5e7ccf93833dcbac38492d7f6e27a2e3b54b3f0855186910fbf017c5b3b9",
+    "btc_usdt_binance_2025.parquet": "238aedef066081e30fcb75df70c266b2bada64de018ce226a141deb85a116121",
+    "btc_usdt_binance_2026.parquet": "2b5266dd08022b257ceca3d1e0cdb7f916e1303bfd08573c58971cc9c9184336",
+    "xauusd_2018_2026.parquet": "f629adfc49f96865aaa8088ae4f8b416b29700f127df6fa2558e67c19dd9a53a",
+    "US_Dollar_Index_2018_2026.parquet": "40437c2f23fe7b8f8ae021942f52396409f20ccc96c9d552d9c32bd62cbe5f72",
+    "fed_economic_data_2018_2026.parquet": "65cf451dcbbfc7dd80a448292e9a051246d74b83e521877730a285b7e965cb60"
+  },
+  "features_sha256": "6e305569d88e7854f6f5edd4998c7cb3921a184bed1528fd55ccb13887ee9753",
+  "manifest_sha256": "1208776846b333654b3dae5bde99f80768f15b9e6935fabefa0e1f0645a7a589",
+  "scaler_sha256": "ab7836e7b627260f39ae8614d7f7fe899ff3b3ee869fce735a93284397467163",
+  "shape": [
+    128160,
+    62
+  ],
+  "dtype": "float32",
+  "t_first_us": 1609545600000000,
+  "t_last_us": 1617235140000000,
+  "versions": {
+    "python": "3.14.5",
+    "numpy": "2.5.1",
+    "polars": "1.43.1"
+  },
+  "peak_rss_gb": 1.63
+}
