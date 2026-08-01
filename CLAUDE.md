@@ -83,8 +83,11 @@ architecture of the run. Full operating manual: **`docs/KAGGLE_GUIDE.md`**.
 | RAM / CPU | **~29 GB**, 4 cores | Feature hygiene peaks at 8–12 GB; DataLoader is CPU-bound at 4 cores |
 | `/kaggle/input` | read-only | Resume reads from here; checkpoints are always *written* to `/kaggle/working` |
 
-**Design consequences already implemented in the notebook:**
+**Design consequences already implemented in the notebooks:**
 
+- **Preprocessing left Kaggle entirely.** It needs no GPU but used to run in every GPU session,
+  and it was the session's RAM ceiling. It now runs locally in `01_preprocess.ipynb`, so the
+  30 h/week quota buys only training. See §3.2.
 - **Staged execution.** `run_baselines`, `run_ablation`, `run_walkforward` are stage switches.
   Run one stage per session; per-tag checkpoints carry over.
 - **Self-imposed budget.** `session_budget_hours` (default 11) + `reserve_hours` (0.5) stop
@@ -94,8 +97,12 @@ architecture of the run. Full operating manual: **`docs/KAGGLE_GUIDE.md`**.
   dataset. Checkpoints are read from `RESUME_DIR`, written to `CKPT_DIR`. `run_id` is
   `{profile}_L{seq_len}_H{pred_len}_d{d_model}_s{seed}` — changing any of those five values
   deliberately orphans the old checkpoints rather than silently loading a mismatched model.
-- **Dataset auto-discovery.** `/kaggle/input` is searched for the folder holding all 12 raw
-  files, so the Kaggle Dataset slug does not have to match a hard-coded path.
+- **Dataset auto-discovery.** `/kaggle/input` is searched for the folder holding the frozen
+  artifact (`02_train`) or the 12 raw files (`01_preprocess`, only in the CPU-session fallback),
+  so the Kaggle Dataset slug does not have to match a hard-coded path.
+- **Session RAM is no longer the constraint.** A training session holds ~1 GB of `float32`
+  features instead of 8–12 GB of polars frames, so the ~29 GB host RAM is now slack rather than
+  a limit.
 
 **Hardware traps confirmed on this platform:**
 
@@ -129,7 +136,9 @@ invertedTransformer/
 ├── data/
 │   ├── raw/                       # IMMUTABLE. never write here.
 │   ├── interim/                   # aligned master minute grid (parquet)
-│   └── processed/                 # windowed tensors / memmapped .npy + scalers
+│   └── processed/                 # FROZEN FEATURE ARTIFACTS — see §3.2
+│       └── features_{profile}/    # features.npy, close.npy, timestamps.npy,
+│                                  # scaler.json, feature_manifest.json, prep_metadata.json
 ├── src/
 │   ├── data/
 │   │   ├── loaders.py             # per-source typed loaders + schema validation
@@ -168,30 +177,105 @@ invertedTransformer/
 │   ├── 05_evaluate.py
 │   └── 06_export.py
 ├── docs/
-│   └── KAGGLE_GUIDE.md            # how to run the notebook inside Kaggle's limits
+│   └── KAGGLE_GUIDE.md            # how to run the two-notebook flow inside Kaggle's limits
+├── tools/
+│   ├── build_split_notebooks.py   # partitions iTransformer.ipynb into 01 + 02, byte-identically
+│   └── split_cells/               # the injected cells: artifact contract, freeze, discover, load
 ├── notebooks/
-│   └── iTransformer.ipynb         # SHIPPED ARTIFACT today — see §3.1
+│   ├── iTransformer.ipynb         # REFERENCE + equivalence yardstick — see §3.1
+│   ├── 01_preprocess.ipynb        # SHIPPED, runs LOCALLY — raw → frozen artifact
+│   └── 02_train.ipynb             # SHIPPED, runs on KAGGLE GPU — artifact → model
 └── artifacts/
     ├── checkpoints/  runs/  reports/  models/
 ```
 
 ### 3.1 Where the pipeline actually lives right now
 
-`src/` and `scripts/` do not exist yet. The whole pipeline — load, validate, resolve the gold
-timezone, align, engineer features, window, split, train, gate, evaluate, backtest, ablate,
-export — is implemented end-to-end in **`notebooks/iTransformer.ipynb`** (70 cells), because
-training runs on Kaggle's free T4 ×2 and a notebook is what Kaggle executes.
+`src/` and `scripts/` do not exist yet. The whole pipeline is implemented in notebooks, because
+training runs on Kaggle's free T4 ×2 and a notebook is what Kaggle executes. Since 2026-07-30 it
+lives in **two** notebooks, split on the line between what needs a GPU and what does not:
+
+| Notebook | Runs on | Does |
+| --- | --- | --- |
+| `01_preprocess.ipynb` (42 cells) | **local machine** | load → validate → gold tz → align → features → hygiene → **freeze + verify artifact** |
+| `02_train.ipynb` (53 cells) | **Kaggle GPU** | load + verify artifact → split → window → train → gate → evaluate → backtest → ablate → export |
+| `iTransformer.ipynb` (70 cells) | either | **reference implementation and equivalence yardstick.** Not the shipped path. |
+
+**Neither notebook is edited by hand.** Both are generated:
+
+```powershell
+& $PY tools/build_split_notebooks.py
+```
+
+The script copies source cells **byte-identically**, splits exactly two of them at text anchors,
+and injects the new cells from `tools/split_cells/`. It asserts that every one of the 70 source
+cells is routed to a notebook, split, or explicitly replaced — so a source cell cannot go
+missing silently. Cells 3–8 (imports/device/theme), cell 11 (`Config`), the `UTC`/`ts` fragment,
+and the artifact-contract cell are duplicated **on purpose**; see §3.2.
 
 Consequences for anyone working here:
 
-- **The notebook is production code, not exploration.** The "notebooks are exploration only"
-  convention applies to *other* notebooks. Changes to `iTransformer.ipynb` get the same
-  scrutiny `src/` would: causal features, train-only statistics, gates before results.
-- **Verify by executing, not by reading.** `PROFILE = "tiny"` runs the entire notebook on CPU
-  in ~3–5 minutes over three months of data. Any edit should be followed by a `tiny` run that
-  ends with `ALL CELLS OK` and `ALL GATES PASS`.
-- When `src/` is eventually extracted, the notebook is the reference implementation to port
-  *from*, and the port must reproduce its `tiny`-profile numbers exactly.
+- **Edit `iTransformer.ipynb`, then rebuild.** Editing `01_preprocess.ipynb` or
+  `02_train.ipynb` directly puts them out of sync with their source and the next rebuild
+  silently discards the change.
+- **The notebooks are production code, not exploration.** The "notebooks are exploration only"
+  convention applies to *other* notebooks. Changes get the same scrutiny `src/` would: causal
+  features, train-only statistics, gates before results.
+- **Verify by executing, not by reading.** `PROFILE = "tiny"` runs `01` then `02` on CPU in a
+  few minutes over three months of data. Any edit should be followed by both runs ending with
+  `ALL CELLS OK` and `ALL GATES PASS`. An AST parse is not verification: most defects here are
+  shape, unit, or ordering errors that only appear at runtime.
+- **Equivalence is measured, not assumed.** `features.npy` from `01` is **bit-identical** to
+  the single notebook's `X` at the `tiny` profile (`sha256 c3ad8cd3…`), with timestamps and
+  scaler equal. Re-check this after changing anything in `01`.
+- When `src/` is eventually extracted, `iTransformer.ipynb` is the reference to port *from*,
+  and the port must reproduce its `tiny`-profile numbers exactly.
+
+### 3.2 The frozen-artifact contract
+
+`01` and `02` communicate through one directory and nothing else. `02` **never opens
+`data/raw/`**.
+
+| File | Content | Why this form |
+| --- | --- | --- |
+| `features.npy` | `float32 (T, N)` | what the model consumes; standardised, variate order fixed |
+| `close.npy` | `float64 (T,)` | raw close for price reconstruction — must never be derived from a standardised column |
+| `timestamps.npy` | `int64` epoch-µs UTC | every split boundary is an integer comparison; an integer cannot carry a timezone it forgot to declare |
+| `scaler.json` | mean/std/winsor bounds + `fitted_on` | records *which split* the statistics came from, alongside the statistics |
+| `feature_manifest.json` | variate order, groups, `target_index`, `fracdiff_d`, gold offset, release-lag table, dropped columns, PCA rank | the data-dependent choices `02` cannot recompute without the raw data |
+| `prep_metadata.json` | raw-file hashes, `features_sha256`, `manifest_sha256`, `scaler_sha256`, **frozen fields**, library versions | the chain of evidence `02` verifies |
+
+**Frozen fields** — `CFG` fields that shape the matrix. A training session that disagrees on any
+of them is stopped:
+
+```
+profile, grid_start, grid_end, train_end, val_end, test_end,
+seq_len, pred_len, blocks, macro_n_pca, fracdiff_grid, fracdiff_width,
+winsor_q, collinear_thresh, gold_utc_offset_h
+```
+
+`train_end` is frozen because **the scaler is fitted on rows `t <= train_end`** — moving it on
+the training side is a leak, not a mismatch. `seq_len` is frozen because warm-up truncation is
+`1440 + seq_len + 60`, so it decides which rows exist at all.
+
+**Free fields** — anything a session may vary without rebuilding: `d_model`, `n_heads`,
+`e_layers`, `d_ff`, `dropout`, `lr`, `weight_decay`, `batch_size`, `epochs`, `loss`, `seed`,
+and every stage/budget switch.
+
+**Six rejection rules**, all hard `assert`, printed as a PASS/FAIL table before anything else
+runs: (1) `features.npy` hash, (2) manifest hash, (3) frozen fields, (4) shape agreement,
+(5) `feature_order[target_index] == "btc_logret_1"`, (6) `scaler.json` hash. Rule 5 matters most
+— a reordered matrix does not error, it produces plausible-looking garbage.
+
+Two implementation details that are easy to get wrong:
+
+- **`02` loads the matrix fully, not with `mmap_mode='r'`.** The leakage gate overwrites
+  `X[:, TARGET_IDX]` in place and restores it in a `finally`; a read-only mapping raises. The
+  full read is ~1 GB at the `full` profile, well inside budget. `mmap=True` is used only for
+  `01`'s round-trip verification, where streaming is what is wanted.
+- **`train_row` and `n_tr` are recomputed from `CFG` in `02`, never read from the artifact.**
+  A scaler gate that compared the artifact's own row count against the artifact's own claim
+  would pass unconditionally.
 
 ---
 
@@ -1183,9 +1267,17 @@ cell and in `feature_manifest.json`; move them to `configs/data.yaml` when `src/
   the cost assumptions. A bare number is not a result.
 - Long-running training belongs in a background process, with checkpoints written every epoch so a
   crash does not lose the run.
-- **After editing `notebooks/iTransformer.ipynb`, execute it** at `PROFILE = "tiny"` and confirm
-  it ends with `ALL CELLS OK` and `ALL GATES PASS`. An AST parse is not verification: most
-  defects in this notebook are shape, unit, or ordering errors that only appear at runtime.
+- **Edit `notebooks/iTransformer.ipynb`, never the two generated notebooks.** Then run
+  `python tools/build_split_notebooks.py` and execute **both** `01_preprocess.ipynb` and
+  `02_train.ipynb` at `PROFILE = "tiny"`, confirming each ends with `ALL CELLS OK` and
+  `ALL GATES PASS`. An AST parse is not verification: most defects here are shape, unit, or
+  ordering errors that only appear at runtime.
+- **After any change to `01`, re-check equivalence.** `features.npy` must stay bit-identical to
+  the single notebook's `X` at `tiny`. If it changes, either the change was intended (say so
+  explicitly, and note that published artifacts are now stale) or it is a bug.
+- **A frozen field never changes on the training side.** If §3.2's frozen list needs a new
+  value, rebuild the artifact in `01`. Forcing it in `02` defeats the only mechanism proving
+  that multi-session results share an input.
 
 **Units and spacing — the two ways evaluation code lies quietly**
 
@@ -1211,9 +1303,16 @@ which is exactly what makes them dangerous.
 ```powershell
 $PY = "D:\pythonProject\invertedTransformer\.venv\Scripts\python.exe"
 
-# Today: the notebook is the pipeline. Smoke-test it on CPU before pushing to Kaggle.
-& $PY -c "import json,sys; nb=json.load(open('notebooks/iTransformer.ipynb',encoding='utf-8'))" # parse check
-# Full CPU execution at PROFILE='tiny' (~3-5 min) — the real verification.
+# Today: two notebooks are the pipeline, both generated from iTransformer.ipynb.
+& $PY tools/build_split_notebooks.py        # rebuild after ANY edit to the source notebook
+
+# The real verification: full CPU execution of both, at PROFILE='tiny' (~5 min total).
+# 01 must end with ALL GATES PASS; 02 must end with ALL CELLS OK and parity torchscript OK.
+#   01_preprocess.ipynb  ->  data/processed/features_tiny/   (6 files, ~32 MB)
+#   02_train.ipynb       ->  artifacts/{checkpoints,runs,models}/tiny_L120_H15_d64_s42/
+
+# Equivalence check against the single notebook (must be bit-identical):
+#   np.array_equal(X_from_iTransformer_ipynb, np.load('data/processed/features_tiny/features.npy'))
 
 # Once src/ is extracted, these become the entry points:
 & $PY scripts/01_build_master.py   --config configs/data.yaml
@@ -1228,6 +1327,10 @@ $PY = "D:\pythonProject\invertedTransformer\.venv\Scripts\python.exe"
 
 - [ ] All §17 verification tasks resolved and documented.
 - [ ] All §12.2 sanity gates passing.
+- [ ] **Every reported result traced to one artifact hash.** The `features_full` artifact's
+      `features_sha256` is recorded in the report, and every session that contributed a number
+      logged the same hash. Numbers from different hashes are not comparable and must not share
+      a table.
 - [ ] Walk-forward evaluation (§9.3) complete, mean ± std reported per fold.
 - [ ] Ablation table (§13.3) complete.
 - [ ] Beats naive, DLinear, and BTC-only baselines with a Diebold–Mariano p-value < 0.05.
