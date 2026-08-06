@@ -40,4 +40,20 @@ notebook-as-source-of-truth is precisely what made the superseded pipeline unver
 - Leave a notebook whose outputs are stale relative to `src/`. Outputs are evidence; stale evidence
   is worse than none.
 
+## What exists here now
+
+`itransformer_kaggle.ipynb` — the launcher, 21 cells, load through evaluation. Nine stages: setup ·
+data and integrity (Stage 2) · the twelve variates · K_eff (Stage 3b) · pre-flight invariants
+(Stage 4) · the Stage 5 gate on **validation** · the 534-run grid across both T4s · RQ1/RQ2/RQ3 ·
+save. Every cell calls into `src/`; the only things it defines itself are the glob helpers that
+locate the package and the parquet, and those exist precisely so no dataset slug is hard-coded.
+
+**Its markdown carries the *why*, not just the what.** Each banner names the divergence-register
+entry the cell enforces, because a reader who does not know why the Stage 5 gate runs on validation
+will eventually move it to test, and the notebook is where that decision is visible.
+
+Cells 0–4 (setup through pre-flight) run on CPU in about a minute and were executed locally against
+the real artifact before commit. The grid and evaluation cells are compile-checked only — they need
+a GPU and a completed grid.
+
 `markdown-example.ipynb` is unrelated scratch and is exempt.

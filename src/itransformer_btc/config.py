@@ -60,6 +60,19 @@ FIRST_ORIGIN: Final = datetime(2020, 1, 1, tzinfo=timezone.utc)
 K_LADDER: Final = (1, 4, 8, 12)
 SEEDS: Final = (42, 43, 44, 45, 46)
 
+#: Horizons swept in root §10.2's 192-run arm. H=24 is the headline.
+HORIZONS: Final = (1, 3, 24, 168)
+
+#: Origins the horizon sweep runs at, **named in advance** (`D48`). Choosing
+#: them after the main grid would be origin selection.
+SWEEP_ORIGIN_INDICES: Final = (1, 5, 10, 15)
+
+#: Offset of the falsification arm's fresh model (root §8.1). Exactly 90 days,
+#: not 3 calendar months: test blocks are 30 **days**, so only 90 days lands the
+#: fresh origin precisely on the aged model's block-4 boundary, which is what
+#: makes "the *same* calendar blocks 4-6" true rather than approximately true.
+FRESH_OFFSET_DAYS: Final = 90
+
 
 def add_months(when: datetime, months: int) -> datetime:
     """Shift ``when`` by whole calendar months, keeping the day of month.
@@ -140,10 +153,103 @@ class Origin:
         start = self.origin + timedelta(days=BLOCK_DAYS * (b - 1))
         return start, start + timedelta(days=BLOCK_DAYS)
 
+    def blocks(self) -> list[tuple[int, datetime, datetime]]:
+        """Every test block as ``(label, start, end)``, label one-indexed.
+
+        The label is carried rather than inferred from position because the
+        falsification arm evaluates blocks 4-6 and nothing else: there, the
+        first tensor in the tuple is block **4**, and writing it out as block 1
+        would silently re-index the arm the comparison depends on.
+        """
+        return [(b, *self.block(b)) for b in range(1, TEST_BLOCKS + 1)]
+
     @property
     def label(self) -> str:
         """``YYYY-MM`` — the form used in every table and figure."""
         return self.origin.strftime("%Y-%m")
+
+
+@dataclass(frozen=True, slots=True)
+class FalsificationOrigin:
+    """A model trained fresh at ``o_i + 90 days``, scored on blocks 4-6.
+
+    Root §8.1's pre-registered falsification arm, and **the only design in the
+    study that identifies decay directly**. If the aged-minus-fresh gap is zero
+    while beta1 < 0, then beta1 is calendar, not age — the aged model is not
+    decaying, the market simply got harder in months 4-6, and RQ2's headline
+    would be an artefact.
+
+    Every training boundary is the base origin's, shifted by the same 90 days,
+    so the fresh model trains on a window of **identical duration** to the aged
+    one. Re-deriving the window from a 24-month subtraction instead would land
+    on 2020-03-31-style dates, where the day-of-month clamping question
+    :func:`add_months` refuses to answer silently would arise for the first time
+    in this study — and a clamped boundary moves a split by a day with no
+    assertion downstream to notice.
+
+    Its validation sub-block overlaps the aged model's test blocks 1-3. That is
+    not a leak: this is a *different* model, standing at a later origin, and a
+    forecaster there has legitimately seen everything before ``o_i + 90 days``.
+    """
+
+    base: Origin
+    offset_days: int = FRESH_OFFSET_DAYS
+
+    @property
+    def index(self) -> int:
+        return self.base.index
+
+    @property
+    def _shift(self) -> timedelta:
+        return timedelta(days=self.offset_days)
+
+    @property
+    def origin(self) -> datetime:
+        return self.base.origin + self._shift
+
+    @property
+    def train_start(self) -> datetime:
+        return self.base.train_start + self._shift
+
+    @property
+    def train_sub_end(self) -> datetime:
+        return self.base.train_sub_end + self._shift
+
+    @property
+    def val_start(self) -> datetime:
+        return self.train_sub_end
+
+    @property
+    def val_end(self) -> datetime:
+        return self.origin
+
+    @property
+    def test_start(self) -> datetime:
+        return self.origin
+
+    @property
+    def test_end(self) -> datetime:
+        return self.base.test_end
+
+    def blocks(self) -> list[tuple[int, datetime, datetime]]:
+        """The **base** origin's blocks 4-6, keeping their original labels.
+
+        ``o_i + 90 days`` is exactly where base block 4 opens, so these are the
+        same calendar hours the aged model was scored on — which is the entire
+        content of the comparison.
+        """
+        return [(b, *self.base.block(b)) for b in (4, 5, 6)]
+
+    @property
+    def label(self) -> str:
+        return f"{self.base.label}+{self.offset_days}d"
+
+
+#: Anything :func:`itransformer_btc.splits.build_origin_tensors` accepts. The
+#: two share an interface rather than an inheritance chain because they share no
+#: implementation: one derives its boundaries from calendar months, the other by
+#: shifting another origin's.
+OriginLike = Origin | FalsificationOrigin
 
 
 def origin_grid(
