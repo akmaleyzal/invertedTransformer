@@ -1,11 +1,69 @@
 [project]
 name = "invertedtransformer"
 version = "0.1.0"
-description = "Add your description here"
+description = "Walk-forward evaluation of iTransformer for hourly Bitcoin forecasting — nominal variates vs effective dimensionality"
 readme = "README.md"
-requires-python = ">=3.14"
+
+# 3.11 is the floor CLAUDE.md §16 asks for, and it is a real constraint, not a
+# formality: the previous declaration of >=3.14 shipped with torch undeclared,
+# and torch wheel availability on 3.14 was never verified. Kaggle's image is the
+# environment that actually matters for the grid, and it sits well below 3.14.
+# No upper bound — pinning one would fight the Kaggle image, which
+# notebooks/CLAUDE.md forbids.
+requires-python = ">=3.11"
+
+# The data plane, and nothing else. polars is load-bearing for correctness, not
+# speed: its rolling API is backward-closed by construction, so the center=True
+# leak class CLAUDE.md §2 forbids is unrepresentable (§16).
 dependencies = [
-    "pandas>=3.0.5",
-    "pyarrow>=25.0.0",
-    "requests>=2.34.2",
+    "polars>=1.0",
+    "pyarrow>=15.0",
+    "numpy>=1.26",
 ]
+
+[project.optional-dependencies]
+# Stage 1 ingest only — spot_klines_btc.py at the repository root. pandas is
+# permitted THERE and nowhere else in the data plane (CLAUDE.md §2, §16): the
+# script computes no rolling window, so the correctness argument for polars has
+# nothing to bite on. Keeping pandas behind an extra rather than in the core
+# list is what makes that exemption visible instead of ambient.
+ingest = [
+    "requests>=2.31",
+    "pandas>=2.2",
+]
+
+# The one named boundary where data may leave polars. Every library here accepts
+# numpy or pandas and nothing else:
+#   statsmodels   ADF (§4.5), panel regression scaffolding (§9.2)
+#   arch          Lo-MacKinlay VarianceRatio (§4.5)
+#   wildboottest  restricted wild cluster bootstrap, impose_null=True (§9.2/D42)
+#   scipy         Clark-West, Diebold-Mariano with HLN, Pesaran-Timmermann
+stats = [
+    "pandas>=2.2",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "arch>=7.0",
+    "wildboottest>=0.3",
+]
+
+# Deliberately unpinned and NOT installed on Kaggle: the image ships its own
+# torch and notebooks/CLAUDE.md forbids pinning against the local venv. This
+# extra exists so a local CPU smoke run is possible before anything is pushed.
+train = [
+    "torch>=2.2",
+]
+
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/itransformer_btc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

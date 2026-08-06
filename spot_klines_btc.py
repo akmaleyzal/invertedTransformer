@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-binance_spot_klines.py
-======================
+spot_klines_btc.py
+==================
 
 Pengunduh klines PASAR SPOT Binance via REST API publik (tanpa API key).
+
+Ini adalah Stage 1. CLAUDE.md sebelumnya menyebut berkas ini
+`binance_spot_klines.py` (D11); nama yang benar adalah nama berkas ini, dan
+D11 ditutup oleh D33.
 
 Dirancang untuk opsi A: variat berbasis fitur dari SATU aset. Karena itu
 skrip ini mempertahankan SELURUH 11 kolom bermakna dari respons klines,
@@ -20,16 +24,25 @@ ditambal -- keputusan menambal adalah keputusan pemodelan, bukan pengunduhan.
 
 Pemakaian
 ---------
-    python binance_spot_klines.py --self-test          # tanpa jaringan
-    python binance_spot_klines.py                      # default: BTCUSDT 1h 2018-01..2026-08
-    python binance_spot_klines.py --symbol BTCUSDT --interval 1h \
-        --start 2018-01-01 --end 2026-08-01 --outdir ./data
+    python spot_klines_btc.py --self-test          # tanpa jaringan
+    python spot_klines_btc.py                      # default: BTCUSDT 1h 2018-01..2026-08
+    python spot_klines_btc.py --symbol BTCUSDT --interval 1h \
+        --start 2018-01-01 --end 2026-08-01 --outdir ./data/raw
+    python spot_klines_btc.py --rebuild-only       # rakit ulang dari JSONL, tanpa jaringan
 
 Argumen --end bersifat EKSKLUSIF. Default 2026-08-01 berarti bar terakhir
 memiliki open_time 2026-07-31 23:00 UTC.
 
-Keluaran (di --outdir)
-----------------------
+EKSKLUSIVITAS ITU DITEGAKKAN, BUKAN DIASUMSIKAN (D33). Binance mengembalikan
+bar ber-open_time == endTime, jadi tabel yang dirakit dari JSONL berisi satu
+bar di luar jendela. Bar itu tidak menggeser deteksi celah -- find_gaps sudah
+memakai inclusive="left" -- tapi ia menaikkan bars_actual satu, sehingga
+missing_bars terhitung 121 bukan 122 dan cakupan 2026 keluar 100.02%, angka
+yang mustahil. clip_to_window() membuangnya sebelum laporan maupun parquet
+ditulis.
+
+Keluaran (di --outdir, default ./data/raw yang IMMUTABLE)
+---------------------------------------------------------
     BTCUSDT_1h_raw.jsonl        respons API mentah, append-only, untuk resume
     BTCUSDT_1h.parquet          tabel bersih terurut, indeks UTC
     BTCUSDT_1h.csv              opsional, via --csv
@@ -37,11 +50,20 @@ Keluaran (di --outdir)
     BTCUSDT_1h_gaps.csv         daftar celah, kalau ada
 
 Dependensi: requests, pandas, pyarrow (untuk parquet).
+
+CATATAN POLARS. CLAUDE.md §2 melarang pandas di data plane dan mewajibkan
+polars untuk ingest, validasi, segmentasi, dan fitur. Stage 1 DIKECUALIKAN
+secara eksplisit (§2, §16): berkas ini tidak menghitung satu pun jendela
+bergulir, jadi argumen korektnes yang mendasari larangan itu -- polars membuat
+`center=True` tidak terepresentasikan -- tidak berlaku di sini. Larangan tetap
+berlaku PENUH mulai segmentasi dan seterusnya, yaitu di src/. Jangan jadikan
+berkas ini preseden untuk memakai pandas di hilir.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -366,9 +388,45 @@ def assemble(raw_path: Path) -> pd.DataFrame:
     return df
 
 
+def clip_to_window(df: pd.DataFrame, start_ms: int, end_ms: int) -> pd.DataFrame:
+    """Potong ke [start, end) -- setengah terbuka, persis seperti --end EKSKLUSIF.
+
+    Binance mengembalikan bar ber-open_time == endTime, jadi tabel yang dirakit
+    dari JSONL berisi satu bar di luar jendela. Membiarkannya lolos tidak
+    merusak deteksi celah (find_gaps memakai inclusive="left"), tapi merusak
+    setiap hitungan yang diturunkan dari len(df):
+
+        bars_actual  75.095 bukan 75.094
+        missing_bars    121 bukan 122      <- tidak cocok dengan gaps.csv
+        cakupan 2026 100.02%               <- mustahil
+
+    Perbandingan dilakukan pada epoch integer, bukan string tanggal (CLAUDE.md
+    §2: "Every timestamp is epoch-based and compared as an integer").
+    """
+    start = pd.Timestamp(start_ms, unit="ms", tz="UTC")
+    end = pd.Timestamp(end_ms, unit="ms", tz="UTC")
+    n_before = len(df)
+    df = df[(df.index >= start) & (df.index < end)]
+    dropped = n_before - len(df)
+    if dropped:
+        print(f"Dibuang {dropped} bar di luar [{start.isoformat()}, "
+              f"{end.isoformat()}) -- jendela --end bersifat eksklusif.",
+              file=sys.stderr)
+    return df
+
+
 # --------------------------------------------------------------------------
 # Laporan integritas
 # --------------------------------------------------------------------------
+
+def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
+    """sha256 heksadesimal dari sebuah berkas, dibaca per potongan."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
 
 def find_gaps(index: pd.DatetimeIndex, start: pd.Timestamp,
               end: pd.Timestamp, freq: str) -> pd.DataFrame:
@@ -523,6 +581,47 @@ def self_test() -> int:
         check("ukuran celah = 5 bar",
               rep["largest_gap_bars"] == 5, f"dapat {rep['largest_gap_bars']}")
         check("bar hilang = 5", rep["missing_bars"] == 5, f"dapat {rep['missing_bars']}")
+
+        # -- regresi D33: bar tepat di batas eksklusif ---------------------
+        # Binance mengembalikan bar ber-open_time == endTime. Tanpa
+        # clip_to_window bar itu ikut terhitung, dan SETIAP hitungan turunan
+        # bergeser satu ke arah yang menyanjung data: missing_bars turun,
+        # cakupan naik. Di data asli inilah yang membuat cakupan 2026 keluar
+        # 100.02% dan missing_bars 121 bukan 122.
+        raw_edge = Path(tmp) / "edge.jsonl"
+        with raw_edge.open("w") as fh:
+            for b in (b1, b2, b3):
+                fh.write(json.dumps(b) + "\n")
+            fh.write(json.dumps(_synth_batch(end_ms, 1, step)) + "\n")
+
+        df_unclipped = assemble(raw_edge)
+        df_clipped = clip_to_window(df_unclipped, start_ms, end_ms)
+
+        check("bar batas ada sebelum dipotong",
+              len(df_unclipped) == 176, f"len={len(df_unclipped)}")
+        check("clip_to_window membuang tepat bar batas",
+              len(df_clipped) == 175, f"len={len(df_clipped)}")
+        check("bar terakhir yang bertahan ada di dalam jendela",
+              df_clipped.index[-1] < pd.Timestamp(end_ms, unit="ms", tz="UTC"))
+
+        rep_unclipped, _ = integrity_report(
+            df_unclipped, start_ms, end_ms, "1h", "TEST")
+        rep_clipped, _ = integrity_report(
+            df_clipped, start_ms, end_ms, "1h", "TEST")
+
+        # Bentuk defek yang sebenarnya: deteksi celah TIDAK berubah -- find_gaps
+        # sudah memakai inclusive="left" -- jadi gaps.csv dan missing_bars saling
+        # bertentangan sampai bar itu dibuang. Itulah yang membuatnya lolos ulasan.
+        check("tanpa clip, missing_bars bertentangan dengan celah nyata",
+              rep_unclipped["missing_bars"] == 4 and rep_unclipped["gap_blocks"] == 1,
+              f"dapat missing={rep_unclipped['missing_bars']} "
+              f"blok={rep_unclipped['gap_blocks']}")
+        check("dengan clip, missing_bars cocok dengan celah nyata",
+              rep_clipped["missing_bars"] == 5 and rep_clipped["gap_blocks"] == 1,
+              f"dapat missing={rep_clipped['missing_bars']} "
+              f"blok={rep_clipped['gap_blocks']}")
+        check("clip idempoten",
+              len(clip_to_window(df_clipped, start_ms, end_ms)) == 175)
         check("tidak ada pelanggaran OHLC", rep["ohlc_violations"] == 0)
         check("taker_buy <= volume", rep["taker_buy_exceeds_volume"] == 0)
         check("kolom opsi A lengkap",
@@ -566,9 +665,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--interval", default="1h", choices=sorted(INTERVAL_MS))
     p.add_argument("--start", default="2018-01-01", help="inklusif, UTC")
     p.add_argument("--end", default="2026-08-01", help="EKSKLUSIF, UTC")
-    p.add_argument("--outdir", default="./data")
+    p.add_argument("--outdir", default="./data/raw")
     p.add_argument("--csv", action="store_true", help="tulis CSV selain parquet")
     p.add_argument("--fresh", action="store_true", help="abaikan JSONL lama, unduh ulang")
+    p.add_argument("--rebuild-only", action="store_true",
+                   help="rakit ulang parquet/laporan dari JSONL yang sudah ada, "
+                        "tanpa menyentuh jaringan")
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--self-test", action="store_true", help="uji logika tanpa jaringan")
     args = p.parse_args(argv)
@@ -599,10 +701,18 @@ def main(argv: list[str] | None = None) -> int:
           f"{ms_to_iso(start_ms)[:10]} -> {ms_to_iso(end_ms)[:10]} (eksklusif)",
           file=sys.stderr)
 
-    fetcher = KlineFetcher(verbose=not args.quiet)
-    fetch_range(fetcher, args.symbol, args.interval, start_ms, end_ms, raw_path)
+    if args.rebuild_only:
+        if not raw_path.exists():
+            p.error(f"--rebuild-only butuh {raw_path}, yang tidak ada")
+        print("Mode rakit-ulang: JSONL yang ada dipakai apa adanya, "
+              "jaringan tidak disentuh.", file=sys.stderr)
+    else:
+        fetcher = KlineFetcher(verbose=not args.quiet)
+        fetch_range(fetcher, args.symbol, args.interval, start_ms, end_ms, raw_path)
 
-    df = assemble(raw_path)
+    # Potong SEBELUM laporan maupun parquet: keduanya harus melihat jendela
+    # yang sama, dan jendela itu setengah terbuka (D33).
+    df = clip_to_window(assemble(raw_path), start_ms, end_ms)
     report, gaps = integrity_report(df, start_ms, end_ms, args.interval, args.symbol)
 
     pq_path = outdir / f"{stem}.parquet"
@@ -618,9 +728,19 @@ def main(argv: list[str] | None = None) -> int:
         df.to_csv(csv_path)
         print(f"Tulis {csv_path}", file=sys.stderr)
 
-    (outdir / f"{stem}_report.json").write_text(json.dumps(report, indent=2))
     if len(gaps):
         gaps.to_csv(outdir / f"{stem}_gaps.csv", index=False)
+
+    # sha256 setiap artefak masuk ke laporan. CLAUDE.md §12: angka yang
+    # diproduksi di bawah hash artefak masukan berbeda tidak sebanding dan
+    # tidak boleh berbagi tabel -- tanpa hash yang tercatat, tidak ada run
+    # yang bisa membuktikan vintage mana yang dikonsumsinya.
+    report["artifact_sha256"] = {
+        path.name: sha256_of(path)
+        for path in sorted(outdir.glob(f"{stem}*"))
+        if path.suffix != ".json"
+    }
+    (outdir / f"{stem}_report.json").write_text(json.dumps(report, indent=2))
 
     # -- ringkasan ke stdout ----------------------------------------------
     print()

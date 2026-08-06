@@ -39,7 +39,7 @@ nothing else. No futures. No second asset. No macro, on-chain, or sentiment data
 | ❌ Never | ✅ Instead |
 |---|---|
 | Add, import, or suggest **TensorFlow, Keras, or JAX** | **PyTorch is the only deep-learning framework.** Port any TF-only reference to torch idioms |
-| Use **pandas** in the data plane | **polars** for ingest, validation, segmentation, features. pandas only at the one named stats boundary (§16) |
+| Use **pandas** in the data plane | **polars** for segmentation, features, windowing, splits. pandas only at the one named stats boundary (§16) and in Stage 1 ingest (below) |
 | `ffill`, `bfill`, `interpolate`, or reindex to a full hourly grid | **Segmentation.** A gap splits the series; windows are built inside segments, never across them |
 | Impute anything, anywhere | Nothing. Missing bars are exchange downtime — no price formed, so there is no value to infer (§4.2) |
 | Winsorize, clip, or drop extreme returns | Keep them. Extreme regimes are the object of study |
@@ -49,6 +49,17 @@ nothing else. No futures. No second asset. No macro, on-chain, or sentiment data
 | Report MSE on price levels, or MAPE on log-returns | MSE/MAE on standardised log-returns; RelMSE and `R²_oos` against Naive-RW |
 | Cite a paper you have not read, or a DOI you have not verified | §13.3. No exceptions |
 | Trust a result that looks too good | Assume leakage until proven otherwise |
+
+**Stage 1 ingest is exempt from the polars rule, explicitly (2026-08-06).** `spot_klines_btc.py`
+is pandas, was committed that way, and stays that way. The ban's justification is a *correctness*
+argument, not a taste one: polars' rolling API is backward-closed by construction, so the
+`center=True` leak class is unrepresentable there and is one keyword away in pandas (§16). Stage 1
+computes **no rolling window at all** — it paginates REST responses, coerces strings to numerics,
+de-duplicates, clips to the half-open window, and counts gaps — so the argument has nothing to bite
+on, and a rewrite would risk the one artifact the whole study rests on to buy nothing. The ban
+applies in **full** from segmentation onward, i.e. everywhere in `src/`. Do not read this exemption
+as licence to reach for pandas downstream; the named stats boundary in §16 is the only other place
+it may appear.
 
 Timezone is **UTC everywhere**. Every timestamp is epoch-based and compared as an integer.
 
@@ -107,11 +118,13 @@ pre-registered degradation threshold.
 
 ### 4.1 Measured facts
 
-Measured from `data/BTCUSDT_1h_report.json`, not assumed. Re-verify after any refresh.
-**The artifacts live in `data/`; `data/raw/` is empty (`D33`)** — either correct every path in this
-document, or move the four files into `data/raw/`, which §2's immutability rule makes the cleaner
-option. Do one of the two before Stage 2; leaving both readings alive is how a fresh session ends up
-reading nothing.
+Measured from `data/raw/BTCUSDT_1h_report.json`, not assumed. Re-verify after any refresh.
+**The four artifacts live in `data/raw/` (`D33`, resolved 2026-08-06).** The register offered two
+ways to close `D33` — correct every path in this document to `data/`, or move the files into
+`data/raw/`. The move was taken, because §2's immutability rule reads more cleanly when the immutable
+inputs sit under a directory whose name says so, and because `data/processed/` then sits beside it as
+the only writable half of `data/`. Any path of the form `data/BTCUSDT_*` in an older document or
+transcript is stale by exactly one directory level.
 
 | Field | Value (in-window) |
 |---|---|
@@ -125,14 +138,32 @@ reading nothing.
 | `zero_volume_bars` / `zero_trade_bars` | 3 / 3 |
 | Worst year | 2018, 99.292% |
 
-**The report on disk does not yet reproduce this table, and the table is the correct one (`D33`).**
-The artifact reads `bars_actual` 75,095 / `missing_bars` 121 / `coverage_pct` 99.8391, and its
-`actual_last_bar_utc` is `2026-08-01T00:00:00` — one bar **past** the declared end-exclusive
-boundary. That single bar explains all three discrepancies and also the impossible 2026 coverage of
-100.02%. **Drop it at ingest**, after which the report reproduces 75,094 / 122 / 99.8378 exactly and
-`BTCUSDT_1h_gaps.csv`'s 122 missing bars across 27 blocks reconciles. Do **not** re-derive this table
-from the artifact as it stands — that would bake the out-of-window bar into the study's measured
-facts, and every per-year coverage figure would inherit it.
+**The report on disk now reproduces this table exactly (`D33` closed, 2026-08-06).** It previously
+read `bars_actual` 75,095 / `missing_bars` 121 / `coverage_pct` 99.8391 with
+`actual_last_bar_utc` = `2026-08-01T00:00:00` — one bar **past** the declared end-exclusive boundary,
+which also produced the impossible 2026 coverage of 100.02%. `spot_klines_btc.py` now enforces the
+half-open window in `clip_to_window()` and the artifacts were rebuilt from the retained JSONL with
+`--rebuild-only`, touching no network. Verified after the rebuild: 75,216 / 75,094 / 99.8378,
+122 missing across 27 blocks, largest 33, last bar `2026-07-31T23:00`, 2026 coverage 100.000%, and
+`parquet_rows == bars_actual == 75,094` with `BTCUSDT_1h_gaps.csv` summing to 122.
+
+**Why that one bar mattered more than its size suggests.** Gap *detection* was never wrong —
+`find_gaps` already used `inclusive="left"`, so the CSV always said 122. Only counts derived from
+`len(df)` were off. The artifact therefore carried a report whose `missing_bars` **contradicted its
+own gaps file**, in the direction that flatters the data, and every per-year coverage figure would
+have inherited it. A defect that leaves two artifacts disagreeing is the kind that survives review;
+the regression test for it lives in `spot_klines_btc.py --self-test`.
+
+**Artifact vintage** (§12 — numbers produced under different hashes are not comparable):
+
+| Artifact | sha256 (first 16) |
+|---|---|
+| `BTCUSDT_1h.parquet` | `8270a84b07c2923b` |
+| `BTCUSDT_1h_gaps.csv` | `cfab4cf4c20ec00d` |
+| `BTCUSDT_1h_raw.jsonl` | `30721a663bd2ce58` |
+
+Full digests live in `artifact_sha256` inside the report itself, written by the ingest script. Regenerated
+2026-08-06T06:38Z. Any run whose `meta/*.json` names a different parquet digest is a different vintage.
 
 **All eleven meaningful kline columns are retained.** Truncating to OHLCV silently destroys
 families F3, F4, F5 and collapses the ladder from 12 to 6. Three columns carry information
@@ -143,7 +174,7 @@ arrive as **strings** and must be coerced explicitly — silent failure otherwis
 ### 4.2 Gaps are not missing values
 
 BTCUSDT trades continuously, so zero-trade hours are ruled out. What remains is **exchange downtime
-and scheduled maintenance**, confirmed against `data/BTCUSDT_1h_gaps.csv` (27 rows, `D33`).
+and scheduled maintenance**, confirmed against `data/raw/BTCUSDT_1h_gaps.csv` (27 rows, `D33`).
 
 Rubin's MCAR/MAR/MNAR taxonomy applies to values that exist but went unobserved. **When the exchange
 is down no price forms** — no matching, no book, nothing to approximate. Imputation is not risky
@@ -220,8 +251,9 @@ block, from breaks at 2020-11-30, 2020-12-21 and 2020-12-25 (`119 × 3 + 6`). Tw
 
 **Superseded by `D33`.** The earlier text asserted that `data/raw/BTCUSDT_1h.parquet` was written
 with `"fill_policy": "ffill"`, `"rows_written": 75216`, `"synthetic_bars": 122` and must not be
-consumed as-is. **None of those three keys exists in the report on disk**, and the parquet holds
-75,095 rows — equal to `bars_actual`, i.e. **unfilled**. The artifact was regenerated; the register
+consumed as-is. **None of those three keys exists in the report on disk**, and the parquet held
+75,095 rows — equal to the then-reported `bars_actual`, i.e. **unfilled** (75,094 after the boundary
+bar was dropped; the point stands, no row was ever synthesised). The artifact was regenerated; the register
 was not updated. `D10` is therefore closed, and its prescribed remedy ("drop every row flagged
 synthetic") was in any case unrunnable, there being no flag column to filter on. The runnable
 replacement is in §11: assert `parquet_rows == bars_actual` and assert the timestamp diff set
@@ -229,8 +261,10 @@ contains the 27 gap blocks. Record the regeneration date and the artifact sha256
 them, no run can establish which vintage it consumed, and §12 forbids comparing numbers across
 vintages.
 
-**One defect does remain**: the boundary bar at `2026-08-01T00:00`, which lies past the declared
-end-exclusive window (§4.1). Drop it and re-emit the report.
+**That last defect is now closed too** (2026-08-06). The boundary bar at `2026-08-01T00:00` was
+dropped by `clip_to_window()` and the artifacts re-emitted from the retained JSONL; the parquet holds
+75,094 rows and the report carries `artifact_sha256`. `D33` is closed in full — both its path fork
+(the artifacts moved to `data/raw/`) and its data defect.
 
 `BTCUSDT_1h_gaps.csv` is retained as a diagnostic and as the source of segment boundaries.
 `BTCUSDT_1h_raw.jsonl` makes offline re-derivation possible without re-hitting the API.
@@ -336,7 +370,7 @@ Four reasons, and **the first is load-bearing** (`D37` — it was previously the
    lookback, but RSI (a ratio of sums of positive and negative parts) and Bollinger bands (a rolling
    standard deviation) are not. Reason 1 carries the exclusions; reason 2 explains why adding linear
    transforms would inflate K without inflating information.
-3. **Sample budget.** **13,520–15,217** training windows per origin against 12 × 96 = 1,152 input
+3. **Sample budget.** **13,558–15,217** training windows per origin against 12 × 96 = 1,152 input
    dimensions. That is the **21-month** sub-block, measured per origin (`D25`, `D45`,
    `docs/ORIGIN_WINDOW_BUDGET.md`); 17,400 is the 24-month count and must not appear.
 4. **Benchmark positioning.** iTransformer's own suite splits into few-features-one-entity
@@ -637,9 +671,9 @@ directly; it costs one extra run per origin.
 origin and the effect of model age cannot be separated from the effect of training data volume.
 **Caveat (`D45`):** gap density is monotone in calendar time — 26 of 27 downtime blocks fall in
 2018–2021 and none after 2023-03 — so per-origin training-window loss runs from **11.2% at origin 6
-down to 0.0% at origins 14–15**, and the surviving training count ranges **13,520 … 15,217 windows**.
+down to 0.0% at origins 14–15**, and the surviving training count ranges **13,558 … 15,217 windows**.
 That partially reintroduces the volume variation the fixed window was chosen to eliminate. Control
-for it by **subsampling every origin's training set to 13,520 windows**, the smallest origin's count,
+for it by **subsampling every origin's training set to 13,558 windows**, the smallest origin's count,
 and report the uncontrolled version as the sensitivity. Per-origin figures:
 `docs/ORIGIN_WINDOW_BUDGET.md`.
 
@@ -654,7 +688,7 @@ State this numerically, never as "calendar adjacency" — see §9.2.
 
 The `− H` term in window enumeration is the purge: the last retained training window has a target
 ending exactly at the boundary, so **no observation is discarded** — only ~24 window configurations
-out of 13,520–15,217 (`D25`). The purge and the segment law share their logic: neither discards
+out of 13,558–15,217 (`D25`). The purge and the segment law share their logic: neither discards
 observations, both discard window *configurations*.
 
 **Two boundaries, not one (`D24`).** Training windows are enumerated to `val_start − L − H`, so the
@@ -776,7 +810,7 @@ within-origin mean, `mean_{b'}[·]`, or fit a within-origin trend and read the c
 line, and attach a block-bootstrap band (stationary bootstrap, block length ≥ 24).
 
 **`D32` — RQ1 is a panel comparison, not an OLS on three points.** Four rungs give three ΔMSE values,
-and stacking 234 (origin, block, rung) rows creates no information about a K_eff slope that varies
+and stacking 360 (origin, block, rung) rows creates no information about a K_eff slope that varies
 only between rungs — the effective G would be 3, adjacent deltas share an MSE (mechanical correlation
 ≈ −0.5), and with an intercept there is 1 residual degree of freedom, so the two theories cannot be
 distinguished. Two changes make the horse race identifiable. **K_eff is measured per origin** on that
@@ -1010,7 +1044,7 @@ arithmetic (4 × 4 × 4 × 3 = 192).
 ### 10.3 Cost model — and the regime it depends on (`D19`)
 
 Per origin the training tensor is at most `15,217 × 96 × 12 × 4 B ≈ 70 MB` (`D25` — the 21-month
-sub-block, not the 24-month window); targets add ~1.5 MB. The count **varies by origin**, 13,520 to
+sub-block, not the 24-month window); targets add ~1.5 MB. The count **varies by origin**, 13,558 to
 15,217, because gap density is monotone in calendar time (`D45`, §8.1) — size the buffer at the
 maximum and slice per origin. **It fits entirely in a T4's 16 GB many times over, and must be
 resident there.**
@@ -1053,7 +1087,7 @@ rather than silently reusing a mismatched result.
 | `meta/{run_id}.json` | resolved config, git sha, input-artifact sha256, epochs run, best val, wall time, `status` |
 
 **Persist raw predictions, not just metrics.** They are required for the DM test, per-regime
-analysis, and the economic evaluation. Re-running 621 experiments because predictions were not saved
+analysis, and the economic evaluation. Re-running 837 experiments because predictions were not saved
 is an expensive, avoidable mistake.
 
 ### 10.5 Continuation across sessions
@@ -1112,7 +1146,7 @@ entirely and the checklist that rested on it returned green ticks where the pipe
 - [ ] Per origin, `train ∩ val == ∅` and `(train ∪ val) ∩ test == ∅` at row level. **Cross-origin row
       overlap is by design** (`D28`) and is handled inferentially in §9.2 — do not "fix" it
 - [ ] **F** — The training-window count matches the 21-month arithmetic minus logged gap losses
-      (`D25`) — 13,520–15,217 per `docs/ORIGIN_WINDOW_BUDGET.md`, not ~17,400
+      (`D25`) — 13,558–15,217 per `docs/ORIGIN_WINDOW_BUDGET.md`, not ~17,400
 
 **Model selection**
 
@@ -1244,7 +1278,7 @@ appears in a graphical abstract, it is Figure 3.
 | 1 | Dataset, gap profile, **per-origin** windows lost, `H == L` count | 1 | Walk-forward scheme with purging and segments |
 | 2 | Descriptives + ADF + VR + Hurst | 2 | Architecture and inverted tokenization |
 | 2b | Eigenspectrum, PR per rung **per origin**, and `corr(K, K_eff)` | 2b | Rolling PR and rolling OLS R² — **establishes H2's premise before any model runs** |
-| 3 | Hyperparameters **and K, all models**; epochs-to-stop per rung | 3 | **Decay curve `A(b)` vs b — 13 per-origin lines + fitted `αᵢ + β₁b` with bootstrap band — key figure** |
+| 3 | Hyperparameters **and K, all models**; epochs-to-stop per rung | 3 | **Decay curve `A(b)` vs b — 15 per-origin lines + fitted `αᵢ + β₁b` with bootstrap band — key figure** |
 | 4 | Main results, ± SE **across origins**, n per cell | 4 | RelMSE per block, all models |
 | 5 | Per-block `D(i,b)`, surviving-window count, `b*` **with CI** at each τ | 5 | Attention heatmap: calm vs stress, **terciles of realised volatility** |
 | 6 | DM matrix — statistic named per pair, T stated, Romano–Wolf adjusted, MCS column | 6 | Horizon sensitivity |
@@ -1294,12 +1328,13 @@ points: a Ledoit–Wolf or Jobson–Korkie/Memmel test for the Sharpe difference
 strategy, and bootstrap intervals for MDD, which from ~180 observations is otherwise uninterpretable.
 
 **The Deflated Sharpe Ratio, made computable (`D46`).** The earlier prescription — "DSR with
-N = the number of configurations actually tried (≈621)" — cannot be executed and would return ≈ 0 by
+N = the number of configurations actually tried (≈837 under the `D26`/`D49`/`D50` grid; ≈621 when the
+sentence was written)" — cannot be executed and would return ≈ 0 by
 construction if it could. `SR₀` requires **`V[SR]`, the variance of the Sharpe ratios across the N
 trials**, plus the skewness and kurtosis of the per-period returns; none was named, so N alone is
 insufficient. And N is the wrong quantity: DSR counts candidates whose Sharpe was computed on the
-**same return series** and from which the best was selected, whereas the 621 runs span largely
-disjoint test periods, seeds, horizons and baselines that never competed for one backtest. At N = 621
+**same return series** and from which the best was selected, whereas the 837 runs span largely
+disjoint test periods, seeds, horizons and baselines that never competed for one backtest. At N = 837
 and T = 180 the threshold is `SR₀ + 1.645/√(T−1) ≈ SR₀ + 0.123`, essentially unmeetable — a second
 guaranteed null alongside `D23`, reading to a referee as either a failed strategy or a misapplied
 statistic with no way to tell which.
@@ -1308,7 +1343,7 @@ Therefore: **DSR is computed per origin** on that origin's T non-overlapping 24-
 returns, from the **per-period** Sharpe (never the annualised one — feeding an annualised SR inflates
 it by √(periods per year)), the sample skewness and kurtosis of those returns, and `SR₀` derived from
 **N = the number of distinct strategy configurations evaluated on that origin's test span**, with
-`V[SR]` the observed variance of their Sharpe ratios. The 621-run total is reported **separately** as
+`V[SR]` the observed variance of their Sharpe ratios. The 837-run total is reported **separately** as
 the development trial count and discussed in Limitations — concealing it is selection bias, but it
 is not N.
 
@@ -1356,7 +1391,7 @@ limit), so this pass is incomplete by construction; that is logged as an open it
 |---|---|---|---|
 | D23 | F | τ on `D(b)` is arithmetically unreachable — RQ3 is a guaranteed null | `D(i,b)` rescaled to proportional skill loss, §3, §9.1 |
 | D24 | F | No purge at the train/validation boundary; early stopping selects on contaminated data | Purge at both boundaries, §8.1, §8.2, §11 |
-| D25 | F | ~17,400 is the 24-month count; training is 21 months | 13,520–15,217 windows, ≤70 MB, §5.3, §8.2, §10.3 |
+| D25 | F | ~17,400 is the 24-month count; training is 21 months | 13,558–15,217 windows, ≤70 MB, §5.3, §8.2, §10.3 |
 | D26 | F | Block index `b` is collinear with calendar month at 6-month spacing | **5-month spacing, 15 origins** (12/12 calendar phases) + falsification arm, §8.1 |
 | D27 | F | Stage 5 gate opens test blocks, contradicting §11 | Gate runs on the validation sub-block, §8.5 |
 | D28 | F | Consecutive origins share 75–87.5% of training data; clusters not independent | 79.2% stated numerically; effective independence ≈ 4; G=3 disjoint check, §9.2 |
@@ -1367,7 +1402,7 @@ limit), so this pass is incomplete by construction; that is logged as an open it
 | D33 | C | §4.1 paths point at an empty `data/raw/`; artifact has an out-of-window bar | Paths corrected, boundary bar dropped; **D10, D11 closed**, §4.1, §4.4 |
 | D34 | C | Newey–West Bartlett contradicts the `dm.test` validation target | Rectangular truncated estimator, §9.2 |
 | D35 | C | SPA/Reality Check cannot correct a pairwise matrix | Romano–Wolf stepdown + Model Confidence Set, §9.2 |
-| D36 | C | Figure 3 plots `A` for four K; `A` is defined only for K1-vs-K8 | One series, 13 per-origin lines + fitted overlay, §13.4 |
+| D36 | C | Figure 3 plots `A` for four K; `A` is defined only for K1-vs-K8 | One series, 15 per-origin lines + fitted overlay, §13.4 |
 | D37 | C | The linear-span argument is not a theorem under `use_norm`, and excludes half its own list | Demoted to parsimony; taxonomy carries the exclusions, §5.3 |
 | D38 | C | §11 claims validation-based hyperparameter selection that never happens | Provenance stated, no per-rung tuning, §6.2, §11 |
 | D39 | U | Target-channel vs all-channel loss unspecified — confounds K | Target channel only, at every rung, §6.2 |
@@ -1383,7 +1418,26 @@ limit), so this pass is incomplete by construction; that is logged as an open it
 | D49 | I | Flat 8→12 rung has the fewest seeds and no equivalence test | 5 seeds at every rung + pre-registered TOST margin, §3, §6.2 |
 | D50 | I | Uniform-attention control budgeted for Figure 5 but never an arm | Promoted to a main-grid arm; `A_attn` defined, §6.2, §9.1 |
 
-New contradictions found later take IDs **D51+**. Absorbing one silently is the exact failure this
+### Third pass — the first defects found by *running* the code
+
+**`D51` is what Stage 2 was for.** It is a single register entry covering four defects that no amount
+of re-reading would have produced, because each is a disagreement between the document set and the
+artifact, found on 2026-08-06 by building `src/itransformer_btc/` and asserting
+`docs/ORIGIN_WINDOW_BUDGET.md` against `BTCUSDT_1h.parquet`. The derived table diverged at **twelve of
+fifteen origins**. This is the pattern §14's preamble predicted: the two unrun audit lenses were
+consistency and execution, and every one of these sits in exactly that gap.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D51a | F | §4.3's closed form `(bars − 119) − [119×breaks + excluded]` is not an identity. A segment of `n < 120` bars contributes zero windows but is charged `n − 119`, and the negative is absorbed silently. Origin 2022-02 holds an 80-bar segment; seven origins are understated by 39 … 137 windows | Count windows **segment-wise**, `Σ max(0, nᵢ − 119)`. Keep the closed form only as an upper bound, asserted as `closed_form ≤ measured` — the other direction would mean counting windows that do not exist |
+| D51b | F | Test-block survival was accounted with **training** semantics, requiring the whole 120-bar window inside the block. That returns 601 of 720 on a *clean* block — a 16.5% phantom loss that §9.2 would absorb into the block-coverage covariate as noise | Test blocks hold **720** forecast origins. §8.3 already licenses the 96-bar lookback crossing backwards; only a break inside the spanned 120 bars disqualifies a start. Measured: 74 of 90 cells clean, worst 439/720 |
+| D51c | C | The `H == L` count was never measured and §4.3 assumed it additive to the zero-volume count | Measured: **3 bars**, and they are the **same 3 bars** as the zero-volume and zero-trade ones — `2019-06-07T21:00`, `2021-02-11T03:00`, `2023-03-24T12:00`. No volume ⇒ no trades ⇒ high and low never separate. Total unusable is 3, not 9 |
+| D51d | I | §8.1's table claims 5-month spacing visits "12 — all of them" calendar months per block. True for `b=1` only: blocks are 30 **days**, not calendar months, so `b=2…6` visit 7 … 11 | State 12/7/11/11/11/11 against 6-month spacing's 2/2/2/3/3/2. `D26`'s conclusion is unaffected and in fact survives measurement; the "12" was an idealisation of its own algebra |
+
+Also corrected: the largest training tensor is **70.12 MB**, not "≤ 70 MB" (`D25` rounded the wrong
+way), and the training-window floor is **13,558**, not 13,558.
+
+New contradictions found later take IDs **D52+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---
@@ -1400,8 +1454,8 @@ invertedTransformer/
 ├── notebooks/                      # thin Kaggle launchers only; CLAUDE.md holds the rule
 ├── paper/                          # manuscript; CLAUDE.md holds writing rules
 ├── spot_klines_btc.py              # Stage 1 ingest (was mis-named `binance_spot_klines.py`, D11/D33)
-├── data/                           # IMMUTABLE. the four artifacts live HERE, not in data/raw/ (D33)
-├── data/processed/                 # features_1h.parquet, splits.json
+├── data/raw/                       # IMMUTABLE. the four Stage 1 artifacts live HERE (D33, resolved)
+├── data/processed/                 # features_1h.parquet, splits.json — the writable half
 └── artifacts/{preds,meta,tables,figures}/  + paper_numbers.json
 ```
 
@@ -1416,10 +1470,12 @@ it is what made the previous pipeline unverifiable and un-unit-testable.
 **Style.** Python ≥ 3.11 syntax, type hints on every public function, Google-style docstrings.
 Config in YAML loaded into dataclasses — **no magic numbers buried in code**. Comments explain *why*.
 
-**The polars boundary.** polars is the data plane: ingest, validation, segmentation, features, all
-via lazy scans. **pandas is permitted at exactly one boundary** — converting to numpy or pandas for
-`statsmodels`, `arch`, or `wildboottest`, which accept nothing else. That boundary must be a named
-function, not scattered `.to_pandas()` calls. Training touches no DataFrame at all: pre-built
+**The polars boundary.** polars is the data plane: segmentation, features, windowing, splits, all
+via lazy scans. **pandas is permitted at exactly two places, both named** — (1) converting to numpy
+or pandas for `statsmodels`, `arch`, or `wildboottest`, which accept nothing else, via a named
+function, not scattered `.to_pandas()` calls; and (2) **Stage 1 ingest**, `spot_klines_btc.py`, for
+the reason given in §2 — it computes no rolling window, so the correctness argument below does not
+apply to it. Nowhere else. Training touches no DataFrame at all: pre-built
 GPU-resident tensors, index-slice batching, no `DataLoader`.
 
 This is a correctness argument, not only a speed one: polars' rolling API is backward-closed by
@@ -1434,12 +1490,21 @@ The source specification's §6.2 purge snippet is pandas and must be **re-expres
 in 200 steps, the plumbing is broken. Compute and log the **Naive-RW baseline first**, before any
 model trains.
 
-**Environment — unresolved.** `pyproject.toml` declares `requires-python >= 3.14` with only pandas,
-pyarrow, and requests; `requirements.txt` is a UTF-16 dump of the superseded project. torch,
-statsmodels, `arch`, and `wildboottest` are all load-bearing and undeclared, and torch wheel
-availability on 3.14 is unverified. **Resolve before writing pipeline code.** Kaggle ships its own
-image regardless — the notebook must run against whatever torch and polars are already there and
-pip-install only what is genuinely missing.
+**Environment — resolved 2026-08-06.** `pyproject.toml` now declares `requires-python >= 3.11`
+(was `>= 3.14`, with torch undeclared and its wheel availability there unverified). Core dependencies
+are the data plane only — **polars, pyarrow, numpy**. Everything else sits behind a named extra, so
+each dependency's reason is visible rather than ambient:
+
+| Extra | Contents | Why it is separate |
+|---|---|---|
+| `ingest` | requests, pandas | Stage 1 only. pandas in the core list would make the §2 exemption ambient |
+| `stats` | pandas, scipy, statsmodels, arch, wildboottest | The one named boundary where data leaves polars |
+| `train` | torch | Unpinned and **not installed on Kaggle** — the image ships its own |
+| `dev` | pytest | |
+
+`requirements.txt` — a UTF-16 dump of the superseded project — is deleted. Kaggle ships its own image
+regardless: the notebook runs against whatever torch and polars are already there and pip-installs
+only what is genuinely missing.
 
 ---
 

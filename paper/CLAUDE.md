@@ -14,7 +14,7 @@ table/figure inventory. This file adds only what is specific to writing.
    self-declare entries assembled from memory, and two are already known wrong (`D16`). An examiner
    may ask what a cited paper says.
 3. **Every deviation is disclosed, not smoothed.** `docs/DIVERGENCE_REGISTER.md` names the section
-   each of D01–D22 must appear in. A deviation that improves the design is still a deviation.
+   each of D01–D50 must appear in. A deviation that improves the design is still a deviation.
 
 ## Writing posture
 
@@ -55,5 +55,13 @@ abstract without numbers reads as a proposal, not a result.
 
 ## The one figure that matters
 
-Figure 3, the decay curve `A(b)` vs `b` for K = 1, 4, 8, 12. It carries the paper. If only one
-figure could appear in a graphical abstract, it is that one.
+Figure 3, the decay curve `A(b)` vs `b`: **one series, drawn as 15 thin per-origin lines with the
+fitted `αᵢ + β₁b` overlay and its bootstrap band.** It carries the paper. If only one figure could
+appear in a graphical abstract, it is that one.
+
+**Not four curves for K = 1, 4, 8, 12** (`D36`). `A(i,b)` is defined only as the K=1-versus-K=8 gap
+(root §9.1), and root §3 fixes RQ2 on that pair, never K=12. A four-K version asks for a quantity
+that is identically zero at K=1 and undefined at K=4 and K=12, so whoever drew it would silently
+invent a different estimand from the one β₁ is regressed on — and would readmit the deliberately
+redundant K=12 rung into a decay comparison root §3 forbids. The per-origin-lines form is also the
+better figure: it displays the actual identification, which is within-origin slopes.

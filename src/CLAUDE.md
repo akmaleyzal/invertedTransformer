@@ -10,13 +10,19 @@ wrapped.
 
 ## The polars boundary
 
-**polars is the data plane.** Ingest, validation, segmentation, and feature construction use polars
-lazy scans (`pl.scan_parquet`, pushed-down filters). pandas does not appear in any of them.
+**polars is the data plane.** Segmentation, window enumeration, split generation, and feature
+construction use polars lazy scans (`pl.scan_parquet`, pushed-down filters). pandas does not appear
+in any of them — **and this rule is absolute inside `src/`.**
 
-**pandas is permitted at exactly one boundary:** converting to numpy or pandas for a statistics
+**pandas is permitted at exactly one boundary here:** converting to numpy or pandas for a statistics
 library that accepts nothing else — `statsmodels` (ADF), `arch` (VarianceRatio), `wildboottest`.
 That boundary is a **named function** (e.g. `to_stats_frame`), not scattered `.to_pandas()` calls,
 so it can be found by search and reviewed as a unit.
+
+**Stage 1 ingest is exempt, and it lives outside `src/`.** `spot_klines_btc.py` at the repository
+root is pandas by design (root §2, §16): it computes no rolling window, so the correctness argument
+below has nothing to bite on. That exemption is scoped to that one file. It is **not** a precedent
+for `src/` — anything reading `data/raw/*.parquet` from here on is polars.
 
 **This is a correctness argument, not only a speed one.** polars' rolling API is backward-closed by
 construction, so the `center=True` leak that root §2 forbids is *unrepresentable*; in pandas it is
@@ -29,7 +35,11 @@ implementing something outside the twelve variates, or you have misread §5.1.
 
 ## Training loop
 
-The training tensor for one origin is ~80 MB. **Load it to GPU once and batch by index-slicing it.**
+The training tensor for one origin is **70.12 MB** — `15,217 × 96 × 12 × 4 B`, sized at the largest
+origin's 21-month sub-block and sliced per origin (`D25`; the count varies 13,558 … 15,217, see
+`docs/ORIGIN_WINDOW_BUDGET.md`). **~80 MB is the 24-month figure and is wrong — it silently assumes
+training runs on the validation months too, which is `D24`'s leak.** Load it to GPU once and batch by
+index-slicing it.
 
 - **No `Dataset`. No `DataLoader`. No workers.** At ~280k parameters the run is dominated by data
   movement and Python overhead, which a per-item loader maximises. Root §10.3 gives the numbers.
@@ -59,8 +69,19 @@ are required for the DM test, per-regime analysis, and the economic evaluation, 
 grid because only metrics were saved is an expensive, avoidable mistake. A run is complete only when
 both exist and `meta.status == "complete"`; anything else is re-run from scratch.
 
-## Before writing pipeline code
+## What exists here now
 
-The environment is unresolved (root §16): `pyproject.toml` declares `requires-python >= 3.14` with
-three dependencies, none of them torch, and torch wheel availability on 3.14 is unverified.
-`requirements.txt` is a UTF-16 dump of the superseded project. Resolve this first.
+```
+itransformer_btc/config.py     design constants + the derived 15-origin grid
+itransformer_btc/segments.py   segment law, break measurement, artifact loading
+itransformer_btc/windows.py    timestamp-validated window enumeration
+itransformer_btc/budget.py     per-origin accounting — root §11's assertion target
+```
+
+`tests/test_data_plane.py` runs the assertable half of root §11 against the real artifact. Run it
+before anything else: it is what found `D51`.
+
+Still missing, in dependency order: `features.py` (the twelve variates), `scaler.py`, `splits.py`,
+`model.py`, `train.py`, `run.py`. The environment is resolved (root §16) — `polars` is a core
+dependency, `torch` sits behind the `train` extra and is **not installed locally yet**, so no timing
+measurement has been taken and §10.3's 60–100 s per run remains an estimate with no empirical basis.
