@@ -308,8 +308,12 @@ Twelve variates total. Pinned definitions (`D12`, `D13`, `D14`):
   deterministic product of two other K=8 members; it weakens the claim that K=8 is the rung of
   maximum effective rank, and the measured participation ratio settles it.
 - **F2 estimators are per-bar, with no trailing average** — see §5.3. All three are provably ≥ 0
-  given `H ≥ max(O,C)` and `L ≤ min(O,C)`, and are strictly positive once `H == L` bars are excluded
-  by the segment law (§4.3), so `log` is total.
+  given `H ≥ max(O,C)` and `L ≤ min(O,C)`. **Only two of the three are strictly positive once
+  `H == L` bars are excluded** (`D52`): Parkinson is `∝ (ln H/L)²`, and Garman–Klass is bounded below
+  by `0.114 (ln H/L)²` because `2ln2 − 1 ≈ 0.386 < 0.5` and `|ln(C/O)| ≤ ln(H/L)`. **Rogers–Satchell
+  is not**: it vanishes on any shadowless bar — H equal to one of O/C and L equal to the other — and
+  33 such bars exist. It therefore uses `log(RS + 1e-9)`; the constant, its justification and the
+  measured distribution are in `D52a`. `log` is total for the other two as written.
 - `log(C/O)` is **not** a variate. Crypto bars are contiguous, so `log(C/O) ≈ r` at ρ ≈ 0.99 —
   silent duplication that inflates K without inflating K_eff, corrupting RQ1's own axis.
 
@@ -587,10 +591,18 @@ walk in price implies zero expected return; using the last return gives a weaker
 flatters your results. But §9.1 fixes all metrics on **standardised** log-returns and §6.3 confirms
 the target is a channel of the scaled array, `z = (r − μ_g)/σ_g` with `μ_g` fitted on the 21-month
 sub-block. Setting `ŷ_z = 0` therefore means `r̂ = μ_g` — the training-window **mean hourly return** —
-so the "EMH baseline" would silently be a constant-drift model. This is material, not pedantic: over
-a bull training window `μ_g/σ_g ≈ 0.037`, whose square is ~35% of the `R²_oos ≈ 0.004` D20
-anticipates, and over 24 steps the tilt is ≈ 0.18σ of systematic **long bias** in exactly the
-cumulative signal §13.5 trades on. Worse, `μ_g` varies by origin with the bull/bear cycle — the same
+so the "EMH baseline" would silently be a constant-drift model. This is material, not pedantic — **though smaller than
+this section first claimed** (`D52`). Measured across all fifteen origins, `μ_g/σ_g` ranges
+−0.00818 … **+0.01733**, the maximum at origin 2025-01; the figure `0.037` written here before
+anything was measured is roughly **2× too large**. Its square is then 3.0e-4, about **7.5%** of the
+`R²_oos ≈ 0.004` D20 anticipates rather than 35%, and the 24-step tilt is ≈ **0.085σ** of systematic
+long bias rather than 0.18σ, in exactly the cumulative signal §13.5 trades on.
+
+The correction does not weaken the argument, and one detail sharpens it: `μ_g/σ_g` **changes sign
+across origins** — negative at 2020-01, 2022-12, 2023-05, 2023-10, 2024-03, positive elsewhere — so
+the nuisance is not a constant tilt that a reader could mentally subtract. It tracks the bull/bear
+cycle H2 invokes as its own mechanism, which is precisely why it is confounded with the effect of
+interest and does not wash out. Worse, `μ_g` varies by origin with the bull/bear cycle — the same
 cycle H2 invokes as its mechanism — so the nuisance is confounded with the effect of interest and
 does not wash out.
 
@@ -1059,8 +1071,32 @@ data movement and Python overhead.
 | **GPU-resident, no DataLoader** | ~60–100 s | **≈ 10–20 wall-hours** — two sessions, inside one week's quota |
 | Naive `DataLoader`, 4 workers | ~10× worse | ~100–200 h — **exceeds the weekly quota outright** |
 
-Both numbers are stated so the regime is understood as load-bearing, not stylistic. Replace this
-estimate with the first real measurement.
+Both numbers are stated so the regime is understood as load-bearing, not stylistic.
+
+**First real measurement, 2026-08-06** — `itr_o01_K08_H024_s42`, the run this table's estimate was
+written for:
+
+| Quantity | Measured |
+|---|---|
+| Wall time | **97.8 s**, 10 epochs (early stop), 13,924 training windows, 436 steps/epoch |
+| Per epoch | **9.8 s** — the transferable number; wall time depends on where early stopping lands |
+| Device | **CPU, 6 threads.** No CUDA device was available locally |
+| Parameters | 280,472, matching §6.2's "≈ 280k" exactly |
+
+**This does not confirm the 60–100 s figure, and must not be read as confirming it.** The estimate is
+for a **T4**, and the T4 measurement has not been taken. What it does establish is that the estimate's
+*order of magnitude* survives contact: 837 runs × ~98 s ÷ 2 workers ≈ 11 wall-hours, inside the
+10–20 h the table claims and inside one 30 h weekly quota. It also establishes the regime — the
+GPU-resident path was implemented as specified, with no `DataLoader`, and the whole training split is
+42.8 MB at K=8. Take the T4 number on the first Kaggle session and replace this block.
+
+**The first result, recorded because §12 requires every number be regenerable.** On origin 1's six
+test blocks: `MSE_model = 1.3194`, `MSE_naive = 1.2956`, **`RelMSE = 1.0183`, `R²_oos = −0.0183`** —
+the model is 1.8% *worse* than Naive-RW. One origin, one seed, one rung out of 837 runs, so it is
+evidence about nothing in §3 yet. It is worth stating for one reason: `D20` anticipates
+`R²_oos ≈ +0.004`, and the first measurement is negative and four times larger in magnitude. If that
+survives the grid, RQ2's `A(i,b)` is a ratio of two negative skills and §9.1's guard on
+`R²_oos(i,1) ≤ 0` stops being an edge case and becomes the common case. Watch it.
 
 **Use both GPUs as two independent workers**, one pinned per `cuda:N`, pulling from a shared run
 queue. **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather transfer costs more than
@@ -1437,7 +1473,26 @@ consistency and execution, and every one of these sits in exactly that gap.
 Also corrected: the largest training tensor is **70.12 MB**, not "≤ 70 MB" (`D25` rounded the wrong
 way), and the training-window floor is **13,558**, not 13,558.
 
-New contradictions found later take IDs **D52+**. Absorbing one silently is the exact failure this
+### Fourth pass — defects found by building the model, 2026-08-06
+
+`D51` came from asserting the *data* accounting. **`D52` came from building the features and the
+network**, which is a different surface and produced a different class of defect: two claims in this
+document that are provably false about the mathematics, and two magnitudes that were written before
+anything was measured.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D52a | F | §5.1 asserts all three F2 estimators are "strictly positive once `H == L` bars are excluded", so their logs are total. **False for Rogers–Satchell.** `ln(H/C)·ln(H/O) + ln(L/C)·ln(L/O)` vanishes on any bar with no shadows at all — H equal to one of O/C, L equal to the other. Such a bar has `H > L`, carries real information, and passes the segment law: it is a marubozu. Measured: **33 of 75,091 usable bars**, and `log 0 = −∞` propagates into the K=12 rung | The claim holds for Parkinson (∝ `(ln H/L)²`) and Garman–Klass (≥ `0.114 (ln H/L)²`, since `2ln2−1 ≈ 0.386 < 0.5`); restate it for those two only. Rogers–Satchell uses `log(RS + κ)` with **κ = 1e-9 fixed**, chosen so `log κ = −20.7` lands inside the measured support (median −10.91, 0.1st pct −17.57, min −23.5) rather than as 33 out-of-support spikes that would distort the instance normalisation of every window containing one and smuggle a categorical marubozu flag into a continuous variate. Not applied to the other two: their minima are 1.16e-8 and 1.48e-8, where κ would shift the smallest values ~8% for nothing. Disclose in §4.1b |
+| D52b | C | §7 states `μ_g/σ_g ≈ 0.037` on a bull window, "~35% of `R²_oos`", "≈ 0.18σ over 24 steps". Written before measurement | Measured across all 15 origins: **−0.00818 … +0.01733**, so ~2× smaller; square is **7.5%** not 35%; tilt **0.085σ** not 0.18σ. The argument survives and in one respect strengthens — `μ_g/σ_g` **changes sign** across origins, so it is not a constant a reader can subtract. §7 corrected |
+| D52c | U | The training-window count in `ORIGIN_WINDOW_BUDGET.md` is measured on the **raw** usable bars, but windows are cut from the **feature** frame, and §4.3 drops the first bar of each segment because `r` is per-segment. The tensors therefore hold 0 … 13 fewer windows than the table asserts, one per segment | Both numbers are right about different frames. State the assertion target as the **feature frame** — `13,545 … 15,217` — and keep the raw-frame table as the gap-accounting document. The delta is exactly the segment count and is asserted as such |
+| D52d | I | The single-batch overfit check in §16 cannot pass as written: with `dropout=0.1` active the loss floors well above zero, and a reader following it literally concludes the plumbing is broken | Run it with `dropout=0.0`. Measured: **8.26e-10** after 200 steps on 8 samples — pass. With dropout left on, 6.8e-2 |
+
+Confirmed correct by measurement, and worth recording because each was an assumption: parameter
+count is **280,472** and **identical at every rung** (§6.2's claim, exact); `MSE(c·x)/c² == MSE(x)`
+holds to 5e-5 relative (`D03`); `log_mean_trade_size` equals `log_quote_volume − log_trade_count` to
+the last bit, confirming F3's 2-dof claim.
+
+New contradictions found later take IDs **D53+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---
@@ -1487,8 +1542,11 @@ The source specification's §6.2 purge snippet is pandas and must be **re-expres
 `meta/*.json`.
 
 **Before any long run.** Overfit a single batch: if the model cannot drive loss to ~0 on 8 samples
-in 200 steps, the plumbing is broken. Compute and log the **Naive-RW baseline first**, before any
-model trains.
+in 200 steps, the plumbing is broken. **Run it with `dropout=0.0`** (`D52`) — with the configured
+0.1 still active the loss floors around 7e-2 and a reader following the instruction literally
+concludes the plumbing is broken when it is not. Measured on the real pipeline: **8.26e-10** with
+dropout off, 6.8e-2 with it on. Compute and log the **Naive-RW baseline first**, before any model
+trains.
 
 **Environment — resolved 2026-08-06.** `pyproject.toml` now declares `requires-python >= 3.11`
 (was `>= 3.14`, with torch undeclared and its wheel availability there unverified). Core dependencies

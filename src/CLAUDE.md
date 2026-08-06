@@ -76,12 +76,22 @@ itransformer_btc/config.py     design constants + the derived 15-origin grid
 itransformer_btc/segments.py   segment law, break measurement, artifact loading
 itransformer_btc/windows.py    timestamp-validated window enumeration
 itransformer_btc/budget.py     per-origin accounting — root §11's assertion target
+itransformer_btc/features.py   the twelve variates, per-bar, in ladder order
+itransformer_btc/splits.py     window semantics per split, the scaler, the tensors
+itransformer_btc/model.py      encoder-only iTransformer + the uniform-attention arm
+itransformer_btc/train.py      training loop, run identity, the two artifacts
 ```
 
-`tests/test_data_plane.py` runs the assertable half of root §11 against the real artifact. Run it
-before anything else: it is what found `D51`.
+`tests/test_data_plane.py` runs the assertable half of root §11 against the real artifact;
+`tests/test_model_plane.py` checks what root §5, §6 and §8 claim about the mathematics. **34 tests.**
+Run them before anything else — between them they found `D51` and `D52`, and several assert a claim
+that was false the first time it ran.
 
-Still missing, in dependency order: `features.py` (the twelve variates), `scaler.py`, `splits.py`,
-`model.py`, `train.py`, `run.py`. The environment is resolved (root §16) — `polars` is a core
-dependency, `torch` sits behind the `train` extra and is **not installed locally yet**, so no timing
-measurement has been taken and §10.3's 60–100 s per run remains an estimate with no empirical basis.
+Still missing, in dependency order: the baselines (`Naive-RW` is already computable from the scaler,
+but ARIMA, LSTM, DLinear, PatchTST and ridge are not), `metrics.py` (RelMSE, `R²_oos`, `A`, `D`, DA),
+the K_eff measurement of §5.4, and the Kaggle run-queue launcher.
+
+**One run has been executed end to end**: `itr_o01_K08_H024_s42`, 97.8 s on **CPU** — no CUDA device
+is available locally, so §10.3's 60–100 s per-run figure is still a T4 estimate and is **not**
+confirmed. The transferable number is **9.8 s/epoch**. Take the T4 measurement on the first Kaggle
+session.

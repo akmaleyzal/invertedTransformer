@@ -224,3 +224,7 @@ database/*.duckdb
 database/*.parquet
 
 .venv/
+# Run artifacts: regenerable from src/ + the pinned input sha256 (CLAUDE.md section 12).
+# 837 runs x 2 files does not belong in git; Kaggle Dataset versioning carries them.
+artifacts/preds/
+artifacts/meta/
