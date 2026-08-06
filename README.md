@@ -35,7 +35,11 @@ the artifact schemas, expected numbers to check a break against, and troubleshoo
   the code*, and no amount of re-reading would have produced them.
 - `docs/ORIGIN_WINDOW_BUDGET.md` — per-origin and per-block window accounting. Committed **before**
   any run so the pipeline's assertions have a target they cannot be tuned to.
-- `src/CLAUDE.md`, `notebooks/CLAUDE.md`, `paper/CLAUDE.md` — directory-local rules.
+- `paper/CLAUDE.md` — writing posture, and the **only** directory-local rule file. `src/CLAUDE.md`
+  and `notebooks/CLAUDE.md` were deleted on 2026-08-06: they restated the root at 55–65% overlap, and
+  a subdirectory `CLAUDE.md` loads only when a file in that subtree is touched — so a prohibition
+  living there is absent exactly when it is most needed. Rules whose violation is catastrophic belong
+  in the root, which is always loaded. See §15.
 - `research_specification_itransformer_btc.md`, `reference_library_itransformer_btc.md` — source
   inputs. **Not authority**: where they disagree with `CLAUDE.md`, `CLAUDE.md` wins.
 
