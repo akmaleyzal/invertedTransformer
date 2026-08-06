@@ -13,7 +13,7 @@ instrument. There is no production inference path.
 | Model | iTransformer (PyTorch only), `L=96`, `H=24`, `d_model=128` |
 | Variates | 12, laddered at K ∈ {1, 4, 8, 12} across five information families |
 | Evaluation | Rolling-origin walk-forward, **15 origins at 5-month spacing**, purge at both boundaries, 6 × 30-day test blocks, no retraining |
-| Grid | ≈ 837 runs — main grid, uniform-attention arm, falsification arm, horizon sweep, baselines, ridge |
+| Grid | **789 runs** — 534 iTransformer (main, uniform-attention, falsification, horizon sweep) + 195 baselines + 60 ridge. Not 837: 48 sweep cells share a `run_id` with the main grid (`D53e`) |
 | Hardware | Kaggle 2 × T4, 12 h per session, 30 GPU-h per week |
 
 Three questions: whether added-variate benefit tracks nominal count **K** or effective
@@ -26,9 +26,13 @@ and what **retraining cadence** follows, under a threshold fixed in advance.
 ladder, walk-forward protocol, statistical specification, Kaggle execution and resume protocol,
 anti-leakage checklist, traceability and paper contracts.
 
-- `docs/DIVERGENCE_REGISTER.md` — **50 corrections**, each with its evidence and the manuscript
-  section that must disclose it. `D01–D22` correct the source specifications; `D23–D50` correct
-  `CLAUDE.md` itself, found by a later adversarial audit.
+**`USAGE.md` is the operational companion** — install, the pipeline stage by stage, every command,
+the artifact schemas, expected numbers to check a break against, and troubleshooting.
+
+- `docs/DIVERGENCE_REGISTER.md` — **corrections `D01`–`D53f`**, each with its evidence and the
+  manuscript section that must disclose it. `D01–D22` correct the source specifications; `D23–D50`
+  correct `CLAUDE.md` itself, found by a later adversarial audit; `D51`–`D53` were found by *running
+  the code*, and no amount of re-reading would have produced them.
 - `docs/ORIGIN_WINDOW_BUDGET.md` — per-origin and per-block window accounting. Committed **before**
   any run so the pipeline's assertions have a target they cannot be tuned to.
 - `src/CLAUDE.md`, `notebooks/CLAUDE.md`, `paper/CLAUDE.md` — directory-local rules.
