@@ -1524,11 +1524,12 @@ register exists to prevent.
 invertedTransformer/
 ├── CLAUDE.md                       # this file — project law
 ├── README.md
-├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D50
+├── USAGE.md                        # operational companion: commands, stages, schemas, expected numbers
+├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D53f
 ├── docs/ORIGIN_WINDOW_BUDGET.md    # per-origin/per-block window accounting — D45's assertion target
-├── src/                            # importable package; CLAUDE.md holds code-local rules
-├── notebooks/                      # thin Kaggle launchers only; CLAUDE.md holds the rule
-├── paper/                          # manuscript; CLAUDE.md holds writing rules
+├── src/                            # importable package; module inventory in USAGE.md §2
+├── notebooks/                      # thin Kaggle launchers only
+├── paper/                          # manuscript; CLAUDE.md holds writing posture
 ├── spot_klines_btc.py              # Stage 1 ingest (was mis-named `binance_spot_klines.py`, D11/D33)
 ├── data/raw/                       # IMMUTABLE. the four Stage 1 artifacts live HERE (D33, resolved)
 ├── data/processed/                 # features_1h.parquet, splits.json — the writable half
@@ -1537,7 +1538,28 @@ invertedTransformer/
 
 **Logic lives in the package. A notebook is a launcher.** The superseded
 generate-notebooks-from-a-source-notebook workflow is dead, and logic in a notebook is a defect —
-it is what made the previous pipeline unverifiable and un-unit-testable.
+it is what made the previous pipeline unverifiable and un-unit-testable. If a cell contains a feature
+definition, a window builder, a loss or a metric, it belongs in `src/` where it can be unit-tested on
+CPU. **Never leave a notebook whose outputs are stale relative to `src/`**: outputs are evidence, and
+stale evidence is worse than none.
+
+**Two rules for `src/` that are not derivable from the sections above.** Shuffle by permuting an
+index tensor *on device*, never by moving data — the point of §10.3's GPU-resident regime is that
+data does not move after the initial load. And keep the code device-agnostic: never hard-code
+`.cuda()`, and gate precision on `torch.cuda.get_device_capability(0)[0] >= 8`, never on
+`torch.cuda.is_bf16_supported()`, which returns True on a T4 via emulation and selects a path slower
+than fp32.
+
+**One `CLAUDE.md` per directory is not a goal, and three of the four were deleted for cause
+(2026-08-06).** `src/CLAUDE.md` and `notebooks/CLAUDE.md` restated this file at 55–65% overlap, and
+their non-overlapping content was precisely the content that **must not fail open**: a subdirectory
+`CLAUDE.md` loads only when a file in that subtree is touched, so a prohibition living there is
+absent exactly when an agent reasons about the area without opening a file. Rules whose violation is
+catastrophic — the polars boundary, PyTorch-only, no `DataLoader`, Save & Run All — therefore live
+**here**, where they are loaded every turn. The test for adding a new one: *is this rule local to
+that directory **and** harmless if it fails to load?* `paper/CLAUDE.md` is the only survivor, because
+manuscript posture is the one area where a missed rule costs a weaker paragraph rather than a
+corrupted result. The module inventory that `src/CLAUDE.md` carried lives in `USAGE.md` §2.
 
 ---
 
