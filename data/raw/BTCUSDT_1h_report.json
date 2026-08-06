@@ -4,11 +4,11 @@
   "requested_start_utc": "2018-01-01T00:00:00+00:00",
   "requested_end_utc_exclusive": "2026-08-01T00:00:00+00:00",
   "actual_first_bar_utc": "2018-01-01T00:00:00+00:00",
-  "actual_last_bar_utc": "2026-08-01T00:00:00+00:00",
+  "actual_last_bar_utc": "2026-07-31T23:00:00+00:00",
   "bars_expected": 75216,
-  "bars_actual": 75095,
-  "coverage_pct": 99.8391,
-  "missing_bars": 121,
+  "bars_actual": 75094,
+  "coverage_pct": 99.8378,
+  "missing_bars": 122,
   "gap_blocks": 27,
   "largest_gap_bars": 33,
   "duplicate_timestamps": 0,
@@ -81,10 +81,15 @@
       "coverage_pct": 100.0
     },
     "2026": {
-      "bars": 5089,
+      "bars": 5088,
       "expected": 5088,
-      "coverage_pct": 100.02
+      "coverage_pct": 100.0
     }
   },
-  "generated_at_utc": "2026-08-05T08:28:06.538825+00:00"
+  "generated_at_utc": "2026-08-06T06:38:51.814789+00:00",
+  "artifact_sha256": {
+    "BTCUSDT_1h.parquet": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
+    "BTCUSDT_1h_gaps.csv": "cfab4cf4c20ec00defbc11b94e56facf65549eeef7aef1a42084e3b3e1d70462",
+    "BTCUSDT_1h_raw.jsonl": "30721a663bd2ce58ac21132104b663e0928e68c83ec7f77c29d2c66d1c8d256a"
+  }
 }
