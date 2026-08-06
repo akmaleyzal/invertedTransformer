@@ -25,7 +25,12 @@ from typing import Literal
 import numpy as np
 import polars as pl
 
-from itransformer_btc.config import PRED_LEN, SEQ_LEN, WINDOW_SPAN, Origin
+from itransformer_btc.config import (
+    PRED_LEN,
+    SEQ_LEN,
+    WINDOW_SPAN,
+    OriginLike,
+)
 from itransformer_btc.features import TARGET_INDEX, ladder_columns
 from itransformer_btc.segments import HOUR_MS
 
@@ -132,12 +137,16 @@ class SplitTensors:
 class OriginTensors:
     """Everything one training run consumes, already standardised."""
 
-    origin: Origin
+    origin: OriginLike
     k: int
     scaler: Scaler
     train: SplitTensors
     val: SplitTensors
     test_blocks: tuple[SplitTensors, ...]
+    #: One-indexed block label per entry of ``test_blocks``. ``(1,…,6)`` for a
+    #: normal origin, ``(4, 5, 6)`` for the falsification arm — which is why the
+    #: label is stored rather than recovered from position.
+    block_labels: tuple[int, ...]
 
     @property
     def naive_rw_z(self) -> float:
@@ -172,7 +181,7 @@ def _gather(
 
 def build_origin_tensors(
     features: pl.DataFrame,
-    origin: Origin,
+    origin: OriginLike,
     k: int,
     seq_len: int = SEQ_LEN,
     pred_len: int = PRED_LEN,
@@ -209,6 +218,7 @@ def build_origin_tensors(
     scaler = Scaler.fit(values[train_idx[0] : train_idx[-1] + span], columns)
     scaled = scaler.transform(values)
 
+    blocks = origin.blocks()
     return OriginTensors(
         origin=origin,
         k=k,
@@ -216,8 +226,9 @@ def build_origin_tensors(
         train=_gather(scaled, train_idx, ts, seq_len, pred_len),
         val=_gather(scaled, val_idx, ts, seq_len, pred_len),
         test_blocks=tuple(
-            _gather(scaled, window_starts(ts, *origin.block(b), "origin", span),
+            _gather(scaled, window_starts(ts, lo, hi, "origin", span),
                     ts, seq_len, pred_len)
-            for b in range(1, 7)
+            for _, lo, hi in blocks
         ),
+        block_labels=tuple(label for label, _, _ in blocks),
     )

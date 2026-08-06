@@ -271,7 +271,10 @@ def write_artifacts(
     (root / "meta").mkdir(parents=True, exist_ok=True)
 
     frames = []
-    for b, split in enumerate(tensors.test_blocks, start=1):
+    for b, split in zip(tensors.block_labels, tensors.test_blocks):
+        # The label, not the position: the falsification arm's first tensor is
+        # block 4, and re-indexing it to 1 would silently compare the fresh
+        # model against the aged model's wrong blocks.
         if len(split) == 0:
             continue
         x, _ = _to_device(split, device)
@@ -311,6 +314,8 @@ def write_artifacts(
         "spec": asdict(spec),
         "config": asdict(cfg),
         "origin": tensors.origin.label,
+        "origin_index": tensors.origin.index,
+        "block_labels": list(tensors.block_labels),
         "k": tensors.k,
         "variates": list(tensors.scaler.columns),
         "git_sha": _git_sha(),

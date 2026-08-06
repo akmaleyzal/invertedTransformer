@@ -1492,7 +1492,28 @@ count is **280,472** and **identical at every rung** (§6.2's claim, exact); `MS
 holds to 5e-5 relative (`D03`); `log_mean_trade_size` equals `log_quote_volume − log_trade_count` to
 the last bit, confirming F3's 2-dof claim.
 
-New contradictions found later take IDs **D53+**. Absorbing one silently is the exact failure this
+### Fifth pass — defects found by building the experiment plane, 2026-08-06
+
+`D51` came from asserting the data accounting and `D52` from building the features and the network.
+**`D53` came from building the grid, the K_eff measurement and the metrics** — the three modules that
+turn runs into answers — and from running the Stage 3b gate for the first time.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D53a | F | §5.4's "stable rank of the `K × 96` window block" is a **units artefact** as literally specified. Centring alone leaves `log_quote_volume` deviations two orders of magnitude above `r` deviations, so one row dominates both the Frobenius and the spectral norm. Measured at origin 1: **1.00 / 1.00 / 1.16 / 1.65** across the four rungs — "one effective direction" everywhere, which is a statement about units and not about data | Standardise each channel **within its window** first, which is exactly what `use_norm=True` does before the embedding. The statistic then has a closed form: `K / λ₁` of the within-window correlation matrix, bounded in `[1, K]` and commensurable with the contemporaneous PR. Measured: 1.00 / 2.36 / 2.70 / 2.17 |
+| D53b | F | §5.4's "PR of the `K·L × K·L` **covariance** spectrum" is not monotone in K and is uninterpretable. Measured at origin 1: **92.1 / 21.9 / 37.3 / 15.5** — the collapse from K=1 to K=4 is entirely the arrival of `log_quote_volume` and says nothing about dimensionality | Use the **correlation** spectrum, for the same reason `contemporaneous_pr` does. Its ceiling is `K·L`, so it is reported as a fraction of that ceiling and is **not** on the contemporaneous PR's scale. It is nevertheless the only measure here that sees genuine cross-lag structure; the stable rank sees cross-*variate* structure inside a window. Say which is which in §4.1b |
+| D53c | F | Sharding the **pending** list races. Two workers launched together compute their partition at slightly different moments — one finishes a run while the other is still building features — and the partitions stop being complementary: some groups owned by both, some by neither | Shard the **full manifest**, then subtract what is complete. `execute` skips completed cells anyway, so the filter costs nothing and the partition is deterministic |
+| D53d | C | The wild cluster bootstrap returned a literal **p = 0**. `mean(t* ≤ t_obs)` has no floor, and no finite bootstrap can support that as a probability | `(1 + count)/(1 + B)` (Davison & Hinkley 1997) — the observed statistic belongs to its own reference distribution. At B = 99,999 the floor is 1e-5, and at G = 15 Rademacher's own granularity bounds it near 3e-5 regardless |
+| D53e | C | §10.2's total **double-counts 48 runs**. The horizon sweep's H=24 slice at seeds 42–44 carries the *same* `run_id` as the corresponding main-grid cells, and `run_id` is the identity of a run (§10.4), so 582 nominal iTransformer cells are **534 real runs**. Executing a shared cell twice would mean two files racing for one path | Deduplicate in the manifest. The grid total is **789**, not 837: 534 iTransformer + 195 baselines + 60 ridge. The sweep is still "4 × 4 × 4 × 3 = 192 cells" in the paper; 144 of them are new work |
+| D53f | **U** | **The Stage 3b gate does not pass.** Measured PR at K=8 on the pre-first-origin span is **4.393 < 5.0**, and per-origin PR at **K=12 (3.98) is *lower* than at K=8 (4.27)** — §5.2 expected ~6.5 and ~7. `corr(K, K_eff) = 0.828`, not the ≈0.97 §9.1 anticipated | `D48`'s action is **disclosure, not a re-cut**, and it is taken: the grid proceeds unchanged and §4.1b reports the divergence. Two consequences are substantive rather than procedural. First, the K=12 rung is **more** redundant than designed — §5.2's deliberate-redundancy control is stronger evidence than expected, not weaker. Second, at 0.828 the K-versus-K_eff horse race is **more** identifiable than §9.1 feared, so `D32`'s non-nested comparison is worth running rather than a formality. Fix the hypothesis to the measurement, never the reverse (§5.4) |
+
+Also measured, and recorded because it bears on the Stage 5 gate: at origin 1 with a **single** seed,
+validation MSE is 0.469075 at K=1 against 0.467904 at K=8 — K=8 ahead by 0.25%, Clark–West
+`S* = +0.728, p = 0.233`. That is not the gate, which averages three seeds, but it is the first
+evidence about it and it points the same way as §10.3's `R²_oos = −0.0183`. If the real gate fails,
+§8.5's instruction is to reposition the title to the descriptive variant **now, not in week nine**.
+
+New contradictions found later take IDs **D54+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---

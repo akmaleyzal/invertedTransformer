@@ -72,7 +72,7 @@ both exist and `meta.status == "complete"`; anything else is re-run from scratch
 ## What exists here now
 
 ```
-itransformer_btc/config.py     design constants + the derived 15-origin grid
+itransformer_btc/config.py     design constants, the derived 15-origin grid, FalsificationOrigin
 itransformer_btc/segments.py   segment law, break measurement, artifact loading
 itransformer_btc/windows.py    timestamp-validated window enumeration
 itransformer_btc/budget.py     per-origin accounting — root §11's assertion target
@@ -80,16 +80,31 @@ itransformer_btc/features.py   the twelve variates, per-bar, in ladder order
 itransformer_btc/splits.py     window semantics per split, the scaler, the tensors
 itransformer_btc/model.py      encoder-only iTransformer + the uniform-attention arm
 itransformer_btc/train.py      training loop, run identity, the two artifacts
+itransformer_btc/keff.py       §5.4's pre-model measurement — RQ1's regressor and the Stage 3b gate
+itransformer_btc/metrics.py    §9 — RelMSE, R²_oos, DA/PT, A, A_attn, D, b*, DM/CW, β₁ WCR, TOST, J
+itransformer_btc/runner.py     the 534-run manifest, resume, budget guard, two-GPU launcher
 ```
 
 `tests/test_data_plane.py` runs the assertable half of root §11 against the real artifact;
-`tests/test_model_plane.py` checks what root §5, §6 and §8 claim about the mathematics. **34 tests.**
-Run them before anything else — between them they found `D51` and `D52`, and several assert a claim
-that was false the first time it ran.
+`tests/test_model_plane.py` checks what root §5, §6 and §8 claim about the mathematics;
+`tests/test_experiment_plane.py` checks what §9 and §10 claim about the grid. **53 tests**, all on
+CPU in ~18 s. Run them before anything else — between them they found `D51`, `D52` and `D53`, and
+several assert a claim that was false the first time it ran.
 
-Still missing, in dependency order: the baselines (`Naive-RW` is already computable from the scaler,
-but ARIMA, LSTM, DLinear, PatchTST and ridge are not), `metrics.py` (RelMSE, `R²_oos`, `A`, `D`, DA),
-the K_eff measurement of §5.4, and the Kaggle run-queue launcher.
+**Two GPUs are two independent run *processes*.** Threads are wrong here for a reason worth stating
+once: `torch.manual_seed` seeds **every** CUDA device, so two threads seeding concurrently clobber
+each other's generator mid-run and root §12's reproducibility contract becomes unenforceable. One
+process per GPU with `CUDA_VISIBLE_DEVICES` pinned gives each worker its own global RNG, its own
+interpreter lock and crash isolation, and costs one feature-frame rebuild per worker.
+
+**Shard the full manifest, then subtract what is done — never the reverse** (`D53c`). Sharding the
+*pending* list makes the partition a function of how many runs happen to be complete at that instant,
+so two workers starting seconds apart get partitions that are not complementary.
+
+Still missing: the **comparison baselines** — ARIMA, LSTM, DLinear, PatchTST and ridge. Naive-RW is
+already computable from the scaler and is what every RelMSE in `metrics.py` divides by, so RQ1, RQ2
+and RQ3 are all answerable without them; the baselines are for Table 4's positioning and Table 6's DM
+matrix, a separate ~255 runs. Also missing: the economic evaluation of §13.5.
 
 **One run has been executed end to end**: `itr_o01_K08_H024_s42`, 97.8 s on **CPU** — no CUDA device
 is available locally, so §10.3's 60–100 s per-run figure is still a T4 estimate and is **not**
