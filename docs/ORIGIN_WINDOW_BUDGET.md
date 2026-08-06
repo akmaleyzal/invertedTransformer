@@ -51,6 +51,26 @@ segment-wise, `Σ max(0, nᵢ − 119)`.
 Training-window range **13,558 … 15,217** — a **10.9%** spread, monotone in calendar time. Largest
 training tensor: `15,217 × 96 × 12 × 4 B` = **70.12 MB**.
 
+**These counts are on the raw bar frame. The tensors are cut from the feature frame, which holds one
+fewer bar per segment (`D52c`).** `r` is computed per segment, so the first bar of each segment
+yields a null and is dropped (§4.3) — costing exactly one window per segment that clears a span. The
+two frames are both right about different things, and **the assertion target for a training run is
+the feature-frame count**:
+
+| Origin | Raw-frame | Feature-frame | Δ | | Origin | Raw-frame | Feature-frame | Δ |
+|---|---:|---:|---:|---|---|---:|---:|---:|
+| 2020-01 | 13,934 | **13,924** | −10 | | 2022-12 | 14,285 | **14,278** | −7 |
+| 2020-06 | 13,701 | **13,689** | −12 | | 2023-05 | 15,021 | **15,019** | −2 |
+| 2020-11 | 13,741 | **13,729** | −12 | | 2023-10 | 15,072 | **15,071** | −1 |
+| 2021-04 | 13,716 | **13,704** | −12 | | 2024-03 | 15,120 | **15,119** | −1 |
+| 2021-09 | 13,560 | **13,547** | −13 | | 2024-08 | 15,096 | **15,095** | −1 |
+| 2022-02 | 13,558 | **13,545** | −13 | | 2025-01 | 15,096 | **15,095** | −1 |
+| 2022-07 | 14,165 | **14,157** | −8 | | 2025-06 | 15,217 | **15,217** | 0 |
+| | | | | | 2025-11 | 15,217 | **15,217** | 0 |
+
+Feature-frame range **13,545 … 15,217**. The subsampling floor `D45` prescribes is therefore
+**13,545**, not 13,558 and emphatically not 13,520.
+
 ## What changed against the derived table, and why
 
 Three independent causes, none of them arithmetic slips:
