@@ -1,0 +1,1007 @@
+"""Assemble ``notebooks/iTransformer.ipynb`` from ``src/itransformer_btc/``.
+
+Root §15 says logic lives in the package and a notebook is a launcher. `D54`
+keeps that rule and changes only *where the package comes from*: the notebook
+carries the package in ``%%writefile`` cells and materialises it on the machine
+that runs it, so a Kaggle session needs the notebook and the immutable data
+artifact and nothing else — no repository Dataset, no ``src/`` on ``sys.path``.
+
+**The notebook is generated, never hand-edited.** Two copies of 4,000 lines
+drifting apart is a worse defect than the one this solves, so the copy inside the
+notebook is written from ``src/`` by this script and
+``tests/test_notebook_sync.py`` asserts the two are byte-identical. Edit
+``src/``, re-run this, commit both.
+
+Usage::
+
+    python tools/build_notebook.py            # writes notebooks/iTransformer.ipynb
+    python tools/build_notebook.py --check    # exit 1 if the notebook is stale
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import textwrap
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PACKAGE = ROOT / "src" / "itransformer_btc"
+NOTEBOOK = ROOT / "notebooks" / "iTransformer.ipynb"
+
+#: Dependency order. The files are only *written* by those cells, so ordering
+#: cannot break an import — but a reader scrolling the notebook meets each module
+#: after the ones it uses, which is the whole reason to keep twelve cells rather
+#: than one 4,000-line cell.
+MODULE_ORDER: tuple[str, ...] = (
+    "__init__.py",
+    "config.py",
+    "segments.py",
+    "windows.py",
+    "budget.py",
+    "features.py",
+    "splits.py",
+    "model.py",
+    "train.py",
+    "keff.py",
+    "metrics.py",
+    "runner.py",
+)
+
+WRITEFILE_TARGET = "itransformer_btc/{name}"
+
+
+# -- prose -------------------------------------------------------------------
+
+MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, #1b2a4a); border-radius: 16px; padding: 36px 40px; margin-bottom: 8px;">
+  <h1 style="color: #8ecae6; font-size: 2.3em; font-weight: 800; margin: 0 0 10px 0; letter-spacing: 0.5px;">
+    &#9889; iTransformer &middot; Walk-Forward BTCUSDT 1h
+  </h1>
+  <p style="color: #ffb703; font-size: 1.12em; margin: 0 0 18px 0; font-weight: 500;">
+    Nominal Variates or Effective Dimensionality? &mdash; 15 origins &middot; 534 runs &middot; 2 &times; T4
+  </p>
+  <hr style="border: none; border-top: 1px solid #2a4365; margin: 16px 0;">
+  <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
+    <strong>Self-contained.</strong> This notebook needs exactly two things: itself, and
+    <code>BTCUSDT_1h.parquet</code> attached as a Kaggle Dataset. It carries the whole
+    <code>itransformer_btc</code> package in the <em>Materialise</em> cells below and writes it to
+    disk before importing it &mdash; there is no repository to attach and no <code>src/</code> on
+    <code>sys.path</code>.
+  </p>
+  <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
+    <strong>It is still a launcher, not a program.</strong> Every definition &mdash; the twelve
+    variates, the segment law, the window semantics, the scaler, the model, the metrics, the
+    tests &mdash; lives in the materialised package, unit-tested on CPU. A cell here that
+    <em>defined</em> a feature or a loss would be a defect. <strong>Do not hand-edit the
+    <em>Materialise</em> cells:</strong> they are generated from <code>src/itransformer_btc/</code>
+    by <code>tools/build_notebook.py</code>, and <code>tests/test_notebook_sync.py</code> fails if
+    the two ever diverge.
+  </p>
+  <p style="color: #7f9cc0; font-size: 0.93em; margin: 0;">
+    Answers <strong>RQ1</strong> (does benefit track K or K<sub>eff</sub>?),
+    <strong>RQ2</strong> (does the multivariate gap narrow with model age?),
+    <strong>RQ3</strong> (what retraining cadence?) &mdash; all three pre-registered before any
+    model ran, and none of them changeable now without declaring a new experiment.
+  </p>
+</div>"""
+
+MD_SETUP = """<div style="background: linear-gradient(90deg, #0b1021, #112240); border-left: 4px solid #8ecae6; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #8ecae6; margin: 0 0 8px 0;">&#128295; 0 &middot; Setup</h2>
+  <p style="color: #b8c7e0; margin: 0;">Find the immutable artifact by globbing, never by dataset slug. Install only what the Kaggle image lacks.</p>
+  <p style="color: #7f9cc0; margin: 12px 0 0 0; font-size: 0.9em;">Kaggle ships its own torch and
+    pyarrow; pinning them against a local venv is forbidden. <code>/kaggle/input</code> is read-only,
+    everything is written to <code>/kaggle/working</code>. The parquet is <strong>not</strong>
+    re-downloaded here even though Stage 1 could: a fresh download is a new vintage, and &sect;12
+    forbids numbers from two vintages sharing a table.</p>
+</div>"""
+
+MD_MATERIALISE = """<div style="background: linear-gradient(90deg, #0a1a12, #0f2a1c); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128230; 0b &middot; Materialise the package</h2>
+  <p style="color: #b8c7e0; margin: 0;">Twelve <code>%%writefile</code> cells reconstruct <code>itransformer_btc/</code> on this machine. Generated &mdash; do not hand-edit.</p>
+  <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
+    <li><strong>Why files, and not definitions in cells.</strong> The grid runs as <strong>two
+    subprocesses</strong>, one pinned per GPU (&sect;10.3). A subprocess is a fresh interpreter: it
+    inherits none of this kernel's namespace and can reach the code only by importing it, so the
+    code has to exist on disk. Threads would avoid that and are rejected &mdash;
+    <code>torch.manual_seed</code> seeds <em>every</em> CUDA device, so two threads would clobber
+    each other's generator mid-run and &sect;12's reproducibility contract would be
+    unenforceable.</li>
+    <li><strong>Run these top to bottom, once.</strong> <em>Save Version &rarr; Save &amp; Run All</em>
+    does exactly that. Each cell overwrites one file, so a re-run is idempotent rather than
+    additive.</li>
+    <li><strong>The digest is the provenance.</strong> There is no git repository on Kaggle, so
+    <code>meta/*.json</code> records <code>code_sha256</code> &mdash; the hash of these twelve files
+    &mdash; where &sect;12 asks for a git sha (<code>D54</code>).</li>
+  </ul>
+</div>"""
+
+MD_DATA = """<div style="background: linear-gradient(90deg, #1a1200, #2b1d00); border-left: 4px solid #ffb703; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #ffb703; margin: 0 0 8px 0;">&#128202; 1 &middot; Data &amp; integrity &mdash; Stage 2</h2>
+  <p style="color: #b8c7e0; margin: 0;">Load the immutable artifact and assert the window budget per origin, by exact equality.</p>
+  <ul style="color: #e0c68a; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
+    <li><strong>No imputation anywhere.</strong> When the exchange is down no price forms, so
+    imputation is <em>undefined</em>, not merely risky &mdash; Rubin's taxonomy applies to values
+    that exist but went unobserved.</li>
+    <li><strong>Per origin, exact equality</strong> (<code>D45</code>). Asserted against the pooled
+    4.9% it fires spuriously at fourteen of fifteen origins, gets loosened until it passes, and then
+    can no longer distinguish positional drift from ordinary between-origin variation.</li>
+    <li>Test blocks hold <strong>720</strong> forecast origins, not 601 (<code>D51b</code>): a test
+    window's lookback may cross backwards, a training window's target may not cross forwards.</li>
+    </ul>
+</div>"""
+
+MD_VARIATES = """<div style="background: linear-gradient(90deg, #001a1a, #002b2b); border-left: 4px solid #48cae4; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #48cae4; margin: 0 0 8px 0;">&#129514; 2 &middot; The twelve variates</h2>
+  <p style="color: #b8c7e0; margin: 0;">Per-bar functions of the current bar, except r, which uses the current and previous close. No rolling window anywhere.</p>
+  <p style="color: #a5e8f0; margin: 10px 0 0 0; font-size: 0.92em;">That is a structural safety
+    property, not a style choice: with no rolling window in the pipeline, the
+    <code>center=True</code> leak class is <em>unrepresentable</em>. Column order is ladder order, so
+    rung K is exactly the first K columns and <code>r</code> is channel 0 at every rung &mdash; which
+    makes the single-channel loss one constant rather than a lookup.</p>
+</div>"""
+
+MD_KEFF = """<div style="background: linear-gradient(90deg, #150029, #22003d); border-left: 4px solid #c77dff; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #c77dff; margin: 0 0 8px 0;">&#128209; 3 &middot; Effective dimensionality &mdash; Stage 3b</h2>
+  <p style="color: #b8c7e0; margin: 0;">K_eff is RQ1's independent variable and it is measured before a single epoch runs.</p>
+  <ul style="color: #d8b4fe; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
+    <li><strong>Per origin, on that origin's own 21-month training sub-block</strong>
+    (<code>D44</code>). A full-sample PR would be estimated on the same data as the outcome, making
+    RQ1 partly circular &mdash; the one leakage path that survived every checklist item, because
+    &sect;11 audits only the gate.</li>
+    <li><strong>The gate reads the pre-first-origin span alone</strong> (<code>D02</code>), trigger
+    pre-registered at PR &lt; 5.0. Its action is <em>disclosure, not a re-cut</em>
+    (<code>D48</code>): <code>D01</code> leaves no second consistent cut over F1&ndash;F5, so
+    "re-cut the ladder" named no reachable alternative.</li>
+    <li>Reported on <strong>window-normalised</strong> features too (<code>D04</code>) &mdash;
+    <code>use_norm</code> strips volatility <em>level</em>, so the 8&rarr;12 rung can flatten for a
+    reason that has nothing to do with redundancy.</li>
+    </ul>
+</div>"""
+
+MD_INVARIANTS = """<div style="background: linear-gradient(90deg, #002200, #003300); border-left: 4px solid #7ae582; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #7ae582; margin: 0 0 8px 0;">&#128295; 4 &middot; Pre-flight invariants &mdash; Stage 4</h2>
+  <p style="color: #b8c7e0; margin: 0;">Three checks that must pass before the grid. Each failed the first time it ran.</p>
+  <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
+    <li><code>MSE(c&middot;x)/c&sup2; == MSE(x)</code>, <strong>not</strong>
+    <code>MSE(c&middot;x) == MSE(x)</code> (<code>D03</code>) &mdash; the target is a channel of the
+    same array, so it scales too and the loss scales by c&sup2;. The source specification's version
+    cannot pass.</li>
+    <li>Single-batch overfit with <strong><code>dropout=0.0</code></strong> (<code>D52d</code>). With
+    the configured 0.1 still on, the loss floors near 7e-2 and a reader following the instruction
+    literally concludes the plumbing is broken when it is not.</li>
+    <li>The <strong>Naive-RW baseline is computed first</strong>, before any model trains, and it is
+    <code>&#375;<sub>z</sub> = &minus;&mu;<sub>g</sub>/&sigma;<sub>g</sub></code> &mdash; never 0
+    (<code>D31</code>), which would silently be a constant-drift model wearing the EMH baseline's
+    name.</li>
+    </ul>
+</div>"""
+
+MD_GATE = """<div style="background: linear-gradient(90deg, #2b0a00, #3d1000); border-left: 4px solid #ff7b54; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #ff7b54; margin: 0 0 8px 0;">&#128737; 5 &middot; Stage 5 gate &mdash; validation only</h2>
+  <p style="color: #b8c7e0; margin: 0;">Origin 1, 4 K x 3 seeds, scored on the validation sub-block. The test blocks stay shut.</p>
+  <p style="color: #ffc4a3; margin: 10px 0 0 0; font-size: 0.92em;">
+    &sect;11 requires the test blocks be opened once, after the design is frozen, so a gate that
+    repositions the title on a test-block result cannot coexist with it (<code>D27</code>). The
+    statistic is <strong>Clark&ndash;West, not DM</strong> (<code>D29</code>): K=1's feature set is a
+    strict subset of K=8's under the same architecture and sample, and standard DM is systematically
+    undersized against exactly the alternative being tested. The gate is
+    <strong>K=1 vs K=8, never K=12</strong> &mdash; K=12 is built to be redundant, and gating on it
+    would kill a viable paper for the wrong reason. The twelve cells are ordinary main-grid
+    <code>run_id</code>s, so the grid below skips them.</p>
+</div>"""
+
+MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); border-left: 4px solid #4cc9f0; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid &mdash; 2 &times; T4</h2>
+  <p style="color: #b8c7e0; margin: 0;">534 unique runs across four arms. One process per GPU, resume automatic, budget guard at run boundaries.</p>
+  <ul style="color: #a9d6f5; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
+    <li><strong>main 300</strong> &middot; <strong>uniform 75</strong> (<code>D50</code>) &middot;
+    <strong>fresh 15</strong> (falsification) &middot; <strong>horizon 144</strong>. The sweep's
+    H=24 slice shares 48 <code>run_id</code>s with the main grid, so 582 nominal cells are 534 real
+    runs &mdash; executing one twice would mean two files racing for one path.</li>
+    <li><strong>Processes, not threads.</strong> <code>torch.manual_seed</code> seeds
+    <em>every</em> CUDA device, so two threads would clobber each other's generator mid-run and
+    &sect;12's reproducibility contract would be unenforceable. Each child is told where the
+    materialised package is, via <code>PYTHONPATH</code>, and which artifact it read, via
+    <code>ITBTC_PARQUET</code>.</li>
+    <li><strong>No <code>DataLoader</code>.</strong> At ~280k parameters the run is dominated by data
+    movement and Python overhead, which a per-item loader maximises &mdash; roughly 10&times; worse,
+    which puts the grid outside the 30 h weekly quota outright.</li>
+    <li>Run <em>Save Version &rarr; Save &amp; Run All</em>, never the editor: the 20-minute idle
+    timeout kills interactive sessions, and hitting the 12 h wall interactively loses
+    <code>/kaggle/working</code> entirely.</li>
+    <li><strong>Resume granularity is one run, ~90 s.</strong> A run counts as complete only when
+    both <code>preds/</code> and <code>meta/</code> exist and <code>meta.status ==
+    "complete"</code>, so a session cut short at run 200 of 534 loses at most the one run in flight
+    per GPU. The next session subtracts what is done and continues &mdash; there is no bookkeeping
+    to do by hand and no state beyond the files themselves. Intra-run checkpointing is deliberately
+    omitted: at ~90 s per run it costs more complexity than it saves.</li>
+    <li><strong>The budget guard bounds the session, not the worker.</strong> Kaggle's 12 h wall
+    starts at cell 0, so the prelude &mdash; data, K<sub>eff</sub>, invariants, the twelve pilot
+    runs &mdash; is subtracted before the workers are given their budget. Counting from the worker's
+    own start would let the two clocks drift apart by exactly however long the prelude took.</li>
+  </ul>
+</div>"""
+
+MD_EVAL = """<div style="background: linear-gradient(90deg, #2d0036, #4a0060); border-left: 4px solid #e0aaff; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #e0aaff; margin: 0 0 8px 0;">&#128200; 7 &middot; Evaluation &mdash; RQ1, RQ2, RQ3</h2>
+  <p style="color: #b8c7e0; margin: 0;">Every number below resolves to a persisted prediction file and a config hash, or it does not enter the manuscript.</p>
+  <p style="color: #d8b4fe; margin: 10px 0 0 0; font-size: 0.92em;">Ratio metrics are formed
+    from <strong>seed-averaged MSEs</strong>, never from an average of per-seed ratios
+    (<code>D42</code>): the two differ by Jensen, and the second would require pairing seed 42 at K=1
+    with seed 42 at K=8 &mdash; independent training runs of different models, where any of 5!
+    orderings gives a different answer.</p>
+</div>"""
+
+MD_SAVE = """<div style="background: linear-gradient(90deg, #150029, #240046); border-left: 4px solid #bf5af2; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #bf5af2; margin: 0 0 8px 0;">&#128190; 8 &middot; Save</h2>
+  <p style="color: #b8c7e0; margin: 0;">Every table and figure is generated FROM paper_numbers.json, never transcribed.</p>
+  <p style="color: #c77dff; margin: 10px 0 0 0; font-size: 0.92em;">Numbers produced under
+    different input-artifact hashes are not comparable and must not share a table, so the parquet
+    digest travels with them &mdash; and so does <code>code_sha256</code>, which is what identifies
+    the code off-repo. A number that cannot be regenerated is a documented failure, not a
+    footnote.</p>
+</div>"""
+
+
+# -- code cells --------------------------------------------------------------
+
+CODE_SETUP = r'''import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# Kaggle's 12 h wall runs from HERE, not from the moment the workers start. The
+# budget guard lives inside each worker and counts from its own start, so the
+# prelude — data, K_eff, invariants, the twelve pilot runs — would sit outside
+# the budget entirely and the two clocks would drift apart by however long it
+# took. Cell 6 subtracts this. Losing /kaggle/working to the wall costs the whole
+# session's runs, so the margin is not somewhere to be approximate.
+SESSION_T0 = time.perf_counter()
+
+ON_KAGGLE = Path("/kaggle/working").exists()
+WORK = (Path("/kaggle/working") if ON_KAGGLE else Path.cwd()).resolve()
+ARTIFACTS = WORK / "artifacts"
+ARTIFACTS.mkdir(parents=True, exist_ok=True)
+
+# `%%writefile` resolves against the process working directory, so the package
+# has to land beside the artifacts whichever machine this is. Kaggle already
+# starts in /kaggle/working; a local run started from notebooks/ does not.
+if Path.cwd().resolve() != WORK:
+    os.chdir(WORK)
+(WORK / "itransformer_btc").mkdir(parents=True, exist_ok=True)
+if str(WORK) not in sys.path:
+    sys.path.insert(0, str(WORK))
+
+
+def ensure(module: str, pip_name: str | None = None) -> None:
+    """Install only what is genuinely missing.
+
+    Kaggle ships torch, numpy, pyarrow and usually polars. Pinning any of them
+    against a local venv is forbidden by root section 16 — the image wins.
+    """
+    try:
+        __import__(module)
+    except ImportError:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-q", pip_name or module]
+        )
+
+
+for _mod in ("polars", "pyarrow", "numpy", "torch"):
+    ensure(_mod)
+
+
+def find_parquet() -> Path:
+    """Locate BTCUSDT_1h.parquet by globbing — never by Kaggle dataset slug.
+
+    Root section 10.5: discovery is by glob so the Dataset can be renamed without
+    editing anything. Both upload shapes are covered — the four Stage 1 files
+    uploaded flat, and the whole repository uploaded with data/raw/ inside it.
+    """
+    patterns = (
+        "data/raw/BTCUSDT_1h.parquet",
+        "*/data/raw/BTCUSDT_1h.parquet",
+        "BTCUSDT_1h.parquet",
+        "*/BTCUSDT_1h.parquet",
+        "*/*/BTCUSDT_1h.parquet",
+    )
+    roots = [WORK, Path("/kaggle/input")] if ON_KAGGLE else [WORK, WORK.parent]
+    for root in roots:
+        if not root.exists():
+            continue
+        for pattern in patterns:
+            for hit in sorted(root.glob(pattern)):
+                return hit.resolve()
+    raise FileNotFoundError(
+        "BTCUSDT_1h.parquet not found under "
+        f"{[str(r) for r in roots]}. Attach data/raw/ as a Kaggle Dataset. "
+        "It is NOT re-downloaded here on purpose: a fresh download is a new "
+        "vintage, and section 12 forbids numbers from two vintages sharing a table."
+    )
+
+
+PARQUET = find_parquet()
+# Every meta/*.json records the digest of the artifact its run consumed (section
+# 12), and can only find it if told. Inherited by the worker subprocesses.
+os.environ["ITBTC_PARQUET"] = str(PARQUET)
+
+import numpy as np
+import polars as pl
+import torch
+
+print(f"work      {WORK}")
+print(f"parquet   {PARQUET}  ({PARQUET.stat().st_size / 1e6:.1f} MB)")
+print(f"artifacts {ARTIFACTS}")
+print(f"polars {pl.__version__} | torch {torch.__version__} | numpy {np.__version__}")
+print(f"CUDA devices: {torch.cuda.device_count()}")
+for _i in range(torch.cuda.device_count()):
+    _cap = torch.cuda.get_device_capability(_i)
+    print(f"  cuda:{_i}  {torch.cuda.get_device_name(_i)}  sm_{_cap[0]}{_cap[1]}")
+
+# Root section 10.3: never gate precision on torch.cuda.is_bf16_supported(). It
+# defaults to including_emulation=True and returns True on a T4 (sm_75),
+# selecting an emulated bf16 path *slower than fp32*. Gate on capability.
+if torch.cuda.is_available():
+    print(f"native bf16: {torch.cuda.get_device_capability(0)[0] >= 8}  "
+          f"(is_bf16_supported() says {torch.cuda.is_bf16_supported()} "
+          f"and is not to be trusted here)")
+'''
+
+CODE_IMPORT = r'''import itransformer_btc
+from itransformer_btc.train import code_sha256
+
+_pkg = Path(itransformer_btc.__file__).resolve().parent
+assert _pkg.parent == WORK, (
+    f"imported itransformer_btc from {_pkg}, not from this notebook's own "
+    f"materialisation under {WORK}. A stray src/ on sys.path would make every "
+    f"number untraceable to the code in the cells above — which is exactly the "
+    f"dependency this notebook exists to remove."
+)
+
+print(f"package     {_pkg}")
+print(f"modules     {sorted(p.name for p in _pkg.glob('*.py'))}")
+print(f"code_sha256 {code_sha256()}")
+print("\nThat digest goes into every meta/*.json. There is no git repository on "
+      "Kaggle, so it is what the traceability contract has to name the code with "
+      "— and it is the better half of the pair anyway: it identifies the code "
+      "that ran, not the commit someone was standing on with a dirty tree.")
+'''
+
+CODE_DATA = r'''from itransformer_btc.budget import COMMITTED_TRAIN_BUDGET, budget_table
+from itransformer_btc.config import ORIGINS
+from itransformer_btc.segments import load_bars, usable_mask
+
+bars = usable_mask(load_bars(PARQUET))
+print(f"bars {bars.height:,}  usable {int(bars['usable'].sum()):,}  "
+      f"unusable {int((~bars['usable']).sum())}")
+
+# D51c: the same 3 bars are zero-volume, zero-trade and H == L. No volume means
+# no trades, and no trades means high and low never separate.
+print(bars.filter(~pl.col("usable")).select(
+    ["open_time", "zero_volume", "flat_bar", "zero_trades"]))
+
+budgets = budget_table(bars)
+drift = [
+    (b.label, b.summary.break_runs, b.summary.excluded_positions, b.windows_measured,
+     COMMITTED_TRAIN_BUDGET[b.label])
+    for b in budgets
+    if (b.summary.break_runs, b.summary.excluded_positions, b.windows_measured)
+    != COMMITTED_TRAIN_BUDGET[b.label]
+]
+assert not drift, f"budget drift against the committed table: {drift}"
+print(f"\nwindow budget matches docs/ORIGIN_WINDOW_BUDGET.md at all "
+      f"{len(budgets)} origins (exact equality, D45)")
+
+coverage = pl.DataFrame([
+    {"origin": b.label, "train_windows": b.windows_measured,
+     "loss_pct": round(b.loss_pct, 2), "closed_form_agrees": b.closed_form_agrees,
+     **{f"B{i}": n for i, n in enumerate(b.test_block_starts, start=1)}}
+    for b in budgets
+])
+print(coverage)
+print(f"\ntraining range {coverage['train_windows'].min():,} … "
+      f"{coverage['train_windows'].max():,} windows (raw-bar frame)")
+print("The closed form disagrees wherever a segment is shorter than one window "
+      "(D51a) and is kept only as an upper bound.")
+'''
+
+CODE_FEATURES = r'''from itransformer_btc.features import VARIATE_ORDER, build_features, ladder_columns
+
+features = build_features(bars)
+print(f"feature frame {features.height:,} rows x {len(VARIATE_ORDER)} variates")
+print(f"dropped {int(bars['usable'].sum()) - features.height} rows = one per segment "
+      f"(D52c: r is per segment, so each segment's first bar has no predecessor)")
+
+for k in (1, 4, 8, 12):
+    print(f"  K={k:>2}: {ladder_columns(k)}")
+
+print(features.select(VARIATE_ORDER).describe().filter(
+    pl.col("statistic").is_in(["mean", "std", "min", "max"])))
+
+# D52a: Rogers-Satchell is NOT strictly positive — it vanishes on a shadowless
+# (marubozu) bar, of which 33 exist. log(RS + 1e-9) puts log kappa = -20.7 inside
+# the measured support rather than leaving 33 out-of-support spikes that would
+# distort the instance normalisation of every window containing one.
+rs = features["log_rogers_satchell"]
+print(f"\nlog_rogers_satchell: min {rs.min():.3f}  q0.1% {rs.quantile(0.001):.3f}  "
+      f"median {rs.median():.3f}  at-floor {int((rs <= np.log(1e-9) + 1e-9).sum())}")
+assert features.select([pl.col(c).is_finite().all() for c in VARIATE_ORDER]).row(0) \
+    == tuple([True] * 12), "a variate is non-finite; the segment law did not run"
+'''
+
+CODE_KEFF = r'''from itransformer_btc import keff
+
+gate = keff.gate_pr(features, k=8)
+print(keff.gate_verdict(gate))
+
+t0 = time.perf_counter()
+keff_tbl = keff.keff_table(features)          # 15 origins x 4 rungs, training spans only
+print(f"\nmeasured in {time.perf_counter() - t0:.0f}s")
+
+rung_view = (
+    keff_tbl.group_by("k")
+    .agg(
+        pl.col("pr_raw").mean().alias("PR_raw"),
+        pl.col("pr_raw").std().alias("PR_raw_sd"),
+        pl.col("pr_window_norm").mean().alias("PR_windownorm"),
+        pl.col("stable_rank_lookback").mean().alias("stable_rank"),
+        pl.col("pr_lookback_ratio").mean().alias("crosslag_share"),
+        pl.col("divergence").mean().alias("divergence"),
+    )
+    .sort("k")
+)
+print(rung_view)
+print(f"\ncorr(K, K_eff) = {keff.corr_k_keff(keff_tbl):.4f}")
+print("A reader is entitled to that before reading the K-vs-K_eff horse race: near "
+      "1 means the two theories are close to collinear and there is little to "
+      "separate, whatever the p-value says.")
+print("Section 5.2 expected 1 / ~3.5 / ~6.5 / ~7, reasoned from family structure "
+      "and not measured. Fix the hypothesis to the measurement, never the reverse.")
+
+keff_tbl.write_parquet(ARTIFACTS / "keff_table.parquet")
+'''
+
+CODE_INVARIANTS = r'''from itransformer_btc.model import ITransformer, ITransformerConfig
+from itransformer_btc.splits import build_origin_tensors
+from itransformer_btc.train import pick_device, scale_invariance_check, set_seed
+
+device = pick_device()
+print(f"device {device}")
+
+set_seed(42)
+probe = ITransformer(ITransformerConfig()).to(device).eval()
+base, scaled = scale_invariance_check(
+    probe,
+    torch.randn(64, 96, 8, device=device),
+    torch.randn(64, 24, device=device),
+    c=100.0,
+)
+rel = abs(base - scaled) / base
+print(f"use_norm invariance: {base:.8f} vs {scaled:.8f}  rel={rel:.2e}")
+assert rel < 1e-3, "FATAL (D03): use_norm inactive, or the scaler no longer cancels"
+print(f"parameters {probe.n_parameters():,} — identical at every rung by construction")
+
+set_seed(42)
+plumb = ITransformer(ITransformerConfig(dropout=0.0)).to(device).train()
+xs, ys = torch.randn(8, 96, 8, device=device), torch.randn(8, 24, device=device)
+opt = torch.optim.Adam(plumb.parameters(), lr=1e-3)
+for _ in range(200):
+    opt.zero_grad(set_to_none=True)
+    loss = torch.nn.functional.mse_loss(plumb(xs), ys)
+    loss.backward()
+    opt.step()
+print(f"single-batch overfit (dropout=0.0): {loss.item():.3e}")
+assert loss.item() < 1e-3, "plumbing broken"
+
+print("\nNaive-RW in scaler space, per origin (D31 / D52b):")
+naive = pl.DataFrame([
+    {"origin": o.label, **{
+        "mu_g": (t := build_origin_tensors(features, o, 1)).scaler.mean[0],
+        "sigma_g": t.scaler.std[0],
+        "mu_over_sigma": t.scaler.target_mu_over_sigma,
+        "naive_rw_z": t.naive_rw_z,
+        "n_train": len(t.train),
+    }}
+    for o in ORIGINS
+])
+print(naive)
+print(f"mu_g/sigma_g spans {naive['mu_over_sigma'].min():+.5f} … "
+      f"{naive['mu_over_sigma'].max():+.5f} and CHANGES SIGN, so the tilt is not a "
+      f"constant a reader could subtract. It tracks the same bull/bear cycle H2 "
+      f"invokes as its own mechanism, which is why it is confounded with the "
+      f"effect of interest and does not wash out.")
+naive.write_parquet(ARTIFACTS / "naive_rw_by_origin.parquet")
+'''
+
+CODE_PILOT = r'''from itransformer_btc import runner
+
+pilot = runner.stage5_pilot(features, out_root=ARTIFACTS, device=device)
+print(pilot)
+
+if not pilot.passed:
+    print("\n*** Reposition the title to the descriptive variant NOW, not in week "
+          "nine (root section 8.5). ***")
+print("\nDisclose the pilot in section 13.2 as a SELECTION EVENT, stated separately "
+      "from the DSR trial count — the DSR does not correct for selection over a "
+      "paper's conclusion.")
+'''
+
+CODE_GRID = r'''import gc
+
+# The pre-flight probe and the pilot both allocated on cuda:0, and worker 0 is
+# about to be pinned to that same physical GPU. Hand the memory back first: the
+# children are separate processes and cannot share this kernel's allocator.
+for _name in ("probe", "plumb", "xs", "ys", "opt", "loss"):
+    globals().pop(_name, None)
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
+ALL = runner.manifest()
+roots = runner.discover_roots(ARTIFACTS)
+todo = runner.pending(ALL, roots)
+
+by_arm = {}
+for cell in ALL:
+    by_arm[cell.arm] = by_arm.get(cell.arm, 0) + 1
+already_done = len(ALL) - len(todo)
+print(f"manifest {len(ALL)} unique runs {by_arm}")
+print(f"roots searched: {[str(r) for r in roots]}")
+print(f"already complete: {already_done}   pending: {len(todo)}")
+print("Completeness is per run_id: both preds/ and meta/ present and "
+      "meta.status == 'complete'. A run interrupted mid-training leaves no meta, "
+      "so it is redone — losing at most one run per GPU, ~90 s (root §10.5).")
+
+# The budget the workers get is what is LEFT of the session, not a fresh 11 h.
+SESSION_BUDGET_H = 11.0
+elapsed_h = (time.perf_counter() - SESSION_T0) / 3600.0
+budget_h = max(0.25, SESSION_BUDGET_H - elapsed_h)
+print(f"\nprelude took {elapsed_h * 60:.0f} min -> workers get {budget_h:.2f} h "
+      f"of the {SESSION_BUDGET_H:.1f} h session budget, guard reserves 0.5 h more")
+
+t0 = time.perf_counter()
+rc = runner.launch_workers(
+    n_workers=max(1, torch.cuda.device_count()),
+    parquet=PARQUET,
+    out_root=ARTIFACTS,
+    budget_h=budget_h,
+    reserve_h=0.5,
+    package_root=WORK,      # where cell 0b materialised the package (D54)
+)
+print(f"workers exited {rc} after {(time.perf_counter() - t0) / 3600:.2f} h")
+
+left = runner.pending(ALL, runner.discover_roots(ARTIFACTS))
+GRID_COMPLETE = not left
+print(f"remaining after this session: {len(left)} of {len(ALL)}")
+if left:
+    # The evaluation below is GATED on this. A partial grid is an unbalanced
+    # panel, and §9.1's estimators refuse one by design — `amplification` raises
+    # rather than silently comparing K=1 at eleven origins against K=8 at ten.
+    # Letting that exception reach Kaggle would mark the version failed at the
+    # exact moment its output is the only thing worth keeping.
+    print("\nEvaluation is SKIPPED this session — the panel is incomplete, and a")
+    print("half-panel beta1 is not a smaller answer but a different estimand.")
+    print("Nothing is lost: preds/ and meta/ are on disk and resume is by run_id.")
+    print("\n  1. Save Version now (its output IS the session's work)")
+    print("  2. Attach that output as the next session's input Dataset")
+    print("  3. Run this notebook again — completed runs are skipped automatically")
+
+    ran = len(ALL) - len(left) - already_done
+    workers = max(1, torch.cuda.device_count())
+    if ran > 0:
+        mean_s = (time.perf_counter() - t0) * workers / ran
+        print(f"\n  {ran} runs this session at ~{mean_s:.0f}s each -> about "
+              f"{len(left) * mean_s / workers / 3600:.1f} h of wall still to do, "
+              f"{len(left) * mean_s / workers / 3600 / 10.5:.1f} more sessions")
+'''
+
+CODE_RQ1 = r'''from itransformer_btc import metrics
+
+done = sorted(runner.completed_run_ids(runner.discover_roots(ARTIFACTS)))
+grid = metrics.gather_grid(done, runner.discover_roots(ARTIFACTS))
+seed_avg = metrics.seed_average(grid)
+print(f"gathered {len(done)} runs -> {grid.height} run-block rows -> "
+      f"{seed_avg.height} seed-averaged cells")
+
+main = seed_avg.filter((pl.col("model") == "itr") & (pl.col("pred_len") == 24))
+
+# Root section 9.2 / D30: any number aggregated across origins carries the SE
+# ACROSS ORIGINS, never the seed std. Seed dispersion measures re-initialisation
+# noise on one fixed dataset; origin dispersion measures the sampling variability
+# of the estimand, and in walk-forward crypto evaluation the second is typically
+# an order of magnitude larger. Reporting the first as "+/-" on an aggregated row
+# understates the headline uncertainty by roughly that factor — reintroducing,
+# through the reporting convention, the overstated precision the wild cluster
+# bootstrap was added to prevent.
+per_origin = main.group_by(["origin", "k"]).agg(
+    pl.col("mse").mean().alias("mse"), pl.col("r2_oos").mean().alias("r2_oos")
+)
+rung = (
+    per_origin.group_by("k")
+    .agg(
+        pl.col("mse").mean().alias("MSE"),
+        (pl.col("mse").std() / pl.col("mse").count().sqrt()).alias("SE_across_origins"),
+        pl.col("r2_oos").mean().alias("R2_oos"),
+        pl.col("mse").count().alias("n_origins"),
+    )
+    .sort("k")
+)
+print("\n--- RQ1: free rung effects ---")
+print(rung)
+print(f"seed std, a Monte-Carlo diagnostic only: {main['mse_seed_std'].mean():.6f} "
+      f"mean across cells at n={main['n_seeds'][0]} seeds per cell")
+
+wide = {int(k): per_origin.filter(pl.col("k") == k).sort("origin")["mse"].to_numpy()
+        for k in (1, 4, 8, 12)}
+d_4_8, d_8_12 = wide[4] - wide[8], wide[8] - wide[12]
+margin = 0.25 * abs(float(d_4_8.mean()))
+print(f"\ndelta MSE 4->8 = {d_4_8.mean():+.6f}   8->12 = {d_8_12.mean():+.6f}")
+print("D49's margin is 0.25 x delta(4->8), fixed in advance: a non-significant "
+      "delta is a failure to reject, not evidence of equivalence, and choosing the "
+      "margin after seeing the rung is the p-hacking section 3 forbids for tau.")
+print(metrics.tost_equivalence(d_8_12, margin))
+
+# D32: RQ1 is a NON-NESTED comparison, not an OLS on three points. Four rungs give
+# three deltas, and stacking 360 rows creates no information about a slope that
+# varies only between rungs. K_eff measured per origin is what makes the regressor
+# vary at all — and it is leak-free because the span is training-only.
+keff_join = keff_tbl.select(["origin", "k", "pr_raw"]).rename({"pr_raw": "k_eff"})
+race = main.join(keff_join, on=["origin", "k"], how="inner")
+groups = race["origin_index"].to_numpy() * 100 + race["block"].to_numpy()
+t_ab, p_ab = metrics.j_test(race["mse"].to_numpy(),
+                            race["k"].to_numpy().astype(float),
+                            race["k_eff"].to_numpy(), groups)
+t_ba, p_ba = metrics.j_test(race["mse"].to_numpy(), race["k_eff"].to_numpy(),
+                            race["k"].to_numpy().astype(float), groups)
+print(f"\nJ-test  K augmented by K_eff: t={t_ab:+.3f} p={p_ab:.4f}   |   "
+      f"K_eff augmented by K: t={t_ba:+.3f} p={p_ba:.4f}")
+print("Both reject -> neither explanation alone suffices. Neither rejects -> the "
+      "data cannot separate them, which at corr(K, K_eff) near 1 is the outcome to "
+      "expect and to report plainly rather than to spin.")
+'''
+
+CODE_RQ2 = r'''print("--- RQ2: does the multivariate gap narrow with model age? ---")
+amp = metrics.amplification(seed_avg, k_small=1, k_large=8)
+print(amp.select(["origin", "block", "mse_small", "mse_large", "A"]).head(12))
+
+beta = metrics.panel_beta1(amp, value="A", B=99_999, seed=42)
+print(f"\n{beta}")
+mde = metrics.minimum_detectable_beta1(beta.within_slopes)
+print(f"\nminimum detectable beta1 at 80% power, alpha=0.05: {mde:+.6f}")
+print(f"observed {beta.beta1:+.6f} is "
+      f"{'INSIDE (undetectable)' if abs(beta.beta1) < abs(mde) else 'outside'} it")
+print("If the MDE exceeds the plausible magnitude of A, RQ2 must be repositioned as "
+      "descriptive BEFORE the grid: a non-significant beta1 is otherwise "
+      "indistinguishable from a design that could never have detected decay.")
+
+# D28: consecutive origins share 79.2% of their training data, so the clusters are
+# NOT independent draws and the bootstrapped p is anticonservative by an
+# unquantified amount. Windows become disjoint only at stride 5.
+print("\ntraining-window overlap: 79.2% at stride 1, 58.3% at 2, 37.5% at 3, "
+      "16.7% at 4. Disjoint only at stride 5, which leaves G=3.")
+for offset in range(5):
+    triple = [ORIGINS[i].label for i in range(offset, len(ORIGINS), 5)]
+    subset = amp.filter(pl.col("origin").is_in(triple))
+    if subset.height == len(triple) * 6:
+        sub = metrics.panel_beta1(subset, value="A", B=9_999, seed=42)
+        print(f"  {triple}: beta1={sub.beta1:+.6f}  p={sub.headline_p:.4f}  (G=3)")
+print("At G=3 these will very likely be inconclusive, and THAT IS THE FINDING — it "
+      "bounds what the full-panel p-value can honestly claim.")
+
+# D50: K=1 vs K=8 differs in information AND in whether attention is active, at the
+# same time. This holds information fixed and varies only what attention selects.
+try:
+    attn = metrics.attention_amplification(seed_avg, k=8)
+    print(f"\nA_attn (uniform-attention control, D50):")
+    print(metrics.panel_beta1(attn, value="A_attn", B=99_999, seed=42))
+    print("Reporting both decompositions answers information-versus-attention "
+          "directly, at runs Figure 5 needs anyway.")
+except (ValueError, KeyError) as exc:
+    print(f"\nuniform-attention arm not complete yet: {exc}")
+
+# The falsification arm: the only design that identifies decay directly.
+aged = main.filter((pl.col("k") == 8) & (pl.col("block") >= 4)).select(
+    ["origin_index", "block", "mse"]).rename({"mse": "mse_aged"})
+fresh = seed_avg.filter(pl.col("model") == "itrf").select(
+    ["origin_index", "block", "mse"]).rename({"mse": "mse_fresh"})
+falsify = aged.join(fresh, on=["origin_index", "block"], how="inner")
+if falsify.height:
+    gap = (falsify["mse_aged"] - falsify["mse_fresh"]).to_numpy()
+    print(f"\nfalsification arm: mean(aged - fresh) = {gap.mean():+.6f} over "
+          f"{len(gap)} (origin, block) cells")
+    print("Positive means the fresh model really is better, so decay is age. Near "
+          "zero while beta1 < 0 means beta1 is CALENDAR, not age, and RQ2's "
+          "headline is an artefact.")
+else:
+    print("\nfalsification arm not complete yet")
+'''
+
+CODE_RQ3 = r'''print("--- RQ3: what retraining cadence? ---")
+dec = metrics.decay(seed_avg, k=8)
+print(dec.table)
+if dec.excluded_origins:
+    print(f"\nEXCLUDED, mean R2_oos <= 0 so there is no edge to lose a proportion "
+          f"of: {list(dec.excluded_origins)}")
+    print("Named, never silently dropped. Root section 10.3's first measured run "
+          "returned R2_oos = -0.0183, so this guard may be the common case rather "
+          "than the edge case section 9.1 assumed.")
+
+print("\ntau sensitivity — headline 5%, pre-registered before the curve was seen:")
+b_star_rows = []
+for tau in metrics.TAU_SENSITIVITY:
+    bs = dec.b_star(tau)
+    km = metrics.kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy())
+    lo, hi = km.median_interval
+    median = "censored >6" if km.median == float("inf") else f"{km.median:.0f}"
+    interval = "censored" if lo == float("inf") else f"[{lo:.0f}, {hi:.0f}]"
+    flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
+    print(f"  tau={tau:>6.1%}  crossings {km.n_events}/"
+          f"{km.n_events + km.n_censored}  median b* {median}  CI {interval}{flag}")
+    b_star_rows.append({"tau": tau, "median_b_star": km.median, "ci_low": lo,
+                        "ci_high": hi, "events": km.n_events,
+                        "censored": km.n_censored})
+
+print("\nb* resolves only to 30-day granularity and only out to 180 days. If no "
+      "block crosses tau, the honest answer is 'no decay detected within 180 days' "
+      "— a right-censored result, not a missing one. Say it in those words, and put "
+      "the INTERVAL in the abstract, never a bare integer.")
+
+# H3: larger K decays faster.
+try:
+    a = dec.b_star(metrics.TAU_HEADLINE)
+    b = metrics.decay(seed_avg, k=1).b_star(metrics.TAU_HEADLINE)
+    chi2, p = metrics.logrank(a["b_star"].to_numpy(), a["event"].to_numpy(),
+                              b["b_star"].to_numpy(), b["event"].to_numpy())
+    print(f"\nlog-rank K=8 vs K=1 at tau=5%: chi2={chi2:.3f}  p={p:.4f}  (H3)")
+except (ValueError, IndexError, KeyError) as exc:
+    print(f"\nlog-rank unavailable: {exc}")
+'''
+
+CODE_SAVE = r'''from itransformer_btc.train import _input_sha256
+
+_digest, _provenance = _input_sha256(PARQUET)
+
+paper_numbers = {
+    "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "input_parquet": str(PARQUET),
+    "input_sha256": _digest,
+    "input_sha256_source": _provenance,
+    "code_sha256": code_sha256(),
+    "runs_complete": len(done),
+    "runs_in_manifest": len(ALL),
+    "keff": {
+        "gate_pr_k8_pre_first_origin": gate,
+        "gate_floor": keff.GATE_PR_FLOOR,
+        "corr_k_keff": keff.corr_k_keff(keff_tbl),
+        "per_rung": rung_view.to_dicts(),
+    },
+    "rq1": {
+        "rung_effects": rung.to_dicts(),
+        "delta_4_to_8": float(d_4_8.mean()),
+        "delta_8_to_12": float(d_8_12.mean()),
+        "tost_margin": margin,
+        "tost": str(metrics.tost_equivalence(d_8_12, margin)),
+        "j_test_k_augmented_by_keff": {"t": t_ab, "p": p_ab},
+        "j_test_keff_augmented_by_k": {"t": t_ba, "p": p_ba},
+    },
+    "rq2": {
+        "beta1": beta.beta1, "t": beta.t_statistic, "cluster_se": beta.cluster_se,
+        "p_rademacher": beta.p_rademacher, "p_webb": beta.p_webb,
+        "headline_p": beta.headline_p, "G": beta.n_clusters,
+        "N": beta.n_observations, "B": beta.B,
+        "minimum_detectable_beta1": mde,
+        "within_slopes": beta.within_slopes.tolist(),
+        "effective_independent_training_sets": 4,
+        "consecutive_origin_overlap_pct": 79.2,
+    },
+    "rq3": {
+        "tau_headline": metrics.TAU_HEADLINE,
+        "b_star": b_star_rows,
+        "excluded_origins": list(dec.excluded_origins),
+    },
+}
+
+out = ARTIFACTS / "paper_numbers.json"
+out.write_text(json.dumps(paper_numbers, indent=2, default=float))
+seed_avg.write_parquet(ARTIFACTS / "seed_averaged_cells.parquet")
+grid.write_parquet(ARTIFACTS / "run_block_metrics.parquet")
+amp.write_parquet(ARTIFACTS / "amplification_panel.parquet")
+dec.table.write_parquet(ARTIFACTS / "decay_panel.parquet")
+
+print(f"wrote {out}")
+for path in sorted(ARTIFACTS.glob("*.parquet")):
+    print(f"  {path.name}  {path.stat().st_size / 1e6:.2f} MB")
+print(f"\npreds {len(list((ARTIFACTS / 'preds').glob('*.parquet')))} files  |  "
+      f"meta {len(list((ARTIFACTS / 'meta').glob('*.json')))} files")
+print(f"remaining runs: "
+      f"{len(runner.pending(ALL, runner.discover_roots(ARTIFACTS)))}")
+print("\nSave Version now, then attach this output as the next session's input "
+      "Dataset. Nothing else needs doing by hand.")
+'''
+
+
+# -- assembly ----------------------------------------------------------------
+
+
+def guarded(body: str, what: str) -> str:
+    """Run ``body`` only when the grid is complete; say why, clearly, when not.
+
+    A partial grid is an **unbalanced panel**, and §9.1's estimators refuse one by
+    design: ``amplification`` raises rather than compare K=1 at eleven origins
+    against K=8 at ten, and RQ1's ``wide[4] - wide[8]`` would broadcast-error.
+    That is correct behaviour and must not be softened — a half-panel β₁ is a
+    different estimand, not a noisier one.
+
+    What is wrong is *where* the exception lands. A 12-hour Kaggle session that
+    stops at run 200 of 534 would raise here, in the last cells, and mark the
+    version failed at the exact moment its output is the only thing worth
+    keeping. So the estimators stay strict and the notebook simply does not call
+    them until the panel exists.
+
+    Indented mechanically rather than by hand, so the guarded and unguarded
+    sources cannot drift.
+    """
+    head = (
+        f"if not GRID_COMPLETE:\n"
+        f'    print("{what}: SKIPPED — the grid is incomplete, so the panel is "\n'
+        f'          "unbalanced and §9.1\'s estimators refuse it by design. "\n'
+        f'          "Resume in the next session; nothing is recomputed.")\n'
+        f"else:\n"
+    )
+    return head + textwrap.indent(body, "    ")
+
+
+def _lines(text: str) -> list[str]:
+    """nbformat's canonical source form: a list of lines, newlines kept."""
+    return text.splitlines(keepends=True)
+
+
+def _markdown(index: int, text: str) -> dict:
+    return {
+        "id": f"md-{index:02d}",
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": _lines(text),
+    }
+
+
+def _code(index: int, text: str) -> dict:
+    return {
+        "id": f"code-{index:02d}",
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": _lines(text),
+    }
+
+
+def module_cell_source(name: str) -> str:
+    """``%%writefile`` header plus the module verbatim.
+
+    Verbatim is the point: ``tests/test_notebook_sync.py`` compares the cell body
+    against the file, so the two cannot drift without a test failing.
+    """
+    text = (PACKAGE / name).read_text(encoding="utf-8")
+    return f"%%writefile {WRITEFILE_TARGET.format(name=name)}\n{text}"
+
+
+def build() -> dict:
+    """The whole notebook, as an nbformat 4.5 dictionary."""
+    cells: list[dict] = []
+    counter = 0
+
+    def md(text: str) -> None:
+        nonlocal counter
+        cells.append(_markdown(counter, text))
+        counter += 1
+
+    def code(text: str) -> None:
+        nonlocal counter
+        cells.append(_code(counter, text))
+        counter += 1
+
+    md(MD_TITLE)
+    md(MD_SETUP)
+    code(CODE_SETUP)
+
+    md(MD_MATERIALISE)
+    for name in MODULE_ORDER:
+        code(module_cell_source(name))
+    code(CODE_IMPORT)
+
+    md(MD_DATA)
+    code(CODE_DATA)
+    md(MD_VARIATES)
+    code(CODE_FEATURES)
+    md(MD_KEFF)
+    code(CODE_KEFF)
+    md(MD_INVARIANTS)
+    code(CODE_INVARIANTS)
+    md(MD_GATE)
+    code(CODE_PILOT)
+    md(MD_GRID)
+    code(CODE_GRID)
+    md(MD_EVAL)
+    code(guarded(CODE_RQ1, "RQ1"))
+    code(guarded(CODE_RQ2, "RQ2"))
+    code(guarded(CODE_RQ3, "RQ3"))
+    md(MD_SAVE)
+    code(guarded(CODE_SAVE, "paper_numbers.json"))
+
+    return {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {"name": "python", "version": "3.11"},
+            "accelerator": "GPU",
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+
+
+def render(notebook: dict) -> str:
+    """UTF-8 JSON with a trailing newline — the shape nbformat itself writes."""
+    return json.dumps(notebook, indent=1, ensure_ascii=False) + "\n"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Build notebooks/iTransformer.ipynb")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if the committed notebook differs from what src/ implies",
+    )
+    args = parser.parse_args(argv)
+
+    missing = [n for n in MODULE_ORDER if not (PACKAGE / n).exists()]
+    if missing:
+        raise SystemExit(f"missing package modules: {missing}")
+    extra = sorted(p.name for p in PACKAGE.glob("*.py") if p.name not in MODULE_ORDER)
+    if extra:
+        raise SystemExit(
+            f"{extra} exist in src/itransformer_btc/ but are absent from "
+            f"MODULE_ORDER, so the notebook would materialise an incomplete "
+            f"package. Add them here, in dependency order."
+        )
+
+    notebook = build()
+    text = render(notebook)
+
+    if args.check:
+        current = NOTEBOOK.read_text(encoding="utf-8") if NOTEBOOK.exists() else ""
+        if current != text:
+            print(
+                f"{NOTEBOOK} is stale against src/itransformer_btc/. "
+                f"Run: python tools/build_notebook.py",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"{NOTEBOOK} is current")
+        return 0
+
+    NOTEBOOK.parent.mkdir(parents=True, exist_ok=True)
+    # newline="\n" explicitly: Windows would otherwise translate to CRLF and the
+    # generator would emit platform-dependent bytes for identical content, so the
+    # same `src/` would produce a whole-file diff depending on who ran it.
+    NOTEBOOK.write_text(text, encoding="utf-8", newline="\n")
+    n_code = sum(1 for c in notebook["cells"] if c["cell_type"] == "code")
+    print(
+        f"wrote {NOTEBOOK}  "
+        f"({len(notebook['cells'])} cells, {n_code} code, "
+        f"{len(text) / 1e3:.0f} kB)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

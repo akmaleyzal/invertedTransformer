@@ -16,9 +16,10 @@ persisted prediction file plus a config hash.
 
 | | |
 |---|---|
-| One command to check the repo is sound | `python -m pytest tests/ -q` → **53 passed**, ~18 s, CPU only |
+| One command to check the repo is sound | `python -m pytest tests/ -q` → **59 passed**, ~13 s, CPU only |
 | One command to run one experiment | `python -m itransformer_btc.runner --arms fresh --shard 0 --shards 15` |
-| One notebook to run the whole study | `notebooks/itransformer_kaggle.ipynb` on Kaggle 2×T4 |
+| One command after editing `src/` | `python tools/build_notebook.py` — the notebook carries the package (`D54`) |
+| One notebook to run the whole study | `notebooks/iTransformer.ipynb` on Kaggle 2×T4. **Self-contained**: attach the data, nothing else |
 | Where results land | `artifacts/preds/`, `artifacts/meta/`, `artifacts/paper_numbers.json` |
 
 **Nothing in `data/raw/` is ever written to.** Four Stage 1 artifacts live there and are immutable;
@@ -64,10 +65,25 @@ invertedTransformer/
 ├── docs/DIVERGENCE_REGISTER.md     every correction, with its evidence
 ├── docs/ORIGIN_WINDOW_BUDGET.md    per-origin window accounting — the assertion target
 ├── src/itransformer_btc/           the package. all logic lives here
-├── tests/                          53 tests, CPU, ~18 s
-├── notebooks/itransformer_kaggle.ipynb   the launcher
+├── tools/build_notebook.py         regenerates the notebook FROM src/ (D54)
+├── tests/                          59 tests, CPU, ~13 s
+├── notebooks/iTransformer.ipynb    the launcher — self-contained, GENERATED, never hand-edited
 └── artifacts/{preds,meta,logs}/    + paper_numbers.json
 ```
+
+**The notebook carries the package** (`D54`). Twelve `%%writefile` cells reconstruct
+`itransformer_btc/` on whatever machine runs it, so a Kaggle session needs the notebook and
+`BTCUSDT_1h.parquet` and nothing else. Those cells are **generated from `src/`** and
+`tests/test_notebook_sync.py` asserts they are byte-identical to it, so the workflow after any change
+under `src/` is:
+
+```bash
+python tools/build_notebook.py        # regenerate
+python -m pytest tests/test_notebook_sync.py -q
+git add src/ notebooks/iTransformer.ipynb
+```
+
+Hand-editing a package cell in the notebook is a defect; the next generator run reverts it silently.
 
 ### The package, module by module
 
@@ -84,6 +100,9 @@ invertedTransformer/
 | `keff.py` | §5.4's pre-model measurement; the Stage 3b gate | Every K_eff is computed on a **training-only** span (`D44`) |
 | `metrics.py` | §9 — every metric, test and RQ estimator | Ratio metrics come from seed-averaged MSEs, never averaged ratios (`D42`) |
 | `runner.py` | The 534-run manifest; resume; budget guard; the 2-GPU launcher | Shards the **full** manifest, then subtracts what is done (`D53c`) |
+
+`tools/build_notebook.py` sits outside the package on purpose: it is build tooling, not study logic,
+and nothing under `src/` may import it.
 
 ---
 
@@ -338,16 +357,21 @@ is generated from that file, never transcribed.**
 
 ## 4. Running on Kaggle
 
-`notebooks/itransformer_kaggle.ipynb`, 21 cells, load through evaluation.
+`notebooks/iTransformer.ipynb`, 35 cells (24 code), load through evaluation. **Self-contained**: it
+materialises `itransformer_btc/` from its own cells, so the repository is not uploaded (`D54`).
 
 Setup:
 
-1. Upload the repository as a Kaggle Dataset (must contain `src/itransformer_btc/`).
-2. Upload `data/raw/` as a Dataset (must contain `BTCUSDT_1h.parquet`).
-3. New Notebook → attach both → **Accelerator: GPU T4 ×2**.
-4. Paste in the notebook. Discovery is by **globbing**, never by dataset slug, so either Dataset can
-   be renamed freely.
-5. **Save Version → Save & Run All.** Never the interactive editor.
+1. Upload `data/raw/` as a Kaggle Dataset (must contain `BTCUSDT_1h.parquet`; include
+   `BTCUSDT_1h_report.json` so the input digest is read from Stage 1 rather than recomputed).
+2. New Notebook → attach that one Dataset → **Accelerator: GPU T4 ×2**.
+3. Upload `iTransformer.ipynb` (File → Import Notebook), or paste it. Discovery is by **globbing**,
+   never by dataset slug, so the Dataset can be renamed freely.
+4. **Save Version → Save & Run All.** Never the interactive editor.
+
+**Do not attach the repository**, and do not add a `src/` to `sys.path`. The notebook asserts that
+the `itransformer_btc` it imported lives in its own working directory and fails loudly otherwise:
+two copies of the code, one of them stale, is the failure the assertion exists to catch.
 
 **Why never the editor:** the 20-minute idle timeout kills long interactive sessions, and hitting
 Kaggle's own 12 h wall interactively loses `/kaggle/working` **entirely**.
@@ -355,6 +379,34 @@ Kaggle's own 12 h wall interactively loses `/kaggle/working` **entirely**.
 **Session chaining.** Session *N* writes to `/kaggle/working`; Save Version publishes it as a
 Dataset; session *N+1* attaches that Dataset as an input. Resume is automatic and needs no manual
 bookkeeping: a run is complete only when **both** artifacts exist and `meta.status == "complete"`.
+
+### If the session ends mid-grid — the expected case
+
+The grid is ~10–20 wall hours against an 11 h budget, so **two sessions is the plan**, not the
+accident. Nothing restarts from zero:
+
+| | |
+|---|---|
+| What is lost | At most **one run per GPU** — the one in flight. ~90 s each. An interrupted run leaves no `meta`, so it is redone |
+| What is kept | Every completed `preds/{run_id}.parquet` + `meta/{run_id}.json`, plus `keff_table.parquet` and `naive_rw_by_origin.parquet` |
+| How the next session knows | `pending()` = manifest − completed, matched by `run_id`. Roots are discovered by **glob** over `/kaggle/input/*/preds` and `/kaggle/input/*/*/preds`, so the Dataset's name and nesting do not matter |
+| What you do | Save Version → attach that output as the next session's input → run again |
+
+Two guards make that hold, and both were added on 2026-08-07 (`D54e`, `D54f`):
+
+- **The evaluation cells are gated on `GRID_COMPLETE`.** A partial grid is an unbalanced panel and
+  §9.1's estimators refuse one *by design* — `amplification` raises rather than compare K=1 at eleven
+  origins against K=8 at ten. That is correct and stays; what changed is that the notebook no longer
+  *calls* them until the panel exists, so a partial session prints its resume instructions and ends
+  cleanly instead of erroring in its last cells. **Partial evaluation is never offered**: a
+  half-panel `β₁` is a different estimand, not a noisier one.
+- **The budget guard bounds the session, not the worker.** Kaggle's 12 h wall starts at cell 0, so
+  the prelude — data, `K_eff`, invariants, and the twelve pilot runs, ~20–25 min — is subtracted
+  before the workers get their budget.
+
+**Do not use the interactive editor.** The 20-minute idle timeout kills the session, and hitting the
+12 h wall interactively loses `/kaggle/working` **entirely** — that is the one way to actually lose
+completed runs.
 
 | Limit | Value | Consequence |
 |---|---|---|
@@ -388,9 +440,16 @@ by `timestamp // 3.6e6 % 24 == 0`.
 
 ### `artifacts/meta/{run_id}.json`
 
-Resolved config, `git_sha`, `input_sha256`, `origin`, `origin_index`, `block_labels`, `k`, `variates`,
-`n_train`, `n_val`, `n_test_per_block`, `mu_g`, `sigma_g`, `mu_over_sigma`, `naive_rw_z`,
-`epochs_run`, `best_val_mse`, `train_loss`, `wall_time_s`, `n_parameters`, `device`, `status`.
+Resolved config, `git_sha`, **`code_sha256`**, **`input_parquet`**, `input_sha256`,
+**`input_sha256_source`**, `origin`, `origin_index`, `block_labels`, `k`, `variates`, `n_train`,
+`n_val`, `n_test_per_block`, `mu_g`, `sigma_g`, `mu_over_sigma`, `naive_rw_z`, `epochs_run`,
+`best_val_mse`, `train_loss`, `wall_time_s`, `n_parameters`, `device`, `status`.
+
+The three bold fields are `D54`. `git_sha` is `"unknown"` on Kaggle — there is no git repository
+there — so `code_sha256`, the digest of the package source with line endings normalised, is what
+identifies the code §12 requires every number to resolve to. `input_sha256_source` is `"report"` when
+the digest came from the Stage 1 report beside the artifact and `"file-digest"` when the parquet was
+hashed directly; both are correct, and stating which is what makes the number checkable.
 
 ### Run identity
 

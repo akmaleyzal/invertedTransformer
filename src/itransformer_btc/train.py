@@ -15,6 +15,7 @@ mistake.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -32,6 +33,20 @@ from itransformer_btc.model import ITransformer, ITransformerConfig
 from itransformer_btc.splits import OriginTensors, SplitTensors
 
 ARTIFACTS: Path = Path("artifacts")
+
+DEFAULT_PARQUET: Path = Path("data/raw/BTCUSDT_1h.parquet")
+
+#: Environment variable naming the input artifact actually consumed.
+#:
+#: Root §12 forbids comparing numbers produced under different input-artifact
+#: hashes, so every ``meta/*.json`` must name the vintage it read. The
+#: repository-relative default is right locally and **wrong everywhere the grid
+#: actually runs**: on Kaggle the artifact arrives as an attached Dataset under
+#: ``/kaggle/input/<slug>/``, and root §10.5 forbids hard-coding that slug. With
+#: the path unresolvable the digest logged as ``"unknown"`` on every Kaggle run,
+#: which is §12 unenforceable at precisely the place the grid executes. The
+#: launcher and the worker CLI both set this from the path they were handed.
+INPUT_PARQUET_ENV: str = "ITBTC_PARQUET"
 
 
 def set_seed(seed: int) -> None:
@@ -244,11 +259,61 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def _input_sha256(report: Path = Path("data/raw/BTCUSDT_1h_report.json")) -> str:
+def code_sha256() -> str:
+    """Digest of this package's own source — the git sha's stand-in off-repo.
+
+    Root §12 asks a run to name the code that produced it, and names the git sha
+    as the way. **There is no git repository on Kaggle**, so the sha logs as
+    ``"unknown"`` there and the traceability contract loses its code half exactly
+    where the grid runs. Hashing the package source answers the same question and
+    answers it better: it identifies the code that ran, not the commit someone
+    happened to be standing on with a dirty tree.
+
+    Line endings are normalised, so a CRLF checkout on Windows and the LF copy a
+    notebook materialises give the **same** digest for identical logic. Without
+    that, every Kaggle run would appear to be a different code vintage from the
+    local run of the same commit — a false positive on the one check §12 exists
+    to make possible.
+    """
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(root.glob("*.py")):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()
+
+
+def resolve_input_parquet(parquet: Path | str | None = None) -> Path:
+    """The input artifact this process consumed: argument, then env, then default."""
+    if parquet is not None:
+        return Path(parquet)
+    from_env = os.environ.get(INPUT_PARQUET_ENV)
+    return Path(from_env) if from_env else DEFAULT_PARQUET
+
+
+def _input_sha256(parquet: Path | str | None = None) -> tuple[str, str]:
+    """``(digest, provenance)`` for the parquet actually read.
+
+    The Stage 1 report sitting beside the artifact is preferred, because that
+    digest was written by the ingest script over the bytes it emitted and is the
+    figure root §4.1 pins. Where the report did not travel — an attached Kaggle
+    Dataset holding the parquet alone — the file is hashed directly, which yields
+    the same number by construction.
+
+    Returns ``("unknown", "unresolved")`` rather than raising: a run that cannot
+    name its input is a documented failure under §12, and failing the run instead
+    would lose 90 s of GPU time to a bookkeeping problem.
+    """
+    path = resolve_input_parquet(parquet)
+    report = path.with_name(f"{path.stem}_report.json")
     try:
-        return json.loads(report.read_text())["artifact_sha256"]["BTCUSDT_1h.parquet"]
+        return json.loads(report.read_text())["artifact_sha256"][path.name], "report"
     except Exception:
-        return "unknown"
+        pass
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest(), "file-digest"
+    except Exception:
+        return "unknown", "unresolved"
 
 
 def write_artifacts(
@@ -309,6 +374,8 @@ def write_artifacts(
     meta_path = root / "meta" / f"{spec.run_id}.json"
     preds.write_parquet(preds_path)
 
+    input_parquet = resolve_input_parquet()
+    input_digest, input_provenance = _input_sha256(input_parquet)
     meta = {
         "run_id": spec.run_id,
         "spec": asdict(spec),
@@ -319,7 +386,12 @@ def write_artifacts(
         "k": tensors.k,
         "variates": list(tensors.scaler.columns),
         "git_sha": _git_sha(),
-        "input_sha256": _input_sha256(),
+        # Root §12's code half. `git_sha` is "unknown" off-repo, which is every
+        # Kaggle session; `code_sha256` answers the same question there.
+        "code_sha256": code_sha256(),
+        "input_parquet": str(input_parquet),
+        "input_sha256": input_digest,
+        "input_sha256_source": input_provenance,
         "n_train": len(tensors.train),
         "n_val": len(tensors.val),
         "n_test_per_block": [len(s) for s in tensors.test_blocks],

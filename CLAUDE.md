@@ -2,7 +2,7 @@
 
 Governing document for this repository. Read it before doing anything else.
 
-**Status:** authoritative as of **2026-08-06**. It supersedes both source specifications
+**Status:** authoritative as of **2026-08-07**. It supersedes both source specifications
 (`research_specification_itransformer_btc.md`, `reference_library_itransformer_btc.md`), which are
 **inputs, not authority**. Where they disagree with this file, this file wins, and
 `docs/DIVERGENCE_REGISTER.md` says why. It also supersedes the pre-2026-08-05 version of itself
@@ -1142,9 +1142,43 @@ epoch boundaries — runs are short, epochs are shorter, and the checkpoint gran
 trip: stop, flush, print the remaining count and the estimated sessions left, exit cleanly so the
 version saves. **Hitting Kaggle's own 12 h wall interactively loses `/kaggle/working` entirely.**
 
+**The guard measures the session, not the worker (`D54f`).** `BudgetGuard` sets its deadline from
+`time.perf_counter()` inside each worker process, but the 12 h wall runs from the notebook's first
+cell — so the prelude (Stage 2, Stage 3b, Stage 4, and the *twelve pilot training runs* of Stage 5,
+call it 20–25 minutes) would sit outside the budget and the two clocks would drift apart by exactly
+that much. The notebook stamps `SESSION_T0` in cell 0 and hands `launch_workers` what is **left** of
+the 11 h, not a fresh 11 h.
+
+**A partial session is the expected case, and it ends cleanly (`D54e`).** The grid is ~10–20 wall
+hours against an 11 h budget, so two sessions is the plan and not the exception. Three properties
+make that safe, and the third had to be added:
+
+1. **Resume granularity is one run**, ~90 s. A run is complete only when both artifacts exist and
+   `meta.status == "complete"`, so an interrupted run leaves no meta and is simply redone — the loss
+   is at most one run per GPU.
+2. **Discovery is by glob**, `/kaggle/input/*/preds` and `/kaggle/input/*/*/preds`, so the previous
+   session's output Dataset is found under whatever name it was given and however Kaggle nested it.
+   Verified against both layouts.
+3. **Evaluation is gated on grid completeness.** A partial grid is an unbalanced panel and §9.1's
+   estimators refuse one by design; `amplification` raises rather than compare K=1 at eleven origins
+   against K=8 at ten. That is correct and stays. What was wrong is that the exception landed in the
+   last cells of a twelve-hour session, marking the version failed at the moment its output was the
+   only thing worth keeping. The estimators are therefore **not called** until the panel exists.
+   Partial evaluation is never the fallback: a half-panel β₁ is a different estimand, not a noisier
+   one.
+
 **Session chaining.** Session *N* writes to `/kaggle/working`; Save Version publishes it as a
 Dataset; session *N+1* attaches that Dataset as input. Quota arithmetic: at ~6–15 h for the full
 grid, the 30 h weekly budget absorbs one complete pass plus a re-run, in one or two sessions.
+
+**What is attached, and what is not (`D54`).** Exactly two kinds of Dataset: the **immutable data
+artifact**, and the **previous session's output** when resuming. The repository is *not* attached —
+`notebooks/iTransformer.ipynb` carries the package and materialises it itself (§15). Uploading the
+repository as a second Dataset was the old protocol and its failure mode was silent: the notebook and
+the code Dataset were two artifacts required to agree, with nothing checking that they did, so a
+notebook updated without re-uploading the code ran last week's package and said nothing. The parquet
+is likewise never re-downloaded inside the notebook even though Stage 1 could: a fresh download is a
+new vintage, and §12 forbids numbers from two vintages sharing a table.
 
 ---
 
@@ -1226,10 +1260,21 @@ unexpectedly high score is to hunt for the leak, not to celebrate.
 resolve to:
 
 1. a **persisted prediction file** — `preds/{run_id}.parquet`;
-2. a **config hash** — the `meta/{run_id}.json` entry naming the git sha and the sha256 of the input
+2. a **config hash** — the `meta/{run_id}.json` entry naming the code and the sha256 of the input
    feature artifact; and
 3. a **documented decision** — a divergence-register row, if the number depends on any departure
    from the source specifications.
+
+**Item 2 names the code by digest, not only by commit (`D54`).** The git sha was the whole of it
+until 2026-08-07, and it is `"unknown"` on Kaggle — there is no git repository there, which is to say
+the contract lost its code half at exactly the place the grid executes. `meta/*.json` therefore
+carries **`code_sha256`**, the hash of the package's own source with line endings normalised, beside
+`git_sha`. It answers the same question and answers it better: it identifies the code that ran, not
+the commit someone was standing on with a dirty tree. Likewise `input_sha256` resolves through the
+**`ITBTC_PARQUET`** environment variable rather than a repository-relative path, and
+`input_sha256_source` records whether the digest came from the Stage 1 report beside the artifact or
+from hashing the parquet directly. Before `D54` both fields logged `"unknown"` on every Kaggle run,
+so this section was unenforceable in practice while reading as though it were not.
 
 Aggregation writes `artifacts/paper_numbers.json`, and every table and figure is generated *from that
 file* rather than transcribed. **Numbers produced under different input-artifact hashes are not
@@ -1513,7 +1558,30 @@ validation MSE is 0.469075 at K=1 against 0.467904 at K=8 — K=8 ahead by 0.25%
 evidence about it and it points the same way as §10.3's `R²_oos = −0.0183`. If the real gate fails,
 §8.5's instruction is to reposition the title to the descriptive variant **now, not in week nine**.
 
-New contradictions found later take IDs **D54+**. Absorbing one silently is the exact failure this
+### Sixth pass — the Kaggle deployment surface, 2026-08-07
+
+`D51` came from asserting the data accounting, `D52` from building the features and the network,
+`D53` from building the experiment plane. **`D54` came from asking what the notebook actually needs
+in order to run on Kaggle** — the deployment surface, which is precisely what the unrun
+Kaggle/execution lens would have examined, and which no amount of re-reading `src/` would surface,
+because every defect in it is invisible on a machine that happens to have the repository.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D54a | C | The launcher globbed for `src/itransformer_btc/__init__.py` and pushed the hit onto `sys.path`, so it could not run unless the **repository was also uploaded as a second Kaggle Dataset** and kept in step with the notebook by hand — two artifacts that must agree, with nothing checking that they do | The notebook carries the package in twelve `%%writefile` cells and materialises it before importing, then asserts `itransformer_btc.__file__` lives under its own working directory. Files rather than in-cell definitions because the two GPU workers are **subprocesses** and inherit no namespace. §15 |
+| D54b | C | `_git_sha()` is `"unknown"` on Kaggle — no git repository exists there — so §12's three-part contract lost its **code** half at exactly the place the grid executes, while §12 read as though it had not | `code_sha256`: the hash of the package source, line endings normalised so a CRLF checkout and an LF materialisation of one logic give one digest. Recorded beside `git_sha` in every `meta/*.json` and in `paper_numbers.json`. §12 |
+| D54c | C | `_input_sha256()` read the hard-coded `data/raw/BTCUSDT_1h_report.json`, absent on Kaggle: the artifact arrives under `/kaggle/input/<slug>/` and §10.5 forbids hard-coding that slug. The **input** digest therefore also logged `"unknown"`, and §12's rule that two vintages may not share a table became unenforceable | `ITBTC_PARQUET`, set by the notebook, by `launch_workers` per child, and by the worker CLI from its own `--parquet`. The Stage 1 report beside the artifact is preferred; hashing the parquet is the fallback; `input_sha256_source` records which. §12 |
+| D54d | I | Nothing would police the second copy of ~4,000 lines the fix creates — the drift failure this register exists to prevent | The notebook is **generated** by `tools/build_notebook.py`; `tests/test_notebook_sync.py` asserts it byte-identical to `src/` and `--check` fails the suite on drift. §15, §16 |
+| D54e | F | **The evaluation cells crash on a partial session, which is the normal session.** A grid stopped at run 200 of 534 leaves an unbalanced panel, and §9.1's estimators refuse one *by design* — `amplification` raises rather than compare K=1 at eleven origins against K=8 at ten, and RQ1's `wide[4] - wide[8]` broadcast-errors first. Simulated at the real two-shard stop shape: K=1 complete at 11 origins, K=4/8/12 at 10. The estimators are right; **where the exception lands is not** — it marks the Kaggle version failed at the exact moment its output is the only thing worth keeping | The estimators stay strict and the notebook does not call them until the panel exists: cells RQ1/RQ2/RQ3 and the `paper_numbers.json` write are gated on `GRID_COMPLETE`, print what remains and how to resume, and exit cleanly. A half-panel β₁ is a **different estimand**, not a noisier one, so partial evaluation is never the fallback |
+| D54f | C | **The budget guard bounds the worker, not the session.** `BudgetGuard.deadline` is set from `time.perf_counter()` inside each worker, but Kaggle's 12 h wall runs from cell 0 — so the prelude (data, K_eff, invariants, and the *twelve pilot training runs*, ~20–25 min) sat outside the budget entirely, and the two clocks drifted apart by however long it took | The notebook stamps `SESSION_T0` in cell 0 and passes `budget_h = 11.0 − elapsed` to `launch_workers`, so the guard bounds what §10.1 actually limits. Hitting the wall interactively loses `/kaggle/working` entirely, so this margin is not somewhere to be approximate |
+
+Measured 2026-08-07 with the repository absent from `sys.path`: every §4.1/§5.4/§6.2 figure
+reproduced from the materialised copy — 75,094 bars, 3 unusable, window budget exact at all fifteen
+origins, gate PR **4.393**, `corr(K, K_eff)` **0.828**, **280,472** parameters, `μ_g/σ_g` spanning
+−0.00818 … +0.01733 — and one worker subprocess wrote a `meta` carrying
+`input_sha256 = 8270a84b07c2923b…` from source `"report"`, matching §4.1's pinned digest.
+
+New contradictions found later take IDs **D55+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---
@@ -1525,15 +1593,16 @@ invertedTransformer/
 ├── CLAUDE.md                       # this file — project law
 ├── README.md
 ├── USAGE.md                        # operational companion: commands, stages, schemas, expected numbers
-├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D53f
+├── docs/DIVERGENCE_REGISTER.md     # long-form evidence: D01–D50 and D54. D51–D53 are in §14 only
 ├── docs/ORIGIN_WINDOW_BUDGET.md    # per-origin/per-block window accounting — D45's assertion target
 ├── src/                            # importable package; module inventory in USAGE.md §2
-├── notebooks/                      # thin Kaggle launchers only
+├── tools/build_notebook.py         # generates notebooks/iTransformer.ipynb FROM src/ (D54)
+├── notebooks/iTransformer.ipynb    # the launcher — self-contained, GENERATED, never hand-edited
 ├── paper/                          # manuscript; CLAUDE.md holds writing posture
 ├── spot_klines_btc.py              # Stage 1 ingest (was mis-named `binance_spot_klines.py`, D11/D33)
 ├── data/raw/                       # IMMUTABLE. the four Stage 1 artifacts live HERE (D33, resolved)
 ├── data/processed/                 # features_1h.parquet, splits.json — the writable half
-└── artifacts/{preds,meta,tables,figures}/  + paper_numbers.json
+└── artifacts/{preds,meta,logs,tables,figures}/  + paper_numbers.json
 ```
 
 **Logic lives in the package. A notebook is a launcher.** The superseded
@@ -1542,6 +1611,29 @@ it is what made the previous pipeline unverifiable and un-unit-testable. If a ce
 definition, a window builder, a loss or a metric, it belongs in `src/` where it can be unit-tested on
 CPU. **Never leave a notebook whose outputs are stale relative to `src/`**: outputs are evidence, and
 stale evidence is worse than none.
+
+**The launcher is self-contained, and that is not a weakening of the rule above (`D54`).**
+`notebooks/iTransformer.ipynb` carries the whole package in twelve `%%writefile` cells and
+materialises `itransformer_btc/` into the working directory before importing it, so a Kaggle session
+needs the notebook and `BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload,
+keep in step by hand, and silently run stale. The rule is unchanged because no definition moved: the
+cells *transcribe* `src/` byte for byte and the notebook then imports the result, asserting at
+runtime that `itransformer_btc.__file__` sits under its own working directory so a stray `src/` on
+`sys.path` fails loudly rather than quietly supplying different code.
+
+Three consequences, each load-bearing:
+
+- **Files, not definitions in cells.** The grid runs as two *subprocesses*, one pinned per GPU
+  (§10.3), and a subprocess inherits none of the kernel's namespace — it can reach the code only by
+  importing it, so the code must exist on disk. `launch_workers` passes the materialisation
+  directory as `PYTHONPATH` and the artifact path as `ITBTC_PARQUET`.
+- **Generated, never hand-edited.** A second copy of ~4,000 lines is the drift this repository has
+  a whole register to prevent, so it is not maintained by hand: `python tools/build_notebook.py`
+  writes it, `tests/test_notebook_sync.py` asserts it byte-identical to `src/`, and
+  `--check` fails the suite the moment `src/` moves without it. **Edit `src/`, re-run the generator,
+  commit both.** A hand-edit to a package cell is a defect and the next generator run reverts it.
+- **The digest replaces the commit.** There is no git repository on Kaggle, so `code_sha256`
+  identifies the code that ran (§12).
 
 **Two rules for `src/` that are not derivable from the sections above.** Shuffle by permuting an
 index tensor *on device*, never by moving data — the point of §10.3's GPU-resident regime is that
@@ -1581,8 +1673,17 @@ construction, so the `center=True` leak is **unrepresentable** — in pandas it 
 The source specification's §6.2 purge snippet is pandas and must be **re-expressed**, not copied.
 
 **Reproducibility.** Seed `random`, `numpy`, `torch`, `torch.cuda`; set `PYTHONHASHSEED`;
-`cudnn.deterministic = True` for final runs. Record git sha and input-artifact sha256 in every
-`meta/*.json`.
+`cudnn.deterministic = True` for final runs. Record git sha, **`code_sha256`** and input-artifact
+sha256 in every `meta/*.json` — the middle one because the first is `"unknown"` off-repo, which is
+every Kaggle session (§12, `D54`).
+
+**The notebook is generated, and regenerating it is part of editing `src/`.** After any change under
+`src/itransformer_btc/`, run `python tools/build_notebook.py` and commit the notebook with the same
+change. `tests/test_notebook_sync.py` asserts the notebook's `%%writefile` cells are byte-identical
+to the package, so skipping this fails the suite rather than shipping a launcher that runs last
+week's code. Adding a module to the package means adding it to `MODULE_ORDER` in the generator; the
+generator refuses to run otherwise, because a silently omitted module would materialise a package
+that imports and then fails somewhere deep in a twelve-hour session.
 
 **Before any long run.** Overfit a single batch: if the model cannot drive loss to ~0 on 8 samples
 in 200 steps, the plumbing is broken. **Run it with `dropout=0.0`** (`D52`) — with the configured

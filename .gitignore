@@ -225,6 +225,14 @@ database/*.parquet
 
 .venv/
 # Run artifacts: regenerable from src/ + the pinned input sha256 (CLAUDE.md section 12).
-# 837 runs x 2 files does not belong in git; Kaggle Dataset versioning carries them.
+# 789 runs x 2 files does not belong in git; Kaggle Dataset versioning carries them.
 artifacts/preds/
 artifacts/meta/
+artifacts/logs/
+
+# What iTransformer.ipynb materialises when it is run locally rather than on
+# Kaggle (D54). It is a byte-identical copy of src/itransformer_btc/, written by
+# the notebook's own %%writefile cells; committing it would create a third copy
+# of the package with no test policing it.
+notebooks/itransformer_btc/
+notebooks/artifacts/

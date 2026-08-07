@@ -690,6 +690,31 @@ this register exists to prevent.
 
 ---
 
+# Sixth pass — the Kaggle deployment surface, 2026-08-07
+
+`D51` came from asserting the data accounting, `D52` from building the features and the network,
+`D53` from building the experiment plane. **`D54` came from asking what the notebook actually needs
+in order to run on Kaggle** — the deployment surface, which is exactly what the unrun
+Kaggle/execution audit lens would have examined.
+
+## D54 — The launcher cannot run without a second Dataset, and loses both halves of §12's contract there
+
+| Field | Content |
+|---|---|
+| **Severity** | **C** |
+| **Source** | new — `notebooks/itransformer_kaggle.ipynb` cell 2 against `CLAUDE.md` §10.5, §12, §15 |
+| **Defect** | Three defects with one root cause: the launcher assumed the repository would be present on the machine that runs it. (a) **Cell 2 globbed for `src/itransformer_btc/__init__.py` and pushed the hit onto `sys.path`**, so the notebook could not run unless the repository was *also* uploaded as a Kaggle Dataset and kept in step with the notebook by hand — two artifacts that must agree, with nothing checking that they do. (b) **`_git_sha()` returns `"unknown"` on Kaggle**, there being no git repository there; §12 names the git sha as one of the three things every number must resolve to, so the traceability contract lost its code half at precisely the place the grid executes. (c) **`_input_sha256()` read the hard-coded path `data/raw/BTCUSDT_1h_report.json`**, which does not exist on Kaggle — the artifact arrives under `/kaggle/input/<slug>/` and §10.5 forbids hard-coding that slug — so the input digest also logged as `"unknown"`, and §12's rule that numbers from different vintages may not share a table became unenforceable |
+| **Resolution** | (a) The notebook **carries the package** in twelve `%%writefile` cells, materialises `itransformer_btc/` into the working directory before importing it, and then asserts at runtime that the imported `__file__` lives there — so a stray `src/` on `sys.path` fails loudly instead of silently supplying different code. Files rather than in-cell definitions, because the grid runs as two **subprocesses** pinned one per GPU and a subprocess inherits none of the kernel's namespace. (b) `train.code_sha256()` hashes the package's own source, line endings normalised so a CRLF checkout and an LF materialisation of the same logic give the same digest; it is recorded in every `meta/*.json` beside `git_sha`. (c) `train.resolve_input_parquet()` reads the `ITBTC_PARQUET` environment variable — set by the notebook, by `launch_workers` for each child, and by the worker CLI from its own `--parquet`; `_input_sha256()` prefers the Stage 1 report sitting beside the artifact and falls back to hashing the parquet, recording which in `input_sha256_source`. `CLAUDE.md` §10.5, §12, §15, §16 |
+| **Evidence** | Measured 2026-08-07 by materialising the package into a scratch directory with the repository absent from `sys.path`, then running cells 0–24 plus one worker subprocess: `code_sha256` identical in-process and in the child, `input_sha256 = 8270a84b07c2923b…` matching §4.1's pinned digest at `input_sha256_source = "report"`, `git_sha = "unknown"` exactly as on Kaggle, and every §4.1/§5.4/§6.2 figure reproduced — 75,094 bars, 3 unusable, budget exact at all 15 origins, gate PR 4.393, `corr(K, K_eff)` 0.828, 280,472 parameters, `μ_g/σ_g` spanning −0.00818…+0.01733 |
+| **Cost, and how it is paid** | A second copy of ~4,000 lines, which is the failure mode this register exists to prevent. It is paid down rather than accepted: the copy is **generated** by `tools/build_notebook.py`, and `tests/test_notebook_sync.py` asserts it byte-identical to `src/`, so editing `src/` without regenerating fails the suite. Hand-editing the notebook's package cells is a defect, and the generator silently reverts it on its next run |
+| **`D54e` — partial sessions** | **F.** The grid is ~10–20 wall hours against an 11 h budget, so a session that ends mid-grid is the *expected* case. It crashed. A partial grid is an unbalanced panel, and §9.1's estimators refuse one by design — `amplification` raises rather than compare K=1 at eleven origins against K=8 at ten, and RQ1's `wide[4] - wide[8]` broadcast-errors first. Simulated at the real two-shard stop shape (200 of 534, round-robin by group): K=1 complete at 11 origins, K=4/8/12 at 10. **The estimators are right; where the exception landed was not** — the last cells of a twelve-hour session, marking the Kaggle version failed at the moment its output was the only thing worth keeping. Resolution: RQ1/RQ2/RQ3 and the `paper_numbers.json` write are gated on `GRID_COMPLETE`; they print what remains and how to resume, and exit cleanly. Partial evaluation is never offered as a fallback, because a half-panel β₁ is a different estimand rather than a noisier one |
+| **`D54f` — the budget clock** | **C.** `BudgetGuard.deadline` is set from `time.perf_counter()` *inside each worker*, while Kaggle's 12 h wall runs from the notebook's first cell. The prelude — Stage 2, Stage 3b, Stage 4 and the twelve pilot training runs of Stage 5, ~20–25 min — therefore sat outside the budget, and the two clocks drifted apart by however long it took. Resolution: the notebook stamps `SESSION_T0` in cell 0 and passes `budget_h = 11.0 − elapsed`, so the guard bounds what §10.1 actually limits. Hitting the wall interactively loses `/kaggle/working` entirely, so the margin is not somewhere to be approximate |
+| **Resume, verified** | Granularity is one `run_id` (~90 s), so a session cut at run 200 of 534 loses at most the run in flight per GPU. Demonstrated 2026-08-07: a worker re-invoked on a shard holding one completed run reported `pending in shard=0` and did no work. `discover_roots`' two glob expressions were checked against both Kaggle layouts — `<slug>/preds` and `<slug>/artifacts/preds` — with a data-only Dataset correctly ignored |
+| **Disclose in** | §3.1 (provenance) — the manuscript states that runs were produced by a notebook-materialised copy of the package identified by `code_sha256`, not by a git checkout |
+| **Status** | resolved |
+
+---
+
 ## Smaller corrections absorbed without a numbered entry
 
 Each was verified and each changes one sentence, not a rule:
