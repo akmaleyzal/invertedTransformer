@@ -1,0 +1,157 @@
+{
+  ".claude/settings.json": {
+    "mtime": 1785835650.625646,
+    "ast_hash": "ce76fb4310dfdfc5f525a44cf85b5dd1",
+    "semantic_hash": "ce76fb4310dfdfc5f525a44cf85b5dd1"
+  },
+  "data/raw/BTCUSDT_1h_report.json": {
+    "mtime": 1786109766.5439956,
+    "ast_hash": "6590a0efa13af9c59eb9c401c05a439f",
+    "semantic_hash": "6590a0efa13af9c59eb9c401c05a439f"
+  },
+  "pyproject.toml": {
+    "mtime": 1786109766.5557587,
+    "ast_hash": "9e6d2ef40a579005ea66bb7a8b362dad",
+    "semantic_hash": "9e6d2ef40a579005ea66bb7a8b362dad"
+  },
+  "spot_klines_btc.py": {
+    "mtime": 1786109766.5567768,
+    "ast_hash": "c17fc69888a3c30b49eb75c35cdcc957",
+    "semantic_hash": "c17fc69888a3c30b49eb75c35cdcc957"
+  },
+  "src/itransformer_btc/__init__.py": {
+    "mtime": 1786109766.5582125,
+    "ast_hash": "a77ec95e6786685b55935340a725892d",
+    "semantic_hash": "a77ec95e6786685b55935340a725892d"
+  },
+  "src/itransformer_btc/budget.py": {
+    "mtime": 1786109766.5605695,
+    "ast_hash": "fc8f3010e819313b24f7b2e23c538174",
+    "semantic_hash": "fc8f3010e819313b24f7b2e23c538174"
+  },
+  "src/itransformer_btc/config.py": {
+    "mtime": 1786109766.5617175,
+    "ast_hash": "c1dd5269b5ac4fdbca2c2120b389a32d",
+    "semantic_hash": "c1dd5269b5ac4fdbca2c2120b389a32d"
+  },
+  "src/itransformer_btc/features.py": {
+    "mtime": 1786109766.563725,
+    "ast_hash": "dfced698518f714f87c3fa3220866590",
+    "semantic_hash": "dfced698518f714f87c3fa3220866590"
+  },
+  "src/itransformer_btc/keff.py": {
+    "mtime": 1786109766.564773,
+    "ast_hash": "0aafc6facf62223fde953706b38aa727",
+    "semantic_hash": "0aafc6facf62223fde953706b38aa727"
+  },
+  "src/itransformer_btc/metrics.py": {
+    "mtime": 1786109766.5658338,
+    "ast_hash": "ccc758656cce1283a978a263bc22906d",
+    "semantic_hash": "ccc758656cce1283a978a263bc22906d"
+  },
+  "src/itransformer_btc/model.py": {
+    "mtime": 1786109766.568202,
+    "ast_hash": "e694ee8175c6686752a1ba3f4821542d",
+    "semantic_hash": "e694ee8175c6686752a1ba3f4821542d"
+  },
+  "src/itransformer_btc/runner.py": {
+    "mtime": 1786109766.5695922,
+    "ast_hash": "0d3836fa5a7a558df58fb254e04f0e30",
+    "semantic_hash": "0d3836fa5a7a558df58fb254e04f0e30"
+  },
+  "src/itransformer_btc/segments.py": {
+    "mtime": 1786109766.5705903,
+    "ast_hash": "54f6eedac9e93d7b9354bbb5b5b33bcf",
+    "semantic_hash": "54f6eedac9e93d7b9354bbb5b5b33bcf"
+  },
+  "src/itransformer_btc/splits.py": {
+    "mtime": 1786109766.5729575,
+    "ast_hash": "9550da99064f639e353977d011991449",
+    "semantic_hash": "9550da99064f639e353977d011991449"
+  },
+  "src/itransformer_btc/train.py": {
+    "mtime": 1786109766.5743084,
+    "ast_hash": "d4b6df3f05496bc1ccb1f05c9e9e643c",
+    "semantic_hash": "d4b6df3f05496bc1ccb1f05c9e9e643c"
+  },
+  "src/itransformer_btc/windows.py": {
+    "mtime": 1786109766.5756648,
+    "ast_hash": "5b345316364d3e1f3eab84a7c29803ab",
+    "semantic_hash": "5b345316364d3e1f3eab84a7c29803ab"
+  },
+  "tests/test_data_plane.py": {
+    "mtime": 1786109766.5768003,
+    "ast_hash": "b0407745d02415614e4be8bf76cc8fac",
+    "semantic_hash": "b0407745d02415614e4be8bf76cc8fac"
+  },
+  "tests/test_experiment_plane.py": {
+    "mtime": 1786109766.577988,
+    "ast_hash": "4c6bcbf25bea0cd4d623c0b6d3c8c918",
+    "semantic_hash": "4c6bcbf25bea0cd4d623c0b6d3c8c918"
+  },
+  "tests/test_model_plane.py": {
+    "mtime": 1786109766.5791955,
+    "ast_hash": "1004886394777dde0320a946d7b5ac0a",
+    "semantic_hash": "1004886394777dde0320a946d7b5ac0a"
+  },
+  "tests/test_notebook_sync.py": {
+    "mtime": 1786109766.5805254,
+    "ast_hash": "d20e1cb405cde050bd76f846e1ebf0d1",
+    "semantic_hash": "d20e1cb405cde050bd76f846e1ebf0d1"
+  },
+  "tools/build_notebook.py": {
+    "mtime": 1786109766.5828087,
+    "ast_hash": "514e7ef77e025ca5844580dd53a458cb",
+    "semantic_hash": "514e7ef77e025ca5844580dd53a458cb"
+  },
+  ".claude/plans/claude-md-rewrite-spot-itransformer.plan.md": {
+    "mtime": 1785917228.1361694,
+    "ast_hash": "73b4bab28adc5c439823ff7890dcadc8",
+    "semantic_hash": "73b4bab28adc5c439823ff7890dcadc8"
+  },
+  ".claude/prds/claude-md-rewrite-spot-itransformer.prd.md": {
+    "mtime": 1785979473.5278435,
+    "ast_hash": "f9c017a3f56e0e856b8696c1ad236571",
+    "semantic_hash": "f9c017a3f56e0e856b8696c1ad236571"
+  },
+  "CLAUDE.md": {
+    "mtime": 1786109766.3032556,
+    "ast_hash": "31b05128da662d4b75974e230328c811",
+    "semantic_hash": "31b05128da662d4b75974e230328c811"
+  },
+  "README.md": {
+    "mtime": 1786109766.3046024,
+    "ast_hash": "b1e4b44c862d0785d8206fc18d994a8f",
+    "semantic_hash": "b1e4b44c862d0785d8206fc18d994a8f"
+  },
+  "USAGE.md": {
+    "mtime": 1786109766.3056183,
+    "ast_hash": "bf32ab773b977129defa54e561e30309",
+    "semantic_hash": "bf32ab773b977129defa54e561e30309"
+  },
+  "docs/DIVERGENCE_REGISTER.md": {
+    "mtime": 1786109766.5465107,
+    "ast_hash": "2f40354f216c766809034aba9fba1fd4",
+    "semantic_hash": "2f40354f216c766809034aba9fba1fd4"
+  },
+  "docs/ORIGIN_WINDOW_BUDGET.md": {
+    "mtime": 1786109766.5479593,
+    "ast_hash": "55a92566583856044f490476a6699a33",
+    "semantic_hash": "55a92566583856044f490476a6699a33"
+  },
+  "paper/CLAUDE.md": {
+    "mtime": 1786109766.5534956,
+    "ast_hash": "5443218cfd862f2785e0aea460486682",
+    "semantic_hash": "5443218cfd862f2785e0aea460486682"
+  },
+  "reference_library_itransformer_btc.md": {
+    "mtime": 1785914275.591511,
+    "ast_hash": "0a31b80d5352909c40c8e823ff3c2848",
+    "semantic_hash": "0a31b80d5352909c40c8e823ff3c2848"
+  },
+  "research_specification_itransformer_btc.md": {
+    "mtime": 1785914259.200488,
+    "ast_hash": "90f43b0ae5e71add05ac537f7aef6ce9",
+    "semantic_hash": "90f43b0ae5e71add05ac537f7aef6ce9"
+  }
+}
