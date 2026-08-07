@@ -1,7 +1,9 @@
 """Data plane and experiment scaffolding for the spot-only iTransformer study.
 
-Root ``CLAUDE.md`` is the project law; ``src/CLAUDE.md`` adds the code-local
-rules. Two of those rules shape every module here:
+Root ``CLAUDE.md`` is the project law, and it is the *only* one: the
+subdirectory files were deleted on 2026-08-06 because a rule that loads solely
+when a file in its subtree is opened is absent exactly when an agent reasons
+about the area without opening one. Two of those rules shape every module here:
 
 * **polars only.** Its rolling API is backward-closed by construction, so the
   ``center=True`` leak class is unrepresentable. Stage 1 ingest

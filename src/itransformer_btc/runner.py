@@ -52,6 +52,8 @@ from itransformer_btc.model import ITransformerConfig
 from itransformer_btc.splits import OriginTensors, build_origin_tensors
 from itransformer_btc.train import (
     ARTIFACTS,
+    DEFAULT_PARQUET,
+    INPUT_PARQUET_ENV,
     RunSpec,
     is_complete,
     pick_device,
@@ -519,7 +521,7 @@ def stage5_pilot(
     )
 
 
-def build_feature_frame(parquet: Path = Path("data/raw/BTCUSDT_1h.parquet")) -> pl.DataFrame:
+def build_feature_frame(parquet: Path = DEFAULT_PARQUET) -> pl.DataFrame:
     """Load the immutable artifact and compute the twelve variates."""
     from itransformer_btc.features import build_features
     from itransformer_btc.segments import load_bars, usable_mask
@@ -530,7 +532,7 @@ def build_feature_frame(parquet: Path = Path("data/raw/BTCUSDT_1h.parquet")) -> 
 def launch_workers(
     n_workers: int = 2,
     *,
-    parquet: Path = Path("data/raw/BTCUSDT_1h.parquet"),
+    parquet: Path = DEFAULT_PARQUET,
     out_root: Path = ARTIFACTS,
     arms: tuple[str, ...] = ("main", "uniform", "fresh", "horizon"),
     budget_h: float = SESSION_BUDGET_H,
@@ -544,6 +546,13 @@ def launch_workers(
     it sees that GPU as ``cuda:0`` and its global RNG belongs to it alone. That
     is what makes ``set_seed`` mean what root §16 says it means with two GPUs in
     play.
+
+    ``package_root`` is the directory holding the importable ``itransformer_btc``
+    package, and it is a parameter rather than a constant because it is not the
+    same directory in the two places this runs: ``src/`` from a checkout, and the
+    working directory from a notebook that materialised the package itself
+    (`D54`). The child is a fresh interpreter, so it inherits nothing from the
+    parent's ``sys.path`` and must be told.
     """
     log_dir = Path(out_root) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -559,6 +568,9 @@ def launch_workers(
             [str(package_root), env.get("PYTHONPATH", "")]
         ).strip(os.pathsep)
         env["PYTHONUNBUFFERED"] = "1"
+        # The child records the input-artifact digest in every meta it writes,
+        # and can only find the artifact if it is told where it is (root §12).
+        env[INPUT_PARQUET_ENV] = str(parquet)
 
         path = log_dir / f"worker{index}.log"
         handle = path.open("w", encoding="utf-8")
@@ -607,14 +619,16 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="One GPU worker for the grid.")
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--shards", type=int, default=1)
-    parser.add_argument(
-        "--parquet", type=Path, default=Path("data/raw/BTCUSDT_1h.parquet")
-    )
+    parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET)
     parser.add_argument("--out", type=Path, default=ARTIFACTS)
     parser.add_argument("--arms", type=str, default="main,uniform,fresh,horizon")
     parser.add_argument("--budget-h", type=float, default=SESSION_BUDGET_H)
     parser.add_argument("--reserve-h", type=float, default=RESERVE_H)
     args = parser.parse_args(argv)
+
+    # Set, not defaulted: a worker invoked directly with --parquet must record
+    # that artifact's digest, not whatever the launcher happened to export.
+    os.environ[INPUT_PARQUET_ENV] = str(args.parquet)
 
     arms = tuple(a.strip() for a in args.arms.split(",") if a.strip())
     features = build_feature_frame(args.parquet)
