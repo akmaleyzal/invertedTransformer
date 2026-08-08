@@ -48,6 +48,18 @@ DEFAULT_PARQUET: Path = Path("data/raw/BTCUSDT_1h.parquet")
 #: launcher and the worker CLI both set this from the path they were handed.
 INPUT_PARQUET_ENV: str = "ITBTC_PARQUET"
 
+#: Digest supplied by a launcher that has no package files to hash.
+#:
+#: :func:`code_sha256` normally hashes ``*.py`` beside this module, which needs
+#: a ``__file__`` — and a notebook that carries the package as **plain
+#: definition cells** rather than materialised files has none. The generator
+#: computes the identical digest from ``src/itransformer_btc/`` and sets this,
+#: so the number in ``meta/*.json`` still names the code that ran (root §12,
+#: `D54b`) and still matches the digest a local checkout of the same source
+#: produces. Left ``None`` in every file-based context, where the real hash is
+#: strictly better because nothing has to be told to keep it honest.
+CODE_SHA256_OVERRIDE: str | None = None
+
 
 def set_seed(seed: int) -> None:
     """Seed every source of nondeterminism root §16 names.
@@ -274,7 +286,15 @@ def code_sha256() -> str:
     that, every Kaggle run would appear to be a different code vintage from the
     local run of the same commit — a false positive on the one check §12 exists
     to make possible.
+
+    ``CODE_SHA256_OVERRIDE`` short-circuits this where there are no files to
+    hash — a notebook carrying the package as plain definition cells. The
+    ``__file__`` lookup below sits *after* that check on purpose: in such a
+    launcher there is no module file at all, so reaching it would raise rather
+    than return the digest the traceability contract asks for.
     """
+    if CODE_SHA256_OVERRIDE is not None:
+        return CODE_SHA256_OVERRIDE
     root = Path(__file__).resolve().parent
     digest = hashlib.sha256()
     for path in sorted(root.glob("*.py")):
