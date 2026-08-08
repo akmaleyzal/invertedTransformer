@@ -732,33 +732,68 @@ if dec.excluded_origins:
 
 print("\ntau sensitivity — headline 5%, pre-registered before the curve was seen:")
 b_star_rows = []
-for tau in metrics.TAU_SENSITIVITY:
-    bs = dec.b_star(tau)
-    km = metrics.kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy())
-    lo, hi = km.median_interval
-    median = "censored >6" if km.median == float("inf") else f"{km.median:.0f}"
-    interval = "censored" if lo == float("inf") else f"[{lo:.0f}, {hi:.0f}]"
-    flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
-    print(f"  tau={tau:>6.1%}  crossings {km.n_events}/"
-          f"{km.n_events + km.n_censored}  median b* {median}  CI {interval}{flag}")
-    b_star_rows.append({"tau": tau, "median_b_star": km.median, "ci_low": lo,
-                        "ci_high": hi, "events": km.n_events,
-                        "censored": km.n_censored})
 
-print("\nb* resolves only to 30-day granularity and only out to 180 days. If no "
-      "block crosses tau, the honest answer is 'no decay detected within 180 days' "
-      "— a right-censored result, not a missing one. Say it in those words, and put "
-      "the INTERVAL in the abstract, never a bare integer.")
+if not dec.table.height:
+    # Every origin failed the R2_oos > 0 guard, so D(i,b) has no denominator
+    # anywhere and b* has nothing to estimate (D55). This is NOT censoring: a
+    # censored origin has an edge that never decays past tau within 180 days,
+    # whereas here there is no edge to lose a proportion of. Reporting the two
+    # in one wording would claim skill the grid never found.
+    for tau in metrics.TAU_SENSITIVITY:
+        flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
+        print(f"  tau={tau:>6.1%}  UNDEFINED — no origin has positive mean skill{flag}")
+        b_star_rows.append({"tau": tau, "status": "undefined", "median_b_star": None,
+                            "ci_low": None, "ci_high": None, "events": 0,
+                            "censored": 0, "n_origins": 0})
+    print(f"\nRQ3 RETURNS NO ANSWER, and that is the finding. D(i,b) is a proportion "
+          f"of skill lost; all {len(dec.excluded_origins)} origins have mean "
+          f"R2_oos <= 0, so the proportion is undefined rather than large or small.")
+    print("Root section 9.1's guard was written for an edge case and is here the "
+          "ONLY case. Report it as 'the decay estimand is undefined under "
+          "non-positive out-of-sample skill' — never as 'no decay detected within "
+          "180 days', which is the right-censored wording and asserts an edge.")
+else:
+    for tau in metrics.TAU_SENSITIVITY:
+        bs = dec.b_star(tau)
+        km = metrics.kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy())
+        lo, hi = km.median_interval
+        median = "censored >6" if km.median == float("inf") else f"{km.median:.0f}"
+        interval = "censored" if lo == float("inf") else f"[{lo:.0f}, {hi:.0f}]"
+        flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
+        print(f"  tau={tau:>6.1%}  crossings {km.n_events}/"
+              f"{km.n_events + km.n_censored}  median b* {median}  CI {interval}{flag}")
+        b_star_rows.append({"tau": tau, "status": "estimated",
+                            "median_b_star": km.median, "ci_low": lo,
+                            "ci_high": hi, "events": km.n_events,
+                            "censored": km.n_censored, "n_origins": bs.height})
 
-# H3: larger K decays faster.
-try:
-    a = dec.b_star(metrics.TAU_HEADLINE)
-    b = metrics.decay(seed_avg, k=1).b_star(metrics.TAU_HEADLINE)
+    print("\nb* resolves only to 30-day granularity and only out to 180 days. If no "
+          "block crosses tau, the honest answer is 'no decay detected within 180 days' "
+          "— a right-censored result, not a missing one. Say it in those words, and put "
+          "the INTERVAL in the abstract, never a bare integer.")
+
+# H3: larger K decays faster. Needs surviving origins AND at least one crossing:
+# with zero events in both arms the log-rank variance is zero and the statistic
+# is 0/0, which prints as nan and reads like a computed result. Section 12 calls
+# a number that cannot be regenerated a documented failure, so say why instead.
+a = dec.b_star(metrics.TAU_HEADLINE)
+b = metrics.decay(seed_avg, k=1).b_star(metrics.TAU_HEADLINE)
+events = (int(a["event"].sum()) if a.height else 0,
+          int(b["event"].sum()) if b.height else 0)
+if a.height and b.height and sum(events):
     chi2, p = metrics.logrank(a["b_star"].to_numpy(), a["event"].to_numpy(),
                               b["b_star"].to_numpy(), b["event"].to_numpy())
-    print(f"\nlog-rank K=8 vs K=1 at tau=5%: chi2={chi2:.3f}  p={p:.4f}  (H3)")
-except (ValueError, IndexError, KeyError) as exc:
-    print(f"\nlog-rank unavailable: {exc}")
+    print(f"\nlog-rank K=8 vs K=1 at tau=5%: chi2={chi2:.3f}  p={p:.4f}  "
+          f"(H3; crossings K=8 {events[0]}, K=1 {events[1]})")
+elif not (a.height and b.height):
+    print(f"\nlog-rank K=8 vs K=1 UNAVAILABLE: surviving origins K=8 {a.height}, "
+          f"K=1 {b.height}. H3 compares decay RATES, so it needs an edge in both "
+          "arms; with none, H3 is untestable rather than rejected.")
+else:
+    print(f"\nlog-rank K=8 vs K=1 UNAVAILABLE: zero crossings in both arms "
+          f"({a.height} and {b.height} origins, all censored at 6). The statistic "
+          "is 0/0 here, not a large p-value — H3 is untestable, and reporting a "
+          "nan as though it were computed would be the same defect as D55.")
 '''
 
 CODE_SAVE = r'''from itransformer_btc.train import _input_sha256
