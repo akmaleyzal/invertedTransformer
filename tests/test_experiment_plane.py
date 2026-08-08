@@ -214,6 +214,49 @@ def test_decay_is_on_the_skill_scale_and_guards_its_denominator() -> None:
     assert censored.get_column("event").to_list() == [False]
 
 
+def test_b_star_keeps_its_columns_when_every_origin_is_excluded() -> None:
+    """`D55`. The measured grid excluded all fifteen origins, not an edge case.
+
+    ``decay``'s ``R2_oos > 0`` guard is correct and stays. What was wrong is that
+    ``b_star`` then inferred its schema from zero rows and returned a frame with
+    **no columns**, so the notebook's ``bs["b_star"]`` raised
+    ``ColumnNotFoundError`` and marked the twelve-hour Kaggle version failed at
+    the moment its grid output was the only thing worth keeping. `D54e` gates the
+    estimators on grid *completeness*, which is a different failure.
+
+    The distinction the columns have to survive for: an empty frame means the
+    estimand is **undefined**, whereas a frame of sixes with ``event=False``
+    means every origin is **censored** — an edge that never decays past tau. The
+    two must not be reported in one wording.
+    """
+    rows = [
+        {
+            "model": "itr", "origin_index": i, "origin": f"dead-{i}", "k": 8,
+            "pred_len": 24, "block": block, "mse": 1.02, "mse_naive": 1.0,
+            "n_windows": 720, "r2_oos": -0.018,
+        }
+        for i in (1, 2, 3)
+        for block in range(1, 7)
+    ]
+    result = metrics.decay(pl.DataFrame(rows))
+    assert result.excluded_origins == ("dead-1", "dead-2", "dead-3")
+    assert result.table.height == 0
+
+    bs = result.b_star(tau=metrics.TAU_HEADLINE)
+    assert bs.height == 0
+    assert bs.columns == ["origin", "tau", "b_star", "event"]
+
+    # The exact line that took the notebook down.
+    times, events = bs["b_star"].to_numpy(), bs["event"].to_numpy()
+    assert len(times) == 0
+
+    # Kaplan-Meier over no observations must degrade, not raise.
+    km = metrics.kaplan_meier(times, events)
+    assert km.n_events == 0 and km.n_censored == 0
+    assert km.median == float("inf")
+    assert km.median_interval == (float("inf"), float("inf"))
+
+
 def test_hln_factor_guard_fires_where_it_must() -> None:
     """Root §9.2 refuses to report where ``T + 1 - 2h + h(h-1)/T <= 0``.
 

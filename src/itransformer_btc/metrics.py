@@ -63,6 +63,17 @@ HOUR_MS = 3_600_000
 TAU_HEADLINE: float = 0.05
 TAU_SENSITIVITY: tuple[float, ...] = (0.025, 0.05, 0.10, 0.50)
 
+#: Declared so `DecayResult.b_star` keeps its columns when every origin is
+#: excluded (`D55`). An inferred schema over zero rows yields a frame with no
+#: columns at all, and the caller's ``bs["b_star"]`` then raises rather than
+#: reporting the pre-registered null.
+B_STAR_SCHEMA: dict[str, pl.DataType] = {
+    "origin": pl.Utf8,
+    "tau": pl.Float64,
+    "b_star": pl.Int64,
+    "event": pl.Boolean,
+}
+
 
 # -- artifact I/O ------------------------------------------------------------
 
@@ -521,6 +532,23 @@ class DecayResult:
         ``min{.}`` does not commute with averaging, so pooling MSEs across
         origins and *then* taking the minimum is a different estimand and is
         forbidden. Each origin contributes one observation, censored or not.
+
+        The schema is declared rather than inferred (`D55`). When `decay`'s
+        non-positive-skill guard excludes *every* origin, ``self.table`` is empty
+        and an inferred schema yields a frame with no columns, so a caller's
+        ``bs["b_star"]`` raises ``ColumnNotFoundError`` — which is what took the
+        Kaggle notebook down at the exact moment its grid output was the only
+        thing worth keeping. That guard firing is the **expected** outcome under
+        non-positive skill, not an edge case: root §10.3's first measured run
+        returned ``R2_oos = -0.0183`` and the completed grid returned it at all
+        fifteen origins. `D54e` gates the estimators on grid *completeness*,
+        which is a different failure and does not cover this path.
+
+        An empty return means the estimand is **undefined** — there is no edge to
+        lose a proportion of — which is not the same as every origin being
+        censored at 6, where an edge exists and simply never decays past tau.
+        Callers must report the two differently; ``excluded_origins`` is what
+        tells them apart.
         """
         rows = []
         for key, part in self.table.group_by("origin", maintain_order=True):
@@ -534,7 +562,7 @@ class DecayResult:
                     "event": bool(crossed.height),
                 }
             )
-        return pl.DataFrame(rows)
+        return pl.DataFrame(rows, schema=B_STAR_SCHEMA)
 
 
 def decay(
