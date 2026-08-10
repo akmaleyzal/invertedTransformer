@@ -35,7 +35,7 @@ imports. ``from __future__ import annotations`` stays where it sits: a leading
 string literal is the compile unit's docstring, so the future import still counts
 as the first statement and compiles. Verified too.
 
-Two module-level names collide once the twelve namespaces merge —
+Two module-level names collide once the namespaces merge —
 ``DEFAULT_PARQUET`` (``segments``, ``train``) and ``HOUR_MS`` (``segments``,
 ``metrics``). Both are the **same value** in both definitions, differing only in
 type annotation, so last-cell-wins is harmless. Anything else colliding would not
@@ -93,6 +93,9 @@ MODULE_ORDER: tuple[str, ...] = (
     "train.py",
     "keff.py",
     "metrics.py",
+    # After `metrics`, which it imports `assert_same_windows` from, and before
+    # `runner`, which imports its three configs by name (`D56`).
+    "baselines.py",
     "runner.py",
 )
 
@@ -254,7 +257,7 @@ MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, 
     &#9889; iTransformer &middot; Walk-Forward BTCUSDT 1h
   </h1>
   <p style="color: #ffb703; font-size: 1.12em; margin: 0 0 18px 0; font-weight: 500;">
-    Nominal Variates or Effective Dimensionality? &mdash; 15 origins &middot; 534 runs &middot; 2 &times; T4
+    Nominal Variates or Effective Dimensionality? &mdash; 15 origins &middot; 684 runs &middot; 2 &times; T4
   </p>
   <hr style="border: none; border-top: 1px solid #2a4365; margin: 16px 0;">
   <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
@@ -294,9 +297,9 @@ MD_SETUP = """<div style="background: linear-gradient(90deg, #0b1021, #112240); 
 
 MD_DEFINE = """<div style="background: linear-gradient(90deg, #0a1a12, #0f2a1c); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
   <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128230; 0b &middot; Definitions</h2>
-  <p style="color: #b8c7e0; margin: 0;">Twelve cells, one per module, in dependency order. Plain definitions &mdash; run them and every name the rest of the notebook calls exists. Generated from <code>src/</code>; do not hand-edit.</p>
+  <p style="color: #b8c7e0; margin: 0;">Thirteen cells, one per module, in dependency order. Plain definitions &mdash; run them and every name the rest of the notebook calls exists. Generated from <code>src/</code>; do not hand-edit.</p>
   <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>Definitions, not files.</strong> The earlier launcher wrote these twelve modules to
+    <li><strong>Definitions, not files.</strong> The earlier launcher wrote these modules to
     disk with <code>%%writefile</code> and imported them back, because the grid ran as two
     subprocesses and a subprocess inherits none of this kernel's namespace. Measured on Kaggle, the
     completed grid was <strong>534 runs in 2.31 h at ~30 s per run</strong> against a &sect;10.3
@@ -398,17 +401,35 @@ MD_GATE = """<div style="background: linear-gradient(90deg, #2b0a00, #3d1000); b
 
 MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); border-left: 4px solid #4cc9f0; border-radius: 8px; padding: 18px 24px;">
   <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid</h2>
-  <p style="color: #b8c7e0; margin: 0;">534 unique runs across four arms, executed in this kernel. Resume automatic, budget guard at run boundaries.</p>
+  <p style="color: #b8c7e0; margin: 0;">684 unique runs across seven arms, executed in this kernel. Resume automatic, budget guard at run boundaries.</p>
   <ul style="color: #a9d6f5; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
     <li><strong>main 300</strong> &middot; <strong>uniform 75</strong> (<code>D50</code>) &middot;
     <strong>fresh 15</strong> (falsification) &middot; <strong>horizon 144</strong>. The sweep's
     H=24 slice shares 48 <code>run_id</code>s with the main grid, so 582 nominal cells are 534 real
     runs &mdash; executing one twice would mean two files racing for one path.</li>
+    <li><strong>ridge 60</strong> (<code>D17</code>, K=1/4/8/12) &middot;
+    <strong>dlinear 45</strong> &middot; <strong>patchtst 45</strong> &mdash; the &sect;7 comparators,
+    absent from every earlier manifest (<code>D56</code>). Without them "iTransformer has no edge"
+    rests on Naive-RW alone, and a referee reads the null as an untuned configuration rather than a
+    finding. They run <em>after</em> the ladder so a short session leaves RQ1&ndash;RQ3's inputs
+    complete, and so each baseline's <code>D45</code> window-alignment assertion finds its comparator
+    already on disk.</li>
     <li><strong>One process, one GPU, and a second T4 idles.</strong> A real cost, stated rather than
     buried: it roughly doubles wall time against the two-worker form. It is what the notebook format
     costs &mdash; definitions live in this namespace and a subprocess inherits none of it. The
-    measured arithmetic says it still fits: <strong>534 &times; ~30 s &asymp; 4.5 h</strong> against
-    an 11 h budget (<code>D57</code>). Threads are <em>not</em> the way to reclaim the second GPU:
+    measured arithmetic says it still fits: <strong>534 &times; ~30 s &asymp; 4.5 h</strong> for the
+    ladder (<code>D57</code>).</li>
+    <li><strong>PatchTST is the expensive arm, by a factor nobody guessed.</strong> Measured on CPU at
+    origin 1, K=8: iTransformer 113 s over 10 epochs, ridge 0.5 s, DLinear 24 s, PatchTST
+    <strong>1810 s</strong>. Per epoch that is 5.3&times; iTransformer &mdash; it folds channels into
+    the batch, so a step processes B&times;N=256 sequences rather than 32 &mdash; and both
+    channel-independent baselines run the full 30 epochs because early stopping never fires. Scaling
+    <code>D57</code>'s 30 s/run gives ridge and DLinear ~10 min combined and PatchTST
+    <strong>~6 h</strong>, putting the whole manifest near 11 h. <strong>Two sessions is therefore the
+    expected case, not the exception.</strong> That is survivable precisely because the baselines run
+    last: an overrun costs comparators, never RQ1&ndash;RQ3's inputs, and they resume by
+    <code>run_id</code> like anything else.
+    Threads are <em>not</em> the way to reclaim the second GPU:
     <code>torch.manual_seed</code> seeds <em>every</em> CUDA device, so two threads would clobber
     each other's generator mid-run and &sect;12's reproducibility contract would be
     unenforceable.</li>
@@ -420,7 +441,7 @@ MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); b
     <code>/kaggle/working</code> entirely.</li>
     <li><strong>Resume granularity is one run, ~30 s.</strong> A run counts as complete only when
     both <code>preds/</code> and <code>meta/</code> exist and <code>meta.status ==
-    "complete"</code>, so a session cut short at run 200 of 534 loses at most the one run in flight.
+    "complete"</code>, so a session cut short at run 200 of 684 loses at most the one run in flight.
     The next session subtracts what is done and continues &mdash; there is no bookkeeping to do by
     hand and no state beyond the files themselves. Intra-run checkpointing is deliberately omitted:
     at ~30 s per run it costs more complexity than it saves.</li>
@@ -560,8 +581,8 @@ if torch.cuda.is_available():
 
 #: ``{digest}`` is substituted at generation time — see :func:`package_digest`.
 CODE_PROVENANCE = r'''# Root section 12 asks a run to name the code that produced it, and names the git
-# sha as the way. There is no git repository on Kaggle and — the twelve cells
-# above being definitions rather than files — nothing on disk to hash either. So
+# sha as the way. There is no git repository on Kaggle and — the cells above
+# being definitions rather than files — nothing on disk to hash either. So
 # the digest is taken from src/itransformer_btc/ when this notebook is generated
 # and pinned here (D54b). It is the SAME number a local checkout of the same
 # source reports, which is the point: a run from the notebook and a run from the
@@ -569,12 +590,12 @@ CODE_PROVENANCE = r'''# Root section 12 asks a run to name the code that produce
 CODE_SHA256_OVERRIDE = "{digest}"
 
 # These cells are EXECUTED, not written, so a skipped one leaves a hole rather
-# than a stale file — and the hole surfaces hours later, inside the grid. Twelve
-# sentinels, one per module, in MODULE_ORDER: cheap here, unbounded there.
+# than a stale file — and the hole surfaces hours later, inside the grid. One
+# sentinel per module, in MODULE_ORDER: cheap here, unbounded there.
 _sentinels = (
     "ORIGINS", "__all__", "build_segments", "count_windows", "budget_table",
     "build_features", "build_origin_tensors", "ITransformer", "code_sha256",
-    "keff_table", "seed_average", "manifest",
+    "keff_table", "seed_average", "PatchTST", "manifest",
 )
 _missing = [name for name in _sentinels if name not in globals()]
 assert not _missing, (
@@ -745,7 +766,7 @@ CODE_GRID = r'''import gc
 
 # The pre-flight probe and the pilot allocated on this same device, and the grid
 # is about to. Hand the memory back before it starts rather than carrying two
-# dead models through 534 runs.
+# dead models through 684 runs.
 for _name in ("probe", "plumb", "xs", "ys", "opt", "loss"):
     globals().pop(_name, None)
 gc.collect()
@@ -776,8 +797,10 @@ print(f"\nprelude took {elapsed_h * 60:.0f} min -> grid gets {budget_h:.2f} h "
 
 # In-kernel and sequential. The definitions live in THIS namespace and nowhere
 # else, so a subprocess could not reach them — and at ~30 s per run measured
-# (D57) the 534 cells are ~4.5 h, which fits without a second worker. The second
-# GPU idles; that is the price of the format, and it is stated rather than hidden.
+# (D57) the 534 iTransformer cells are ~4.5 h, which fits without a second
+# worker. The 150 baseline cells (D56) are not measured on a T4; they run last,
+# so an overrun costs the comparators and never RQ1-RQ3's inputs. The second GPU
+# idles; that is the price of the format, and it is stated rather than hidden.
 if torch.cuda.device_count() > 1:
     print(f"NOTE: {torch.cuda.device_count()} GPUs visible, using {device} only. "
           f"Threads are not the fix — torch.manual_seed seeds EVERY CUDA device, "
@@ -1087,7 +1110,7 @@ def guarded(body: str, what: str) -> str:
     different estimand, not a noisier one.
 
     What is wrong is *where* the exception lands. A 12-hour Kaggle session that
-    stops at run 200 of 534 would raise here, in the last cells, and mark the
+    stops at run 200 of 684 would raise here, in the last cells, and mark the
     version failed at the exact moment its output is the only thing worth
     keeping. So the estimators stay strict and the notebook simply does not call
     them until the panel exists.

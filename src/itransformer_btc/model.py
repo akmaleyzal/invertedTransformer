@@ -53,6 +53,53 @@ class ITransformerConfig:
     #: them, at runs Figure 5 needs anyway.
     uniform_attention: bool = False
 
+    # -- the Architecture protocol (`D56`) ----------------------------------
+    #
+    # Methods, not fields. ``write_artifacts`` records ``asdict(cfg)``, so
+    # anything added here as a *field* would enter every iTransformer
+    # ``meta/*.json`` and change bytes the 534-run grid has already produced.
+
+    def build(self) -> "ITransformer":
+        """A fresh module for this configuration."""
+        return ITransformer(self)
+
+    def loss_target(self) -> str:
+        """``"target"`` — MSE on the target channel only, at every rung (`D39`).
+
+        A constant rather than a field, deliberately. Standard iTransformer
+        implementations compute the loss over all N channels, which would make
+        K=12 a 12-task problem and K=1 a 1-task problem: auxiliary supervision
+        varying with the study's own independent variable, and K=1 no longer the
+        stated control but a different learning problem. Root §11 carries this as
+        a verifiable assertion, and a field would be one edit away from failing
+        it silently.
+        """
+        return "target"
+
+    def fit(
+        self,
+        tensors: "OriginTensors",
+        spec: "RunSpec",
+        *,
+        device: "torch.device | None" = None,
+    ) -> tuple["ITransformer", "ITransformerConfig", "TrainOutcome"]:
+        """Train one cell and hand back this config **unchanged**.
+
+        Nothing is selected here: every hyperparameter is fixed a priori and
+        identical at every rung (`D38`), which is what makes the rungs
+        comparable. Ridge is the contrast — its alpha is chosen on the validation
+        sub-block, so its ``fit`` returns a different config than it received.
+
+        The import is deferred because ``train`` owns the protocol this
+        satisfies, and importing it at module scope would be a cycle. In the
+        flattened notebook there are no modules at all and ``train_one`` is
+        simply a name a later cell defines, bound by the time this is called.
+        """
+        from itransformer_btc.train import train_one
+
+        model, outcome = train_one(tensors, spec, self, device=device)
+        return model, self, outcome
+
 
 class InvertedEmbedding(nn.Module):
     """Embed each variate's entire lookback: ``Linear(L -> d_model)``.
@@ -176,6 +223,18 @@ class ITransformer(nn.Module):
             out = out * std[:, 0, :].unsqueeze(1) + mean[:, 0, :].unsqueeze(1)
 
         return out[:, :, self.target_index]
+
+    def forecast_target(self, x: Tensor) -> Tensor:
+        """``(B, L, N) -> (B, H)`` — here, identical to ``forward``.
+
+        The method exists because ``preds/*.parquet`` holds the target channel
+        for **every** model in the study, and a channel-independent baseline's
+        ``forward`` returns all N (`D56`). Declaring the projection on the model
+        that wrote the file beats sniffing the rank of an output tensor: the
+        prediction file's meaning then rests on something a model said, not on a
+        shape a reader has to reverse-engineer.
+        """
+        return self(x)
 
     def n_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

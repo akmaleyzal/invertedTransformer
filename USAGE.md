@@ -71,7 +71,7 @@ invertedTransformer/
 └── artifacts/{preds,meta,logs}/    + paper_numbers.json
 ```
 
-**The notebook carries the package** (`D54`, `D58`). Twelve cells **define** each module directly in
+**The notebook carries the package** (`D54`, `D58`). Thirteen cells **define** each module directly in
 the kernel namespace — no files, no package, nothing to import — so a Kaggle session needs the
 notebook and `BTCUSDT_1h.parquet` and nothing else. (It used to write those files with
 `%%writefile`; that existed only so two GPU *subprocesses* could import them, and `D57`'s measured
@@ -103,7 +103,8 @@ Hand-editing a package cell in the notebook is a defect; the next generator run 
 | `train.py` | Training loop; run identity; the two artifacts | GPU-resident, no `DataLoader`; LR halves every 4 epochs (`D47`) |
 | `keff.py` | §5.4's pre-model measurement; the Stage 3b gate | Every K_eff is computed on a **training-only** span (`D44`) |
 | `metrics.py` | §9 — every metric, test and RQ estimator | Ratio metrics come from seed-averaged MSEs, never averaged ratios (`D42`) |
-| `runner.py` | The 534-run manifest; resume; budget guard; the 2-GPU launcher | Shards the **full** manifest, then subtracts what is done (`D53c`) |
+| `baselines.py` | §7's comparators: ridge, DLinear, PatchTST (`D56`) | Writes through `train.write_artifacts`, never its own schema; `D45` window alignment is asserted, not assumed |
+| `runner.py` | The 684-run manifest; resume; budget guard; the 2-GPU launcher | Shards the **full** manifest, then subtracts what is done (`D53c`) |
 
 `tools/build_notebook.py` sits outside the package on purpose: it is build tooling, not study logic,
 and nothing under `src/` may import it.
@@ -127,7 +128,7 @@ Nine stages. Each names what it reads, what it writes, and what it will refuse t
      │
   Stage 5  pilot gate ─────► 12 main-grid runs, judged on VALIDATION
      │
-  Stage 6  the grid ───────► artifacts/{preds,meta}/*  (534 runs)
+  Stage 6  the grid ───────► artifacts/{preds,meta}/*  (684 runs)
      │
   Stage 7  evaluation ─────► RQ1, RQ2, RQ3
      │
@@ -278,9 +279,9 @@ evidence, one seed at origin 1: validation MSE 0.469075 (K=1) vs 0.467904 (K=8),
 
 ### Stage 6 — the grid
 
-**534 unique runs.** 582 nominal cells minus 48 that are literally the same run: the horizon sweep's
-H=24 slice at seeds 42–44 shares `run_id`s with the main grid, and `run_id` **is** the identity of a
-run (`D53e`).
+**684 unique runs** — 534 iTransformer + 150 baselines. The 534 is 582 nominal cells minus 48 that
+are literally the same run: the horizon sweep's H=24 slice at seeds 42–44 shares `run_id`s with the
+main grid, and `run_id` **is** the identity of a run (`D53e`).
 
 | Arm | Runs | Composition | Tag |
 |---|---:|---|---|
@@ -288,6 +289,18 @@ run (`D53e`).
 | uniform | 75 | 15 × K=8 × 5 seeds — attention forced uniform (`D50`) | `itru_` |
 | fresh | 15 | one fresh model per origin at `o_i + 90 d` | `itrf_` |
 | horizon | 144 | 4 named origins × 4 K × 4 H × 3 seeds, minus the 48 shared | `itr_` |
+| ridge | 60 | 15 × 4 K, deterministic — one seed (`D17`) | `rdg_` |
+| dlinear | 45 | 15 × K=8 × 3 seeds (§7) | `dlin_` |
+| patchtst | 45 | 15 × K=8 × 3 seeds, patch 16 stride 8 (§7) | `ptst_` |
+
+**The three baseline arms are new (`D56`) and run last.** Until 2026-08-10 no baseline class existed
+and this manifest held only iTransformer cells, so §10.2's 789 was never executable and Table 6 had
+no inputs. They are ordered after the ladder for two reasons: a session cut short then leaves RQ1–
+RQ3's inputs complete, and each baseline's `D45` alignment assertion finds its main-grid comparator
+already on disk instead of reporting itself unchecked. **PatchTST is the expensive arm** — measured
+on CPU at origin 1, K=8: iTransformer 113 s, ridge 0.5 s, DLinear 24 s, PatchTST **1810 s**, 5.3×
+iTransformer per epoch and running all 30 epochs because early stopping never fires. Expect two
+sessions.
 
 ```bash
 # one worker, one GPU (or CPU)
@@ -301,7 +314,7 @@ CUDA_VISIBLE_DEVICES=1 python -m itransformer_btc.runner --shard 1 --shards 2
 | Flag | Default | Meaning |
 |---|---|---|
 | `--shard` / `--shards` | 0 / 1 | Round-robin **by group**, so a cell's seeds share one tensor build |
-| `--arms` | `main,uniform,fresh,horizon` | Comma-separated subset |
+| `--arms` | `main,uniform,fresh,horizon,ridge,dlinear,patchtst` | Comma-separated subset |
 | `--parquet` | `data/raw/BTCUSDT_1h.parquet` | Input artifact |
 | `--out` | `artifacts` | Where the two files per run go |
 | `--budget-h` / `--reserve-h` | 11.0 / 0.5 | Session budget, checked at **run boundaries** |
@@ -368,8 +381,8 @@ is generated from that file, never transcribed.**
 
 ## 4. Running on Kaggle
 
-`notebooks/iTransformer.ipynb`, 36 cells (25 code), load through evaluation. **Self-contained**: its
-twelve module cells define the package in the kernel namespace, so nothing is imported and the
+`notebooks/iTransformer.ipynb`, 37 cells (26 code), load through evaluation. **Self-contained**: its
+thirteen module cells define the package in the kernel namespace, so nothing is imported and the
 repository is not uploaded (`D54`, `D58`).
 
 Setup:
@@ -381,9 +394,10 @@ Setup:
    never by dataset slug, so the Dataset can be renamed freely.
 4. **Save Version → Save & Run All.** Never the interactive editor.
 
-**Do not attach the repository**, and do not add a `src/` to `sys.path`. The notebook asserts that
-the `itransformer_btc` it imported lives in its own working directory and fails loudly otherwise:
-two copies of the code, one of them stale, is the failure the assertion exists to catch.
+**Do not attach the repository**, and do not add a `src/` to `sys.path`. The notebook asserts
+`"itransformer_btc" not in sys.modules` and fails loudly otherwise: an installed or on-path copy
+shadowing the definition cells would mean every number it produced was traceable to code that is not
+in the cells above — exactly the dependency this format removes.
 
 **Why never the editor:** the 20-minute idle timeout kills long interactive sessions, and hitting
 Kaggle's own 12 h wall interactively loses `/kaggle/working` **entirely**.
@@ -431,10 +445,16 @@ completed runs.
 | `/kaggle/working` | 20 GB | Predictions total ≈ 0.5–2 GB — fits with room |
 | `/kaggle/input` | read-only | Everything is *written* to `/kaggle/working` |
 
-**Timing is not yet confirmed on a T4.** Measured locally: **97.8 s per run, 9.8 s/epoch, on CPU with
-6 threads** — no CUDA device was available. §10.3's 60–100 s per-run figure remains an estimate.
-Extrapolating, 534 runs ÷ 2 workers ≈ 7 wall-hours, inside one weekly quota. **Take the real T4
-number on the first session and replace §10.3's block.**
+**Timing, measured** (`D57`, 2026-08-08): **534 iTransformer runs in 2.31 h** on two T4s, ~30 s per
+run, against §10.3's 60–100 s / 10–20 h estimate. The CPU figure for the same cell is 97.8 s at
+9.8 s/epoch, so a T4 is ~3× faster and the estimate was ~3× pessimistic on top of that.
+
+**The baselines are not measured on a T4 and are the reason the budget is tight again** (`D56`).
+On CPU at origin 1, K=8: ridge 0.5 s, DLinear 24 s, PatchTST **1810 s** against iTransformer's 113 s
+— 5.3× per epoch, and all 30 epochs because early stopping never fires. Scaled at the same 3×, the
+45-run PatchTST arm is ~6 h and the 684-run manifest lands near 11 h. Two sessions; the baselines run
+last, so an overrun costs comparators rather than RQ1–RQ3's inputs. **Take the real T4 numbers on the
+next session and replace this paragraph.**
 
 ---
 

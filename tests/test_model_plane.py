@@ -10,13 +10,22 @@ with dropout on). A test that only ever passed would not have found them.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import polars as pl
 import pytest
 import torch
 from torch import nn
 
-from itransformer_btc.config import ORIGINS
+from itransformer_btc.baselines import (
+    RIDGE_ALPHAS,
+    DLinearConfig,
+    PatchTSTConfig,
+    RidgeConfig,
+    assert_baseline_alignment,
+)
+from itransformer_btc.config import ORIGINS, PRED_LEN, SEQ_LEN
 from itransformer_btc.features import (
     TARGET,
     TARGET_INDEX,
@@ -26,8 +35,18 @@ from itransformer_btc.features import (
 )
 from itransformer_btc.model import ITransformer, ITransformerConfig
 from itransformer_btc.segments import build_segments, load_bars, usable_mask
-from itransformer_btc.splits import build_origin_tensors
-from itransformer_btc.train import scale_invariance_check, set_seed
+from itransformer_btc.splits import (
+    OriginTensors,
+    Scaler,
+    SplitTensors,
+    build_origin_tensors,
+)
+from itransformer_btc.train import (
+    RunSpec,
+    scale_invariance_check,
+    set_seed,
+    write_artifacts,
+)
 
 
 @pytest.fixture(scope="session")
@@ -234,3 +253,287 @@ def test_single_batch_overfits_with_dropout_off() -> None:
         loss.backward()
         opt.step()
     assert loss.item() < 1e-3, f"plumbing broken: {loss.item():.3e}"
+
+
+# -- the §7 baselines — `D56` ------------------------------------------------
+
+
+def _synthetic_tensors(
+    n_train: int = 200, n_val: int = 64, k: int = 8, *, signal: bool = False
+) -> OriginTensors:
+    """An ``OriginTensors`` with no data behind it, for the plumbing tests.
+
+    Real windows cost seconds to build and prove nothing extra here: every test
+    below is about a model's shapes, its objective or its selection rule, none of
+    which reads a timestamp. ``signal=True`` makes the target a fixed linear
+    function of the window plus noise, so ridge's validation curve has an
+    interior minimum; with ``signal=False`` the best predictor is the training
+    mean and alpha runs to the top of the grid, which is its own test.
+    """
+    rng = np.random.default_rng(0)
+    beta = rng.standard_normal((SEQ_LEN * k, PRED_LEN)) / (SEQ_LEN * k) ** 0.5
+
+    def split(n: int, t0: int) -> SplitTensors:
+        x = rng.standard_normal((n, SEQ_LEN, k)).astype(np.float32)
+        y_all = rng.standard_normal((n, PRED_LEN, k)).astype(np.float32)
+        if signal:
+            y_all[:, :, TARGET_INDEX] = (
+                x.reshape(n, -1) @ beta + 0.5 * rng.standard_normal((n, PRED_LEN))
+            ).astype(np.float32)
+        return SplitTensors(
+            x=x,
+            y=np.ascontiguousarray(y_all[:, :, TARGET_INDEX]),
+            y_all=y_all,
+            ts=np.arange(t0, t0 + n, dtype=np.int64) * 3_600_000,
+        )
+
+    columns = list(VARIATE_ORDER[:k])
+    return OriginTensors(
+        origin=ORIGINS[0],
+        k=k,
+        scaler=Scaler(np.zeros(k), np.ones(k), tuple(columns)),
+        train=split(n_train, 0),
+        val=split(n_val, n_train),
+        test_blocks=(split(32, n_train + n_val),),
+        block_labels=(1,),
+    )
+
+
+def test_baselines_forecast_the_target_channel() -> None:
+    """Every model writes ``(B, H)`` to ``preds/``, whatever its ``forward`` returns.
+
+    `D56`: the channel-independent baselines carry their published all-channel
+    objective, so ``forward`` is ``(B, H, N)`` — but root §10.4's prediction file
+    holds one channel for every model, and ``forecast_target`` is where each one
+    says which.
+    """
+    x = torch.randn(4, SEQ_LEN, 8)
+    for cfg in (RidgeConfig(k=8), DLinearConfig(), PatchTSTConfig()):
+        model = cfg.build().eval()
+        assert model.forecast_target(x).shape == (4, PRED_LEN)
+    for cfg in (DLinearConfig(), PatchTSTConfig()):
+        model = cfg.build().eval()
+        assert model(x).shape == (4, PRED_LEN, 8)
+        assert torch.equal(model.forecast_target(x), model(x)[:, :, TARGET_INDEX])
+
+
+def test_channel_independent_baselines_are_channel_independent() -> None:
+    """DLinear and PatchTST must ignore the other channels **at prediction time**.
+
+    That is the architecture's claim, and it is what makes their K label mean
+    something different from the ladder's: the other seven variates reach the
+    target's forecast only through weights shared across channels and supervised
+    on all of them. Hence ``loss_target() == "all"`` — trained on the target
+    channel alone these would be K=1 wearing a K=8 label, which is `D40`'s
+    collapse and would quietly return the paper's central architectural
+    comparison to univariate-versus-multivariate.
+    """
+    set_seed(42)
+    x = torch.randn(4, SEQ_LEN, 8)
+    disturbed = x.clone()
+    disturbed[:, :, 1:] = torch.randn(4, SEQ_LEN, 7)
+
+    for cfg in (DLinearConfig(), PatchTSTConfig()):
+        assert cfg.loss_target() == "all"
+        assert cfg.channel_independent is True
+        model = cfg.build().eval()
+        with torch.no_grad():
+            assert torch.allclose(
+                model.forecast_target(x), model.forecast_target(disturbed), atol=1e-6
+            )
+
+
+def test_ridge_is_multivariate_at_prediction_time() -> None:
+    """`D17`'s whole point: ridge reads every one of the ``L x K`` inputs.
+
+    The contrast with the test above is the reason both baselines exist. Ridge
+    answers "does the *information* help"; a channel-independent transformer
+    cannot, because it never sees two variates at once.
+    """
+    set_seed(42)
+    cfg = RidgeConfig(k=8)
+    model = cfg.build().eval()
+    with torch.no_grad():
+        model.weight.normal_()
+    assert model.weight.shape == (SEQ_LEN * 8, PRED_LEN)
+    assert model.n_parameters() == SEQ_LEN * 8 * PRED_LEN + PRED_LEN
+
+    x = torch.randn(4, SEQ_LEN, 8)
+    disturbed = x.clone()
+    disturbed[:, :, 1:] = torch.randn(4, SEQ_LEN, 7)
+    with torch.no_grad():
+        assert not torch.allclose(
+            model.forecast_target(x), model.forecast_target(disturbed)
+        )
+
+
+def test_ridge_selects_alpha_on_validation() -> None:
+    """Root §11 — the one hyperparameter this study selects, and where.
+
+    Re-fitting with the chosen alpha as the *only* candidate has to reproduce the
+    reported validation MSE exactly. That checks the selection without
+    re-implementing it, which a hand-rolled argmin in the test would do and would
+    then agree with a broken implementation.
+    """
+    tensors = _synthetic_tensors(signal=True)
+    spec = RunSpec("rdg", 1, 8, PRED_LEN, 42)
+
+    model, resolved, outcome = RidgeConfig(k=8).fit(
+        tensors, spec, device=torch.device("cpu")
+    )
+    assert resolved.alpha in RIDGE_ALPHAS
+    assert RidgeConfig(k=8).alpha is None, "the input config must not be mutated"
+    # A solve, not a loop — and that is what tells Table 3 why this row has no
+    # epochs-to-stop rather than a missing one.
+    assert outcome.epochs_run == 0
+    assert model.n_parameters() == SEQ_LEN * 8 * PRED_LEN + PRED_LEN
+
+    _, again, single = RidgeConfig(k=8, alphas=(resolved.alpha,)).fit(
+        tensors, spec, device=torch.device("cpu")
+    )
+    assert again.alpha == resolved.alpha
+    assert single.best_val_mse == pytest.approx(outcome.best_val_mse, rel=1e-12)
+
+
+def test_ridge_warns_when_alpha_pins_to_the_grid_edge() -> None:
+    """With no signal the best linear predictor is the training mean.
+
+    Alpha then runs to the top of the grid — a finding, not a failure. It is
+    warned about because a boundary selection is also what an unbracketed grid
+    looks like, and the number alone cannot tell the two apart.
+    """
+    tensors = _synthetic_tensors(signal=False)
+    with pytest.warns(UserWarning, match="edge of"):
+        _, resolved, _ = RidgeConfig(k=8).fit(
+            tensors, RunSpec("rdg", 1, 8, PRED_LEN, 42), device=torch.device("cpu")
+        )
+    assert resolved.alpha == RIDGE_ALPHAS[-1]
+
+
+def test_write_artifacts_records_the_selected_alpha(tmp_path) -> None:
+    """One writer, one schema — and it carries what ridge selected (`D56`, root §12).
+
+    ``write_artifacts`` is the only definition of the ``meta/*.json`` contract.
+    Duplicating it for the baselines would have created a second definition of
+    §12, which is the drift surface `D54d` exists to prevent; instead it takes
+    the protocol, so a ridge run and an iTransformer run are described by the
+    same keys and the alpha lands in ``config`` for free.
+    """
+    tensors = _synthetic_tensors(signal=True)
+    spec = RunSpec("rdg", 1, 8, PRED_LEN, 42)
+    model, resolved, outcome = RidgeConfig(k=8).fit(
+        tensors, spec, device=torch.device("cpu")
+    )
+    _, meta_path = write_artifacts(
+        model, tensors, spec, resolved, outcome, torch.device("cpu"), root=tmp_path
+    )
+
+    meta = json.loads(meta_path.read_text())
+    assert meta["status"] == "complete"
+    assert meta["run_id"] == "rdg_o01_K08_H024_s42"
+    assert meta["config"]["alpha"] == resolved.alpha
+    assert meta["config"]["k"] == 8
+    assert meta["n_parameters"] == model.n_parameters()
+
+
+def _preds(path, timestamps: list[int], block: int = 1) -> None:
+    pl.DataFrame(
+        {
+            "block": np.full(len(timestamps), block, dtype=np.int8),
+            "step": np.ones(len(timestamps), dtype=np.int16),
+            "timestamp": np.array(timestamps, dtype=np.int64),
+            "y_true": np.zeros(len(timestamps), dtype=np.float32),
+            "y_pred": np.zeros(len(timestamps), dtype=np.float32),
+        }
+    ).write_parquet(path)
+
+
+def test_baseline_alignment_holds_and_has_teeth(tmp_path) -> None:
+    """`D45` — a baseline is only comparable on its comparator's exact windows.
+
+    Equal by construction, both window sets coming from ``window_starts`` with
+    the same origin and semantics, which is why this assertion is cheap. It must
+    still fail on a mismatch: RelMSE across two samples is not a ratio, and the
+    two would differ systematically — test-window survival is conditioned on
+    *future* gaps, and outages cluster on stress.
+    """
+    preds = tmp_path / "preds"
+    preds.mkdir()
+    stamps = [t * 3_600_000 for t in range(10)]
+    _preds(preds / "rdg_o01_K08_H024_s42.parquet", stamps)
+    _preds(preds / "itr_o01_K08_H024_s42.parquet", stamps)
+    assert_baseline_alignment(
+        "rdg_o01_K08_H024_s42", "itr_o01_K08_H024_s42", [tmp_path]
+    )
+
+    _preds(preds / "dlin_o01_K08_H024_s42.parquet", stamps[:-1])
+    with pytest.raises(ValueError, match="evaluated window sets differ"):
+        assert_baseline_alignment(
+            "dlin_o01_K08_H024_s42", "itr_o01_K08_H024_s42", [tmp_path]
+        )
+
+    # A missing comparator must be distinguishable from a passing check, which is
+    # why the runner catches this specific exception and says so out loud.
+    with pytest.raises(FileNotFoundError):
+        assert_baseline_alignment(
+            "ptst_o01_K08_H024_s42", "itr_o01_K08_H024_s42", [tmp_path]
+        )
+
+
+@pytest.mark.parametrize(
+    ("cfg", "lr", "ceiling"),
+    [
+        (PatchTSTConfig(dropout=0.0), 1e-3, 1e-3),
+        (DLinearConfig(), 1e-2, 1e-6),
+    ],
+)
+def test_single_batch_overfits_for_each_baseline(cfg, lr: float, ceiling: float) -> None:
+    """Root §16's plumbing check, per model — and `D52d` again, one door along.
+
+    `D52d` recorded that §16's instruction cannot be followed literally with
+    dropout on. The same trap has a second door: **the learning rate in it is
+    iTransformer's, not universal**, and the two baselines need corrections in
+    *opposite* directions, so no single constant serves all three models.
+    Measured, 8 samples, 200 steps, seeds 42-44:
+
+    ========  ========  =====================  ==========================
+    Model     lr 1e-3   lr 1e-2                Verdict
+    ========  ========  =====================  ==========================
+    iTransf.  1.3e-10   —                      §16 as written
+    PatchTST  3.3e-06 … 5.2e-04                lr 1e-2 **diverges** to ~1.0
+    DLinear   8.5e-02 … 9.7e-02 (stalls)       1.6e-09 … 3.9e-08
+    ========  ========  =====================  ==========================
+
+    DLinear's floor at lr 1e-3 is convergence, not plumbing: with ``B = A`` the
+    decomposition telescopes to ``A(I-P) + AP = A``, so the model class contains
+    every linear map from the lookback to the horizon and an exact fit exists.
+    Half of ``(A, B)`` is gauge, which is what makes the descent slow. A reader
+    following §16 literally would conclude DLinear is broken when it is not —
+    which is why this is parameterised and measured rather than asserted at one
+    constant.
+    """
+    set_seed(42)
+    model = cfg.build().train()
+    x = torch.randn(8, SEQ_LEN, 8)
+    y = torch.randn(8, PRED_LEN, 8)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    for _ in range(200):
+        opt.zero_grad(set_to_none=True)
+        loss = nn.functional.mse_loss(model(x), y)
+        loss.backward()
+        opt.step()
+    assert loss.item() < ceiling, f"plumbing broken: {loss.item():.3e}"
+
+
+def test_ridge_overfits_by_construction() -> None:
+    """Ridge's §16 check is a solve, so "overfit" means exact interpolation.
+
+    Eight samples in a 768-dimensional design at a negligible alpha: the training
+    residual is at floating-point zero, and anything else means the design matrix
+    or the intercept is wired wrong.
+    """
+    tensors = _synthetic_tensors(n_train=8, n_val=8, signal=True)
+    _, _, outcome = RidgeConfig(k=8, alphas=(1e-8,)).fit(
+        tensors, RunSpec("rdg", 1, 8, PRED_LEN, 42), device=torch.device("cpu")
+    )
+    assert outcome.train_loss < 1e-12, f"plumbing broken: {outcome.train_loss:.3e}"

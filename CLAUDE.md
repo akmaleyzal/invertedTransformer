@@ -622,6 +622,57 @@ per run and closes a question a reviewer will otherwise ask.
 **DLinear and PatchTST are not optional.** A missing DLinear is the first thing a reviewer familiar
 with the LTSF literature will flag.
 
+**Built, deferred, and what "K = 8" means for a channel-independent model (`D56`, closed
+2026-08-10).** `src/itransformer_btc/baselines.py` implements **ridge (K = 1, 4, 8, 12), DLinear
+(K = 8) and PatchTST (K = 8)** — 150 runs, manifest 534 → **684**. **ARIMA, LSTM, naive-persist and
+seasonal-naive are deferred, not cut**: they stay in the table above and this sentence is the written
+record that nobody has built them yet, per the rule that a struck baseline needs a written reason
+rather than silence. Naive-RW needs no run at all — `block_metrics` computes it from `naive_rw_z` on
+exactly the rows its comparator was scored on, which is also what makes `D45` vacuous for that one
+pair and binding for every other. Four properties of the implementation are design decisions rather
+than details, and each is recorded as a field in `meta/*.json` so no reader has to infer it:
+
+- **The channel-independent baselines carry their published all-channel objective, with weights
+  shared across channels.** A channel-independent model forecasts each channel from that channel's
+  own history — that is the architecture's claim, and it means all-channel supervision through shared
+  weights is the *only* route by which the other seven variates reach the target's forecast. Trained
+  on the target channel alone, DLinear-K8 and PatchTST-K8 would be numerically identical to their
+  K=1 selves: K=1 wearing a K=8 label, exactly the collapse `D40` exists to prevent. So their K label
+  means **trained on eight channels**, not **predicts the target from eight channels**, and
+  `loss_channels` / `channel_independent` are logged per run. One consequence must be stated wherever
+  their numbers appear: their `best_val_mse` is an **all-channel** figure and is *not* comparable to
+  the ladder's target-channel figure. Only metrics computed from `preds/`, which holds the target
+  channel for every model, are comparable across models.
+- **`D39`'s single-channel loss is unchanged for the ladder.** The all-channel objective is the
+  baselines' own; the rungs stay target-channel at every K, because there the supervision would
+  otherwise vary with the study's own independent variable.
+- **DLinear's decomposition contains a centred moving average, and §5.3 survives it.** §2 forbids
+  `center=True` and §5.3 says no feature uses a rolling window at all — both scoped to *features*,
+  and the reason is that a rolling feature computed over the full series lets a later bar reach an
+  earlier feature value, which is the leak class §8.3's no-embargo argument rests on. DLinear's
+  average is computed at inference time from the 96 bars of the window itself, every one of which
+  precedes the first forecast hour, and its padding replicates the window's own endpoints rather than
+  reaching outside it. No test-period bar can influence any training-set value, so §8.3 is untouched.
+  Reproducing the published decomposition matters more than avoiding the word "centred": a causal
+  variant would be a different model, and the question this baseline answers is about DLinear.
+- **PatchTST reuses iTransformer's encoder block and capacity verbatim** — `d_model` 128, `d_ff` 256,
+  2 layers, 8 heads, dropout 0.1, the same `EncoderLayer` class — so the two differ in *what a token
+  is*, a patch of one variate against one variate's whole lookback, and in nothing else. 302,360
+  parameters against 280,472. §6.2/`D38`'s no-tuning rule therefore extends to the baselines instead
+  of quietly exempting them, and **ridge's α remains the only hyperparameter selected anywhere in
+  this study**, on the validation sub-block, logged in `meta['config']`.
+
+**First measurement, origin 1, K=8, seed 42, CPU** — recorded because §10.2's budget was written
+without it: iTransformer **113 s** over 10 epochs, ridge **0.5 s**, DLinear **24 s**, PatchTST
+**1810 s**, the last two running all 30 epochs because early stopping never fires. PatchTST is
+**5.3× iTransformer per epoch** — it folds channels into the batch, so a step processes B×N = 256
+sequences rather than 32 — and ~16× per run. Scaled against `D57`'s measured 30 s/run on a T4 that is
+~6 h for the PatchTST arm alone, putting the 684-run manifest near the 11 h budget: **two sessions is
+now the expected case**, survivable only because the baselines run last, so an overrun costs
+comparators rather than RQ1–RQ3's inputs. Also recorded, and not yet evidence of anything: at that
+cell ridge's validation MSE is **0.4554** against iTransformer's **0.4679**, at α = 1e5 — heavy
+shrinkage, i.e. close to the training mean. One origin, one seed, validation not test.
+
 ---
 
 ## 8. Walk-forward protocol
@@ -1041,12 +1092,23 @@ Derived against **15 origins** (`D26`, §8.1).
 8→12 rung is RQ1's designed contrast and cannot carry the fewest seeds. **`D48` names the four sweep
 origins in advance** — choosing them after the main grid would be origin selection.
 
-**Superseded twice, and the table above is the nominal count, not the run count.** `D53e`
+**Superseded three times, and the table above is the nominal count, not the run count.** `D53e`
 deduplicates the sweep's H=24 slice against the main grid, giving **789** real runs — 534
 iTransformer + 195 baselines + 60 ridge — and the 534 iTransformer half is what actually executed on
-2026-08-08. `D57` then replaced the timing this paragraph rests on. Both are recorded below rather
-than by editing the arithmetic away, because the trade-offs elsewhere in this document were made
-against these figures and a reader needs to see which ones moved.
+2026-08-08. `D57` then replaced the timing this paragraph rests on. `D56` then replaced the baseline
+half of the count. All three are recorded below rather than by editing the arithmetic away, because
+the trade-offs elsewhere in this document were made against these figures and a reader needs to see
+which ones moved.
+
+**The executable manifest is 684, not 789 (`D56`, closed 2026-08-10).** The 195-run baseline row was
+always nominal: it counts four deterministic models and three stochastic ones at three seeds, and
+**none of the seven existed in `src/`**, so 789 could never be run. What exists now is 534
+iTransformer + **60 ridge + 45 DLinear + 45 PatchTST = 684**. The gap to 789 is ARIMA, LSTM,
+naive-persist and seasonal-naive, deferred with the written reason §7 now carries; Naive-RW is in
+neither count because it needs no run. Read 789 as the ceiling this design implies and 684 as what
+the manifest emits — and note that the PatchTST arm alone is projected at ~6 h against `D57`'s
+measured T4 rate, so the *time* the smaller grid takes is larger than the one the bigger number was
+budgeted at.
 
 **Quota check, as written and now falsified.** At the §10.3 regime (~60–100 s per run, two GPUs as independent workers), 837 runs
 land at **≈ 7–12 wall-hours**, plus the horizon sweep's H=168 cells and the ARIMA/LSTM baselines,
@@ -1376,7 +1438,17 @@ Each of these is a place a reviewer will otherwise find a hole:
   horizons and the DM matrix;
 - **the Stage 5 pilot as a selection event** (`D27`), stated separately from the DSR trial count;
 - **the training-window overlap between origins** and the effective cluster count (`D28`);
-- **the future-conditioned exclusion of test windows** near outages (`D45`).
+- **the future-conditioned exclusion of test windows** near outages (`D45`);
+- **what "K = 8" means for the channel-independent baselines** (`D56`, §7) — they are *trained on*
+  eight channels through shared weights and their published all-channel objective, and predict the
+  target from its own history alone. Left unstated, a reader takes DLinear-K8 and PatchTST-K8 to be
+  multivariate predictors in the sense ridge and iTransformer are, and the channel-independence
+  pillar of §2 in Related Work loses the very distinction it exists to draw. State also that their
+  validation losses are all-channel and therefore not comparable to the ladder's;
+- **DLinear's internal centred moving average** (`D56`, §7) — it is a rolling window, it is centred,
+  and it is confined to the 96-bar lookback, so the `center=True` leak class §5.3 makes
+  unrepresentable in the *features* is not reintroduced and §8.3's no-embargo argument stands. A
+  reviewer who knows DLinear will look for this; better to answer it than to be asked.
 
 **Priority claims are hedged and documented.** §3's contribution (1) reads "first walk-forward
 evaluation of iTransformer on a crypto asset with explicit decay measurement". Written flat, it is
@@ -1638,7 +1710,7 @@ particular shape.
 | ID | Sev | Defect | Resolution |
 |---|---|---|---|
 | **D55** | F | `DecayResult.b_star()` inferred its schema from its rows, so when `decay`'s `R2_oos > 0` guard excluded **every** origin it returned a frame with no columns and the RQ3 cell's `bs["b_star"]` raised `ColumnNotFoundError` — marking the twelve-hour version failed at the moment its grid output was the only thing worth keeping. The guard firing is the **expected** outcome under non-positive skill, not an edge case: §10.3's first run already returned `R2_oos = -0.0183` and the grid returned it at all fifteen origins. `D54e` gates on grid *completeness*, a different failure | `B_STAR_SCHEMA` declares the four columns. The RQ3 cell branches: an empty table means the estimand is **undefined** — there is no edge to lose a proportion of — which is *not* the right-censored "no decay detected within 180 days" §3 pre-registers, and reporting both in one wording would claim skill the grid never found. Log-rank likewise refuses to print `chi2=nan` where the statistic is 0/0. **Closed 2026-08-08** |
-| **D56** | F | §7 calls DLinear and PatchTST "not optional" and §10.2 budgets 255 baseline runs, but **no baseline model exists in `src/`** and the manifest (534 = `main 300 + uniform 75 + fresh 15 + horizon 144`) never contained one. §10.2's 789 was never executable. `metrics.dm_nonnested()` sits waiting for input that has never existed, so Table 6 has no inputs and the paper's central architectural comparison has no data | `src/itransformer_btc/baselines.py` + manifest keys. Minimum defensible set first: **ridge (K=1,4,8,12), DLinear (K=8), PatchTST (K=8)** — enough to answer whether iTransformer failed or the whole LTSF class did, which is the question that decides what the negative result means. ARIMA, LSTM and the naive variants follow or are struck from §7 **with a written reason**, never left silently unbuilt. **Open** |
+| **D56** | F | §7 calls DLinear and PatchTST "not optional" and §10.2 budgets 255 baseline runs, but **no baseline model exists in `src/`** and the manifest (534 = `main 300 + uniform 75 + fresh 15 + horizon 144`) never contained one. §10.2's 789 was never executable. `metrics.dm_nonnested()` sits waiting for input that has never existed, so Table 6 has no inputs and the paper's central architectural comparison has no data | `src/itransformer_btc/baselines.py` + manifest keys: **ridge (K=1,4,8,12) 60, DLinear (K=8) 45, PatchTST (K=8) 45**, manifest **534 → 684**, arms ordered so the ladder completes first. `write_artifacts` was **generalised to a protocol, never copied** — §12's schema keeps exactly one definition, and the iTransformer `meta/*.json` was verified byte-identical across the change but for `code_sha256` and `wall_time_s`. `D45` is asserted per baseline run against its main-grid comparator and is **fatal**, not skipped. Three consequences are new and written into §7: the channel-independent baselines' all-channel objective and what their K label therefore means, DLinear's internal centred moving average against §5.3, and PatchTST at ~16× iTransformer's wall time. ARIMA, LSTM, naive-persist and seasonal-naive are **deferred with a written reason**, not silently unbuilt. **Closed 2026-08-10** |
 | **D57** | U | §10.3 estimated 60–100 s per run on a T4 and 10–20 h for the grid. Measured: **~30 s** and **2.31 h** for 534 runs on two T4s. The regime was right; the arithmetic on it was 2–3× pessimistic per run and 4–8× overall, so the weekly quota was never the binding constraint every §10.2 trade-off was made against | §10.3 carries the measured numbers, §10.5's resume argument reads ~30 s. The slack is what makes a second granularity affordable and what made `D58` possible. **Closed 2026-08-08** |
 | **D58** | C | §15 and §10.3 described twelve `%%writefile` cells materialising a package, imported by **two GPU subprocesses**. That form existed for one reason — a subprocess reaches code only from disk — and `D57` dissolved it. Keeping the description would have left the governing document contradicting the artifact, which is worse than the defects it catches | Notebook flattened to **definition cells** in one kernel namespace; grid runs in-kernel and sequential. `D54a`'s *conclusion* (no repository Dataset) stands; its *mechanism* is superseded. `launch_workers` is retained and tested for the checkout path and for a 1-minute grid, where sequential will not fit. `code_sha256` is pinned by the generator, with the honesty cost stated in §12. **Closed 2026-08-08** |
 
@@ -1680,8 +1752,8 @@ and silently run stale. The rule is unchanged because no definition moved: the c
 `src/` and the generator is what writes them.
 
 **It carries the package as definition cells, not as files (`D58`, superseding `D54a`'s form).**
-Twelve cells define each module directly in the kernel namespace — plain `def`, `class` and constant
-bodies that the cells below call by name. There is no `itransformer_btc` package on the running
+One cell per module — thirteen since `baselines.py` (`D56`) — defines it directly in the kernel
+namespace as plain `def`, `class` and constant bodies that the cells below call by name. There is no `itransformer_btc` package on the running
 machine, nothing on `sys.path`, and nothing to import. The earlier form wrote twelve files with
 `%%writefile` and imported them back, and existed for exactly one reason: the grid ran as two
 subprocesses and a subprocess can reach code only from disk. `D57` removed that reason — at ~30 s per
