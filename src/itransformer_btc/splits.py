@@ -123,11 +123,28 @@ class Scaler:
 
 @dataclass(frozen=True, slots=True)
 class SplitTensors:
-    """One split's inputs, targets, and the timestamps they were issued at."""
+    """One split's inputs, targets, and the timestamps they were issued at.
 
-    x: np.ndarray   # (n, L, K) float32, standardised
-    y: np.ndarray   # (n, H)    float32, standardised target channel
-    ts: np.ndarray  # (n,)      int64, window start — for traceability
+    ``y`` and ``y_all`` are the same block of future bars read at two widths, and
+    both exist because the study now trains two kinds of model (`D56`). Root §6.2
+    / `D39` fixes the iTransformer loss on the **target channel only** at every
+    rung, so the ladder trains against ``y``. The channel-independent baselines —
+    DLinear, PatchTST — carry their published all-channel objective, and that is
+    the only thing making their ``K = 8`` label true: a channel-independent
+    forecast for one channel depends on that channel's history alone, so
+    supervision on all eight through shared weights is the sole route by which
+    the other seven reach the target's forecast at all. Trained against ``y``
+    they would be K=1 wearing a K=8 label — exactly the collapse `D40` exists to
+    prevent.
+
+    ``preds/*.parquet`` holds the target channel for **every** model regardless
+    (root §10.4), so nothing downstream needs to know which width was trained on.
+    """
+
+    x: np.ndarray      # (n, L, K) float32, standardised
+    y: np.ndarray      # (n, H)    float32, standardised target channel
+    y_all: np.ndarray  # (n, H, K) float32, every channel's H-step target
+    ts: np.ndarray     # (n,)      int64, window start — for traceability
 
     def __len__(self) -> int:
         return len(self.ts)
@@ -166,15 +183,22 @@ def _gather(
     """
     if len(starts) == 0:
         return SplitTensors(
-            np.empty((0, seq_len, values.shape[1]), np.float32),
-            np.empty((0, pred_len), np.float32),
-            np.empty(0, np.int64),
+            x=np.empty((0, seq_len, values.shape[1]), np.float32),
+            y=np.empty((0, pred_len), np.float32),
+            y_all=np.empty((0, pred_len, values.shape[1]), np.float32),
+            ts=np.empty(0, np.int64),
         )
     rows = starts[:, None] + np.arange(seq_len)[None, :]
     tgt = starts[:, None] + seq_len + np.arange(pred_len)[None, :]
+    targets = values[tgt].astype(np.float32, copy=False)
     return SplitTensors(
         x=values[rows].astype(np.float32, copy=False),
-        y=values[tgt, TARGET_INDEX].astype(np.float32, copy=False),
+        # Copied out rather than left as a strided view of `targets`: `y` is what
+        # the whole pipeline reads, and a non-contiguous array of it would make
+        # every downstream `from_numpy` and `reshape` behave differently for a
+        # reason nobody would think to look for.
+        y=np.ascontiguousarray(targets[:, :, TARGET_INDEX]),
+        y_all=targets,
         ts=ts[starts],
     )
 

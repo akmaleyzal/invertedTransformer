@@ -23,13 +23,13 @@ import subprocess
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import polars as pl
 import torch
 from torch import Tensor, nn
 
-from itransformer_btc.model import ITransformer, ITransformerConfig
 from itransformer_btc.splits import OriginTensors, SplitTensors
 
 ARTIFACTS: Path = Path("artifacts")
@@ -128,16 +128,92 @@ class TrainOutcome:
     device: str
 
 
-def _to_device(split: SplitTensors, device: torch.device) -> tuple[Tensor, Tensor]:
+class Architecture(Protocol):
+    """What the trainer, the runner and the artifact writer need of a config.
+
+    :func:`write_artifacts` is the **only** definition of the ``meta/*.json``
+    schema — root §12's traceability contract expressed as code — and it was
+    bound to ``ITransformer``/``ITransformerConfig`` until the §7 baselines
+    arrived (`D56`). A second writer in ``baselines.py`` would have made two
+    definitions of one contract, which is the drift surface `D54d` exists to
+    prevent, so the writer was widened to this protocol instead of copied.
+
+    **Everything here is a method, never a field, and that is load-bearing.**
+    ``write_artifacts`` records ``asdict(cfg)``, so a field added merely to steer
+    dispatch would appear in every iTransformer ``meta/*.json`` and change bytes
+    the study has already produced. Methods are invisible to
+    :func:`dataclasses.asdict`; fields are not.
+    """
+
+    pred_len: int
+
+    def build(self) -> nn.Module:
+        """A fresh, untrained module for this configuration."""
+
+    def loss_target(self) -> str:
+        """``"target"`` or ``"all"`` — which target tensor the loss reads.
+
+        See :class:`itransformer_btc.splits.SplitTensors`: the ladder is
+        single-channel by `D39`, the channel-independent baselines are
+        all-channel by their own published objective, and that difference is what
+        makes their K label mean anything.
+        """
+
+    def fit(
+        self,
+        tensors: OriginTensors,
+        spec: RunSpec,
+        *,
+        device: torch.device | None = None,
+    ) -> tuple[nn.Module, "Architecture", TrainOutcome]:
+        """Fit one cell: the model, the **resolved** config, and the outcome.
+
+        The config comes back because selection happens for one model and not the
+        others. Every iTransformer hyperparameter is fixed a priori and identical
+        at every rung (`D38`), so its ``fit`` returns what it was given; ridge's
+        alpha is chosen on the validation sub-block, and with ARIMA outside the
+        minimal set that is the **only** hyperparameter selected anywhere in this
+        study (root §11). A chosen value that never reached ``meta['config']``
+        would be a number the manuscript could not regenerate.
+        """
+
+
+class Forecaster(Protocol):
+    """What the artifact writer needs of a fitted model."""
+
+    cfg: Architecture
+
+    def eval(self) -> "Forecaster":
+        """Inference mode — dropout off."""
+
+    def forecast_target(self, x: Tensor) -> Tensor:
+        """``(B, L, K) -> (B, H)`` on the target channel: what ``preds/`` holds."""
+
+
+def _to_device(
+    split: SplitTensors, device: torch.device, *, target: str = "target"
+) -> tuple[Tensor, Tensor]:
+    """Move one split's inputs and its loss target to the device.
+
+    ``target`` selects the width, not the content: ``"target"`` is the ``r``
+    channel the ladder is scored on, ``"all"`` is every channel, which is what a
+    channel-independent baseline's published objective supervises.
+    """
+    y = split.y if target == "target" else split.y_all
     return (
         torch.from_numpy(split.x).to(device, non_blocking=True),
-        torch.from_numpy(split.y).to(device, non_blocking=True),
+        torch.from_numpy(y).to(device, non_blocking=True),
     )
 
 
 @torch.no_grad()
 def _mean_loss(model: nn.Module, x: Tensor, y: Tensor, batch: int = 512) -> float:
-    """Mean MSE over a split, batched to bound peak memory rather than for speed."""
+    """Mean MSE over a split, batched to bound peak memory rather than for speed.
+
+    The divisor is every element of one sample's target, so this is the mean over
+    ``(H,)`` for a single-channel target and over ``(H, N)`` for an all-channel
+    one — the same quantity ``mse_loss`` returns, computed in pieces.
+    """
     if len(x) == 0:
         return float("nan")
     model.eval()
@@ -146,23 +222,34 @@ def _mean_loss(model: nn.Module, x: Tensor, y: Tensor, batch: int = 512) -> floa
         total += nn.functional.mse_loss(
             model(x[i : i + batch]), y[i : i + batch], reduction="sum"
         ).item()
-    return total / (len(x) * y.shape[1])
+    return total / (len(x) * int(np.prod(y.shape[1:])))
 
 
 @torch.no_grad()
-def predict(model: ITransformer, x: Tensor, batch: int = 512) -> np.ndarray:
+def predict(model: Forecaster, x: Tensor, batch: int = 512) -> np.ndarray:
+    """The target channel's H-step forecasts for every window, batched.
+
+    Routed through ``forecast_target`` rather than ``__call__`` because a
+    channel-independent baseline trained on its published all-channel objective
+    returns ``(B, H, N)`` from ``forward`` while ``preds/`` holds one channel
+    (root §10.4). Sniffing the rank of the output instead would leave the
+    prediction file's meaning resting on a shape no model ever declared.
+    """
     model.eval()
     if len(x) == 0:
         return np.empty((0, model.cfg.pred_len), np.float32)
     return np.concatenate(
-        [model(x[i : i + batch]).cpu().numpy() for i in range(0, len(x), batch)]
+        [
+            model.forecast_target(x[i : i + batch]).cpu().numpy()
+            for i in range(0, len(x), batch)
+        ]
     )
 
 
 def train_one(
     tensors: OriginTensors,
     spec: RunSpec,
-    cfg: ITransformerConfig,
+    cfg: Architecture,
     *,
     device: torch.device | None = None,
     batch_size: int = 32,
@@ -170,7 +257,7 @@ def train_one(
     patience: int = 5,
     lr: float = 1e-4,
     lr_halve_every: int = 4,
-) -> tuple[ITransformer, TrainOutcome]:
+) -> tuple[nn.Module, TrainOutcome]:
     """Train one (origin, K, seed) cell and return the best-validation model.
 
     The learning rate halves every **four** epochs, not every epoch (`D47`):
@@ -181,11 +268,18 @@ def train_one(
     ``epochs_run`` and the final training loss come back because root §6.2
     requires them logged per rung: they are how a reader tells a flat 8->12 rung
     from an under-trained one.
+
+    **One trainer serves every gradient model in the study**, iTransformer and
+    the §7 baselines alike (`D56`). The schedule, the patience and the early-stop
+    rule are root §6.2's, and duplicating them per model would be a second
+    definition of the training protocol — the same drift `D54d` names for the
+    artifact schema. The config supplies only what genuinely differs: the module
+    to build, and the width of the target its loss reads.
     """
     device = device or pick_device()
     set_seed(spec.seed)
 
-    model = ITransformer(cfg).to(device)
+    model = cfg.build().to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=lr)
     schedule = torch.optim.lr_scheduler.StepLR(
         optimiser, step_size=lr_halve_every, gamma=0.5
@@ -193,8 +287,9 @@ def train_one(
 
     # The whole split, resident. Index-slicing it is the entire batching
     # strategy; shuffling permutes an index tensor on device, never the data.
-    x_tr, y_tr = _to_device(tensors.train, device)
-    x_va, y_va = _to_device(tensors.val, device)
+    loss_target = cfg.loss_target()
+    x_tr, y_tr = _to_device(tensors.train, device, target=loss_target)
+    x_va, y_va = _to_device(tensors.val, device, target=loss_target)
 
     best_val = float("inf")
     best_state: dict[str, Tensor] | None = None
@@ -210,9 +305,14 @@ def train_one(
         for i in range(0, len(order), batch_size):
             idx = order[i : i + batch_size]
             optimiser.zero_grad(set_to_none=True)
-            # MSE on the target channel only, at every rung (`D39`). The model
-            # returns that channel alone, so this cannot silently drift to the
-            # all-channel loss the reference implementation defaults to.
+            # For the ladder this is MSE on the target channel only, at every
+            # rung (`D39`): `ITransformerConfig.loss_target` is the constant
+            # "target" and `ITransformer.forward` returns that channel alone, so
+            # it cannot drift to the all-channel loss the reference
+            # implementation defaults to — which would make K=12 a 12-task
+            # problem and K=1 a 1-task one, varying supervision with the study's
+            # own independent variable. A channel-independent baseline says
+            # "all" and gets the all-channel objective it is published with.
             loss = nn.functional.mse_loss(model(x_tr[idx]), y_tr[idx])
             loss.backward()
             optimiser.step()
@@ -246,7 +346,7 @@ def train_one(
 
 
 def scale_invariance_check(
-    model: ITransformer, x: Tensor, y: Tensor, c: float = 100.0
+    model: Forecaster, x: Tensor, y: Tensor, c: float = 100.0
 ) -> tuple[float, float]:
     """Root §6.3's corrected ``use_norm`` invariant (`D03`).
 
@@ -337,10 +437,10 @@ def _input_sha256(parquet: Path | str | None = None) -> tuple[str, str]:
 
 
 def write_artifacts(
-    model: ITransformer,
+    model: Forecaster,
     tensors: OriginTensors,
     spec: RunSpec,
-    cfg: ITransformerConfig,
+    cfg: Architecture,
     outcome: TrainOutcome,
     device: torch.device,
     root: Path = ARTIFACTS,
@@ -349,8 +449,16 @@ def write_artifacts(
 
     A run is complete **only when both files exist and ``status == "complete"``**
     (root §10.5). Anything else is re-run from scratch; intra-run checkpointing
-    is deliberately omitted, since at ~90 s per run it costs more complexity than
-    it saves.
+    is deliberately omitted, since at ~30 s per run measured (`D57`) it costs far
+    more complexity than it saves.
+
+    **This function is the schema.** Root §12 admits no number into the
+    manuscript that does not resolve to a prediction file, a config hash and a
+    documented decision, and these two files are where all three live. Every
+    model in the study — the ladder, ridge, DLinear, PatchTST — writes through
+    here, typed against :class:`Forecaster` and :class:`Architecture` rather than
+    against one model, so there is exactly one place the contract can be read and
+    exactly one place it can be broken.
     """
     (root / "preds").mkdir(parents=True, exist_ok=True)
     (root / "meta").mkdir(parents=True, exist_ok=True)

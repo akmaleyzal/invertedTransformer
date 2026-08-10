@@ -1,7 +1,7 @@
 """The notebook carries the package; these tests stop the two copies drifting.
 
-``notebooks/iTransformer.ipynb`` is self-contained: it **defines** the twelve
-modules in plain cells and calls them by name, so a Kaggle session needs the
+``notebooks/iTransformer.ipynb`` is self-contained: it **defines** every module
+in plain cells and calls them by name, so a Kaggle session needs the
 notebook and the data artifact and nothing else. That buys independence at the
 cost of a second copy of 4,000 lines, and an unpoliced second copy is a worse
 defect than the dependency it removes — the notebook would keep running old code,
@@ -239,7 +239,7 @@ def test_pinned_digest_matches_the_package(notebook: dict, generator) -> None:
 
 
 def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
-    """The twelve cells actually run, together, and produce the committed figures.
+    """The definition cells actually run, together, and produce the committed figures.
 
     The strongest test here and the only one that exercises the format rather
     than describing it. Flattened cells are *executed*: decorators run, dataclass
@@ -262,8 +262,20 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
     assert model.n_parameters() == 280_472
     assert len(namespace["ORIGINS"]) == 15
     assert len(namespace["VARIATE_ORDER"]) == 12
-    assert len(namespace["manifest"]()) == 534
+    assert len(namespace["manifest"]()) == 684
     assert namespace["ladder_columns"](1) == ["r"]
+
+    # Every arm must be able to *build and run its model* here, not merely be
+    # listed. `runner` reaches the baselines by bare name for exactly this
+    # reason: one merged namespace has no `baselines` module to attribute off, so
+    # `baselines.RidgeConfig` would satisfy every parse-level check in this file
+    # and then raise NameError hours into a Kaggle session (`D56`, `D58`).
+    cells = namespace["manifest"]()
+    for arm in namespace["ALL_ARMS"]:
+        cell = next(c for c in cells if c.arm == arm)
+        built = cell.model_config().build().eval()
+        out = built.forecast_target(torch.randn(2, 96, max(cell.k, 1)))
+        assert out.shape == (2, cell.pred_len), f"{arm} built the wrong horizon"
     del torch
 
     # The subprocess path must not have survived: it spawns

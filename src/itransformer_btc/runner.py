@@ -48,12 +48,23 @@ from itransformer_btc.config import (
     FalsificationOrigin,
     OriginLike,
 )
+# Names, not the module. In the flattened notebook there is no ``baselines``
+# module object to attribute off — every definition lands in one namespace — so
+# ``baselines.RidgeConfig`` would be a NameError hours into a Kaggle session
+# while passing every parse-level check here (root §15, `D58`).
+from itransformer_btc.baselines import (
+    DLinearConfig,
+    PatchTSTConfig,
+    RidgeConfig,
+    assert_baseline_alignment,
+)
 from itransformer_btc.model import ITransformerConfig
 from itransformer_btc.splits import OriginTensors, build_origin_tensors
 from itransformer_btc.train import (
     ARTIFACTS,
     DEFAULT_PARQUET,
     INPUT_PARQUET_ENV,
+    Architecture,
     RunSpec,
     is_complete,
     pick_device,
@@ -69,12 +80,34 @@ ARM_MODEL_TAG: dict[str, str] = {
     "uniform": "itru",   # `D50` — attention forced uniform, K=8
     "fresh": "itrf",     # root §8.1 falsification arm, trained at o_i + 90 d
     "horizon": "itr",    # `D08`/`D48` — 4 named origins x 4 K x 4 H x 3 seeds
+    "ridge": "rdg",      # `D17` — is a transformer needed at all? K = 1,4,8,12
+    "dlinear": "dlin",   # root §7 — "not optional", K=8
+    "patchtst": "ptst",  # root §7 — SOTA channel-independent, K=8
 }
+
+#: The §7 comparators (`D56`). Two things key off this set, and both follow from
+#: these arms being a *different model* rather than a different configuration of
+#: the same one: the `D45` window-alignment assertion runs for them, and their
+#: ``run_id`` prefix keeps them apart in every table.
+BASELINE_ARMS: tuple[str, ...] = ("ridge", "dlinear", "patchtst")
+
+#: Every arm, in execution order. iTransformer first, so that a session cut short
+#: leaves the ladder — which RQ1, RQ2 and RQ3 all read — complete before the
+#: comparators, and so a baseline's alignment assertion finds its reference on
+#: disk rather than reporting itself unchecked.
+ALL_ARMS: tuple[str, ...] = ("main", "uniform", "fresh", "horizon", *BASELINE_ARMS)
 
 #: Seeds for the horizon sweep. Three, not five: root §10.2 budgets 192 runs for
 #: it, and root §10.3 says to cut the sweep before cutting seed counts if the
 #: grid ever stops fitting, because `D30` and `D49` depend on the seed counts.
 SWEEP_SEEDS: tuple[int, ...] = SEEDS[:3]
+
+#: Seeds for the stochastic baselines. Three, matching root §10.2's baseline
+#: budget of "3 stochastic x 3 seeds". `D49`'s five-seed rule is about the
+#: **rungs of the ladder**, where the 8->12 contrast cannot be the one carrying
+#: the fewest; a baseline is a single cell rather than a rung, and a fourth and
+#: fifth seed there would buy precision on a number no hypothesis is stated about.
+BASELINE_SEEDS: tuple[int, ...] = SEEDS[:3]
 
 #: Root §10.5. Checked at **run boundaries**, not epoch boundaries: runs are
 #: short, epochs are shorter, and the checkpoint granularity is the run.
@@ -112,31 +145,64 @@ class RunCell:
 
     @property
     def group(self) -> tuple[str, int, int, int]:
-        """The tensor-build key. Seeds inside a group share one build."""
+        """The **shard** key. Seeds inside a group stay with one worker."""
         return (self.arm, self.origin_index, self.k, self.pred_len)
+
+    @property
+    def tensor_key(self) -> tuple[bool, int, int, int]:
+        """The **tensor-build** key, which is coarser than :attr:`group`.
+
+        :func:`build_origin_tensors` reads the origin, K and H and nothing else,
+        and only the falsification arm changes the origin object. So ridge at
+        (origin 7, K=8, H=24) consumes byte-for-byte the tensors the main arm
+        already built there, and keying the cache by arm would rebuild them —
+        150 redundant builds across the baseline arms. Sharding still keys on
+        :attr:`group`, because that partition must be a function of the arm.
+        """
+        return (self.arm == "fresh", self.origin_index, self.k, self.pred_len)
 
     def origin(self) -> OriginLike:
         base = ORIGINS[self.origin_index - 1]
         return FalsificationOrigin(base) if self.arm == "fresh" else base
 
-    def model_config(self) -> ITransformerConfig:
-        """Hyperparameters, identical at every rung except where an arm says otherwise.
+    def model_config(self) -> Architecture:
+        """The arm's configuration — hyperparameters fixed a priori in every case.
 
         **No per-rung tuning** (`D38`): holding capacity fixed is what makes the
         rungs comparable, and tuning per rung would confound the ladder with
-        model selection. The only field an arm may move is
+        model selection. The only field an iTransformer arm may move is
         ``uniform_attention``, which *is* the arm.
+
+        The rule extends to the §7 baselines rather than exempting them. Ridge's
+        alpha is the single exception root §11 names, and it is not chosen here:
+        :meth:`RidgeConfig.fit` selects it on the validation sub-block and
+        returns the resolved config, which is what reaches ``meta['config']``.
         """
+        if self.arm == "ridge":
+            return RidgeConfig(pred_len=self.pred_len, k=self.k)
+        if self.arm == "dlinear":
+            return DLinearConfig(pred_len=self.pred_len)
+        if self.arm == "patchtst":
+            return PatchTSTConfig(pred_len=self.pred_len)
         return ITransformerConfig(
             pred_len=self.pred_len,
             uniform_attention=(self.arm == "uniform"),
         )
 
+    def reference_run_id(self) -> str:
+        """The iTransformer run this cell is compared against (`D45`).
 
-def manifest(
-    arms: tuple[str, ...] = ("main", "uniform", "fresh", "horizon"),
-) -> list[RunCell]:
-    """Every iTransformer run in the study, deduplicated and ordered.
+        Same origin, same K, same horizon, first seed — the main-grid cell whose
+        evaluated window set this run's must equal exactly before any RelMSE or
+        DM statistic is formed across the two.
+        """
+        return RunSpec(
+            ARM_MODEL_TAG["main"], self.origin_index, self.k, self.pred_len, SEEDS[0]
+        ).run_id
+
+
+def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
+    """Every run in the study, deduplicated and ordered.
 
     Root §10.2's accounting, arm by arm:
 
@@ -149,13 +215,27 @@ def manifest(
     uniform        75  15 x K=8 x 5 seeds (`D50`)
     fresh          15  one fresh model per origin at ``o_i + 90 d``
     horizon       192  4 named origins x 4 K x 4 H x 3 seeds (`D08`, `D48`)
+    ridge          60  15 x 4 K, deterministic (`D17`)
+    dlinear        45  15 x K=8 x 3 seeds (root §7)
+    patchtst       45  15 x K=8 x 3 seeds (root §7)
     ==========  =====  =========================================================
 
     **48 of those cells are literally the same run.** The sweep's ``H=24`` slice
     at seeds 42-44 carries the same ``run_id`` as the corresponding main-grid
-    cells, so the union is **534 unique runs**, not 582. Deduplicating is not a
-    saving quietly banked: root §10.4 makes ``run_id`` the identity of a run, so
-    executing one twice would mean two files racing for one path.
+    cells, so the iTransformer union is **534 unique runs**, not 582, and the
+    whole manifest is **684**. Deduplicating is not a saving quietly banked: root
+    §10.4 makes ``run_id`` the identity of a run, so executing one twice would
+    mean two files racing for one path.
+
+    **The three baseline arms are new, and their absence was `D56`.** Root §7
+    calls DLinear and PatchTST "not optional" and §10.2 budgets 255 baseline
+    runs, but no baseline class existed and this manifest never contained one —
+    so §10.2's 789 was never executable, and the study's central architectural
+    comparison had no data. 150 of that 255 are built: the deferred remainder is
+    ARIMA, LSTM, naive-persist and seasonal-naive, listed in ``baselines.py``
+    rather than left silently unbuilt. Naive-RW needs no run at all, being
+    computed inside :func:`itransformer_btc.metrics.block_metrics` on exactly the
+    rows its comparator was scored on.
 
     Ordering is by group, so the seeds of a cell reuse one tensor build, and
     groups are emitted arm by arm so a shard split stays balanced across the
@@ -183,6 +263,24 @@ def manifest(
             for k in K_LADDER
             for h in HORIZONS
             for s in SWEEP_SEEDS
+        ]
+    if "ridge" in arms:
+        # One seed. Ridge is a solve, not an optimisation: a second seed would
+        # reproduce the first to the last bit. The seed component of ``run_id``
+        # is carried only because root §10.4 fixes the format.
+        cells += [
+            RunCell("ridge", o.index, k, PRED_LEN, SEEDS[0])
+            for o in ORIGINS for k in K_LADDER
+        ]
+    if "dlinear" in arms:
+        cells += [
+            RunCell("dlinear", o.index, 8, PRED_LEN, s)
+            for o in ORIGINS for s in BASELINE_SEEDS
+        ]
+    if "patchtst" in arms:
+        cells += [
+            RunCell("patchtst", o.index, 8, PRED_LEN, s)
+            for o in ORIGINS for s in BASELINE_SEEDS
         ]
 
     seen: set[str] = set()
@@ -217,8 +315,8 @@ def completed_run_ids(roots: list[Path]) -> set[str]:
 
     A prediction file without its meta, or a meta whose status is anything else,
     is **not** complete and the run is redone from scratch. Intra-run
-    checkpointing is deliberately omitted: at roughly 90 s per run it costs more
-    complexity than it saves.
+    checkpointing is deliberately omitted: at ~30 s per run measured (`D57`) it
+    costs far more complexity than it saves.
     """
     done: set[str] = set()
     for root in roots:
@@ -303,7 +401,7 @@ class _TensorCache:
         self._store: OrderedDict[tuple, OriginTensors] = OrderedDict()
 
     def get(self, cell: RunCell) -> OriginTensors:
-        key = cell.group
+        key = cell.tensor_key
         if key in self._store:
             self._store.move_to_end(key)
             return self._store[key]
@@ -350,6 +448,30 @@ class ExecutionSummary:
         )
 
 
+def _assert_alignment(cell: RunCell, roots: list[Path], log) -> None:
+    """`D45`, enforced when the file is written rather than when the table is built.
+
+    Root §7 requires every baseline to be scored on **exactly** the surviving
+    window set of the run it is compared against. The two sets are equal by
+    construction — both come from :func:`window_starts` with the same origin,
+    span and semantics — which is why this costs microseconds and why it is the
+    only thing that would notice if that ever stopped holding.
+
+    A missing comparator is **reported, never swallowed**. The check is then
+    unrun, and an unrun check that prints nothing is indistinguishable from a
+    passing one; :data:`ALL_ARMS` orders the ladder first precisely so this stays
+    the rare case rather than the normal one.
+    """
+    reference = cell.reference_run_id()
+    try:
+        assert_baseline_alignment(cell.run_id, reference, roots)
+    except FileNotFoundError:
+        log(
+            f"  {cell.run_id}: `D45` alignment UNCHECKED — comparator "
+            f"{reference} is not on disk in {[str(r) for r in roots]}"
+        )
+
+
 def execute(
     cells: list[RunCell],
     features: pl.DataFrame,
@@ -362,9 +484,11 @@ def execute(
 ) -> ExecutionSummary:
     """Run a shard to completion or to the budget, whichever comes first.
 
-    A failing run is logged and skipped rather than aborting the shard: with 534
+    A failing run is logged and skipped rather than aborting the shard: with 684
     runs, losing the rest of a session to one bad cell is worse than finishing
     the others and letting root §10.5's resume pick that cell up next session.
+    A failing *invariant* is the opposite case and does end the shard — see
+    :func:`_assert_alignment`.
     """
     guard = guard or BudgetGuard()
     roots = roots or discover_roots(out_root)
@@ -390,17 +514,28 @@ def execute(
         began = time.perf_counter()
         try:
             tensors = cache.get(cell)
-            model, outcome = train_one(
-                tensors, cell.spec, cell.model_config(), device=device
+            # The config comes back **resolved**: identical for every
+            # iTransformer arm (`D38` — nothing is tuned), and carrying the
+            # chosen alpha for ridge, which is the one selection root §11 admits.
+            # Writing the config that went in would lose it.
+            model, cfg, outcome = cell.model_config().fit(
+                tensors, cell.spec, device=device
             )
             write_artifacts(
-                model, tensors, cell.spec, cell.model_config(), outcome, device,
-                root=out_root,
+                model, tensors, cell.spec, cfg, outcome, device, root=out_root,
             )
         except Exception as exc:  # noqa: BLE001 - one bad cell must not end the shard
             failed += 1
             log(f"[{position}/{len(queue)}] {cell.run_id} FAILED: {exc!r}")
             continue
+
+        # Outside the try, and deliberately fatal. A window-set mismatch between
+        # a baseline and its comparator is the defect class root §11 calls
+        # fatal — RelMSE across two samples is not a ratio — and continuing would
+        # fill Table 6 with statistics that mean nothing. One bad *cell* must not
+        # end a shard; one broken *invariant* must.
+        if cell.arm in BASELINE_ARMS:
+            _assert_alignment(cell, roots, log)
 
         elapsed = time.perf_counter() - began
         guard.record(elapsed)
@@ -534,7 +669,7 @@ def launch_workers(
     *,
     parquet: Path = DEFAULT_PARQUET,
     out_root: Path = ARTIFACTS,
-    arms: tuple[str, ...] = ("main", "uniform", "fresh", "horizon"),
+    arms: tuple[str, ...] = ALL_ARMS,
     budget_h: float = SESSION_BUDGET_H,
     reserve_h: float = RESERVE_H,
     package_root: Path = Path("src"),
@@ -621,7 +756,7 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--parquet", type=Path, default=DEFAULT_PARQUET)
     parser.add_argument("--out", type=Path, default=ARTIFACTS)
-    parser.add_argument("--arms", type=str, default="main,uniform,fresh,horizon")
+    parser.add_argument("--arms", type=str, default=",".join(ALL_ARMS))
     parser.add_argument("--budget-h", type=float, default=SESSION_BUDGET_H)
     parser.add_argument("--reserve-h", type=float, default=RESERVE_H)
     args = parser.parse_args(argv)

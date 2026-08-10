@@ -37,19 +37,76 @@ def test_manifest_is_deduplicated_by_run_id() -> None:
     """The sweep's H=24 slice shares 48 ``run_id``s with the main grid.
 
     Root §10.4 makes ``run_id`` the identity of a run, so executing a shared cell
-    twice would mean two files racing for one path. 582 nominal cells are 534
-    real runs.
+    twice would mean two files racing for one path. 582 nominal iTransformer
+    cells are 534 real runs.
     """
     cells = runner.manifest()
     ids = [c.run_id for c in cells]
     assert len(ids) == len(set(ids))
-    assert len(cells) == 534
+    assert len(cells) == 684
 
     counts: dict[str, int] = {}
     for cell in cells:
         counts[cell.arm] = counts.get(cell.arm, 0) + 1
-    assert counts == {"main": 300, "uniform": 75, "fresh": 15, "horizon": 144}
-    assert 300 + 75 + 15 + 192 - len(cells) == 48
+    assert counts == {
+        "main": 300, "uniform": 75, "fresh": 15, "horizon": 144,
+        "ridge": 60, "dlinear": 45, "patchtst": 45,
+    }
+    assert 300 + 75 + 15 + 192 - 534 == 48
+
+
+def test_manifest_contains_the_section_seven_baselines() -> None:
+    """`D56` — the defect was that it did not, and nothing noticed.
+
+    Root §7 calls DLinear and PatchTST "not optional" and §10.2 budgets 255
+    baseline runs, but no baseline class existed and this manifest held only
+    iTransformer cells, so §10.2's 789 was never executable and Table 6 had no
+    inputs. 150 of the 255 are built; ARIMA, LSTM and the naive variants are
+    deferred, and Naive-RW needs no run because ``block_metrics`` computes it on
+    exactly the rows its comparator was scored on.
+
+    The baselines come **last** on purpose: a session cut short then leaves the
+    ladder — which RQ1, RQ2 and RQ3 all read — complete, and each baseline's
+    `D45` alignment assertion finds its comparator already on disk.
+    """
+    cells = runner.manifest()
+    by_arm = {c.arm: c for c in cells}
+    assert by_arm["ridge"].run_id.startswith("rdg_")
+    assert by_arm["dlinear"].run_id.startswith("dlin_")
+    assert by_arm["patchtst"].run_id.startswith("ptst_")
+
+    assert sorted({c.k for c in cells if c.arm == "ridge"}) == [1, 4, 8, 12]
+    for arm in ("dlinear", "patchtst"):
+        assert {c.k for c in cells if c.arm == arm} == {8}
+        assert {c.seed for c in cells if c.arm == arm} == set(runner.BASELINE_SEEDS)
+
+    first_baseline = min(i for i, c in enumerate(cells) if c.arm in runner.BASELINE_ARMS)
+    last_ladder = max(i for i, c in enumerate(cells) if c.arm not in runner.BASELINE_ARMS)
+    assert last_ladder < first_baseline
+
+    # Every baseline names a comparator that is itself in the manifest — `D45`
+    # cannot assert equality against a run nobody scheduled.
+    ids = {c.run_id for c in cells}
+    for cell in cells:
+        if cell.arm in runner.BASELINE_ARMS:
+            assert cell.reference_run_id() in ids
+
+
+def test_tensor_key_is_coarser_than_the_shard_key() -> None:
+    """Ridge at (origin, K, H) consumes exactly the main arm's tensors.
+
+    ``build_origin_tensors`` reads the origin, K and H and nothing else, and only
+    the falsification arm changes the origin object. Keying the cache by arm
+    would rebuild identical tensors 150 times across the baseline arms; keying
+    the *shard* by tensor identity would let one group straddle two workers.
+    """
+    cells = runner.manifest()
+    by_arm = {c.arm: c for c in cells}
+    ridge = next(c for c in cells if c.arm == "ridge" and c.k == 8)
+    main8 = next(c for c in cells if c.arm == "main" and c.k == 8)
+    assert ridge.tensor_key == main8.tensor_key
+    assert ridge.group != main8.group
+    assert by_arm["fresh"].tensor_key != by_arm["main"].tensor_key
 
 
 def test_shards_partition_the_manifest_exactly() -> None:
