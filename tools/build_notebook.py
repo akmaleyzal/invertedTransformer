@@ -1,16 +1,52 @@
 """Assemble ``notebooks/iTransformer.ipynb`` from ``src/itransformer_btc/``.
 
-Root §15 says logic lives in the package and a notebook is a launcher. `D54`
-keeps that rule and changes only *where the package comes from*: the notebook
-carries the package in ``%%writefile`` cells and materialises it on the machine
-that runs it, so a Kaggle session needs the notebook and the immutable data
-artifact and nothing else — no repository Dataset, no ``src/`` on ``sys.path``.
+Root §15 says logic lives in the package and a notebook is a launcher. That rule
+is unchanged. What changed is *how the notebook carries the package*: it used to
+write twelve files with ``%%writefile`` and import them back, and now it
+**defines them directly** — one cell per module, plain ``def``/``class``/constant
+bodies that the cells below call by name. There is no ``itransformer_btc``
+package on the running machine and nothing to import.
+
+Why that became possible. The file-based form existed for exactly one reason
+(`D54a`): the grid ran as two subprocesses, one pinned per GPU, and a subprocess
+inherits none of the kernel's namespace, so it could reach the code only by
+importing it from disk. Measured on Kaggle, the completed grid was **534 runs in
+2.31 h at ~30 s per run** against a §10.3 estimate of 60–100 s and 10–20 h
+(`D57`). One process running the grid in sequence is therefore ~4.5 h — inside
+the 11 h session budget with room — so the subprocesses stopped buying anything
+the budget needs, and the whole justification for materialising files fell with
+them.
+
+What the flattening does to each module, and nothing else:
+
+* **intra-package imports are dropped.** Every module reaches its siblings
+  through ``from itransformer_btc.x import y``; in one shared namespace those
+  names are already bound, and the import would fail for want of a package.
+  Removal is by :mod:`ast` node span rather than by line matching, which is what
+  makes the parenthesised multi-line imports and the deferred ones nested inside
+  function bodies come out right.
+* **the ``if __name__ == "__main__":`` guard is dropped.** In a notebook cell
+  ``__name__`` *is* ``"__main__"``, so ``runner.py``'s trailing guard would
+  launch the entire grid the moment its definition cell ran. Verified, not
+  assumed.
+
+Everything else is verbatim — docstrings, comments, blank lines, third-party
+imports. ``from __future__ import annotations`` stays where it sits: a leading
+string literal is the compile unit's docstring, so the future import still counts
+as the first statement and compiles. Verified too.
+
+Two module-level names collide once the twelve namespaces merge —
+``DEFAULT_PARQUET`` (``segments``, ``train``) and ``HOUR_MS`` (``segments``,
+``metrics``). Both are the **same value** in both definitions, differing only in
+type annotation, so last-cell-wins is harmless. Anything else colliding would not
+be, which is why :func:`flatten_module_source` compiles what it returns and the
+sync tests re-derive the set.
 
 **The notebook is generated, never hand-edited.** Two copies of 4,000 lines
 drifting apart is a worse defect than the one this solves, so the copy inside the
 notebook is written from ``src/`` by this script and
-``tests/test_notebook_sync.py`` asserts the two are byte-identical. Edit
-``src/``, re-run this, commit both.
+``tests/test_notebook_sync.py`` asserts the two agree under exactly the
+transformation above. Edit ``src/``, re-run this, commit both.
 
 Usage::
 
@@ -21,6 +57,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
 import json
 import sys
 import textwrap
@@ -29,14 +67,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "src" / "itransformer_btc"
 NOTEBOOK = ROOT / "notebooks" / "iTransformer.ipynb"
+PKG_NAME = "itransformer_btc"
 
-#: Dependency order. The files are only *written* by those cells, so ordering
-#: cannot break an import — but a reader scrolling the notebook meets each module
-#: after the ones it uses, which is the whole reason to keep twelve cells rather
-#: than one 4,000-line cell.
+#: **Execution order, and it is now load-bearing.** Under ``%%writefile`` these
+#: cells only wrote bytes, so ordering was a courtesy to the reader and could not
+#: break anything. Flattened, each cell is *executed*: decorators run, dataclass
+#: field types resolve, module constants evaluate. A cell naming something a
+#: later cell defines fails immediately rather than at call time.
+#:
+#: ``config.py`` therefore leads and ``__init__.py`` follows it instead of
+#: leading as it did. Stripping ``__init__``'s imports leaves only a docstring
+#: and ``__all__`` — harmless anywhere — but placing it after the module it
+#: depends on keeps the cell honest about the dependency. It is kept rather than
+#: dropped so every module inside ``code_sha256`` also appears in the notebook: a
+#: digest naming a file the reader cannot see is worse than a redundant cell.
 MODULE_ORDER: tuple[str, ...] = (
-    "__init__.py",
     "config.py",
+    "__init__.py",
     "segments.py",
     "windows.py",
     "budget.py",
@@ -49,7 +96,155 @@ MODULE_ORDER: tuple[str, ...] = (
     "runner.py",
 )
 
-WRITEFILE_TARGET = "itransformer_btc/{name}"
+#: Header comment opening each module cell. ``tests/test_notebook_sync.py``
+#: locates module cells by this, so its pattern must track this format. With the
+#: ``%%writefile`` line gone there is otherwise nothing naming the module a
+#: reader is looking at.
+MODULE_BANNER = "# ═══ {name} " + "═" * 8
+
+#: Definitions dropped from the flattened cells because they **cannot work
+#: there**, per module.
+#:
+#: Both entries are the subprocess path. ``launch_workers`` spawns
+#: ``python -m itransformer_btc.runner``, and ``_main`` is the CLI on the other
+#: end of that pipe — reachable only through the ``if __name__ == "__main__":``
+#: guard this generator already removes. In a flattened notebook there is no
+#: ``itransformer_btc`` module for the child to import, so a call would fail with
+#: ``No module named itransformer_btc`` after forking two processes: a confusing
+#: failure, hours in, for a function the notebook has no reason to call.
+#:
+#: They stay in ``src/`` untouched, where ``python -m itransformer_btc.runner``
+#: is a real and supported entry point. Dropping them here is a statement about
+#: this launcher, not about the package — and it is declared rather than silent
+#: because a reader comparing the cell to the file must be able to see why the
+#: two differ.
+FLATTEN_DROP_FUNCTIONS: dict[str, tuple[str, ...]] = {
+    "runner.py": ("launch_workers", "_main"),
+}
+
+
+# -- flattening --------------------------------------------------------------
+
+
+def _is_main_guard(node: ast.stmt) -> bool:
+    """``if __name__ == "__main__":`` at module level, however it is spelled."""
+    if not isinstance(node, ast.If):
+        return False
+    test = node.test
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+    )
+
+
+def _intra_package_import(node: ast.AST) -> bool:
+    if isinstance(node, ast.ImportFrom):
+        return (node.module or "").split(".")[0] == PKG_NAME
+    if isinstance(node, ast.Import):
+        return any(a.name.split(".")[0] == PKG_NAME for a in node.names)
+    return False
+
+
+def _executable_source(source: str) -> str:
+    """Source with docstrings stripped — what actually runs.
+
+    The modules legitimately *mention* ``itransformer_btc`` in prose: ``:mod:``
+    cross-references, ``Importers:`` notes, the ``D54`` discussion in
+    ``runner``. Only executable references can break a machine with no such
+    package, and going through the AST is how to tell the two apart without a
+    comment regex that would be wrong on the first docstring containing a colon.
+    """
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and ast.get_docstring(node):
+            node.body = node.body[1:] or [ast.Pass()]
+    return ast.unparse(ast.fix_missing_locations(tree))
+
+
+def flatten_module_source(name: str) -> str:
+    """The module verbatim, minus intra-package imports and the ``__main__`` guard.
+
+    Spans come from the AST rather than from line matching, which is what makes
+    the parenthesised multi-line imports and the deferred imports inside function
+    bodies come out right — ``ast.walk`` reaches the nested ones, and the
+    module-level scan handles the guard.
+
+    The result is compiled before it is returned, and then re-parsed to confirm no
+    executable reference to the package survived. Deleting an import that was the
+    only statement in its block would leave a syntax error, and a notebook is the
+    worst place to discover that: twelve hours into a session, in a cell nobody
+    re-reads.
+    """
+    text = (PACKAGE / name).read_text(encoding="utf-8")
+    tree = ast.parse(text, filename=name)
+
+    spans: list[tuple[int, int]] = [
+        (node.lineno, node.end_lineno or node.lineno)
+        for node in ast.walk(tree)
+        if _intra_package_import(node)
+    ]
+    spans += [
+        (node.lineno, node.end_lineno or node.lineno)
+        for node in tree.body
+        if _is_main_guard(node)
+    ]
+
+    unusable = FLATTEN_DROP_FUNCTIONS.get(name, ())
+    found = {
+        node.name: (node.lineno, node.end_lineno or node.lineno)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in unusable
+    }
+    absent = sorted(set(unusable) - found.keys())
+    assert not absent, (
+        f"{name}: FLATTEN_DROP_FUNCTIONS names {absent}, which no longer exist. "
+        f"A stale entry silently drops nothing, so the notebook would ship the "
+        f"subprocess path again — review why the function moved before editing "
+        f"the list."
+    )
+    # A dropped function's own decorator lines sit above node.lineno in older
+    # Python; take the earliest so nothing is orphaned.
+    for fn_name, (lo, hi) in found.items():
+        node = next(n for n in tree.body
+                    if getattr(n, "name", None) == fn_name)
+        starts = [d.lineno for d in getattr(node, "decorator_list", [])] + [lo]
+        spans.append((min(starts), hi))
+
+    dropped = {n for lo, hi in spans for n in range(lo, hi + 1)}
+    source = "".join(
+        line
+        for number, line in enumerate(text.splitlines(keepends=True), start=1)
+        if number not in dropped
+    )
+
+    compile(source, f"<cell:{name}>", "exec")
+    assert PKG_NAME not in _executable_source(source), (
+        f"{name}: an executable reference to {PKG_NAME} survived flattening, so "
+        f"the cell would fail on a machine with no such package installed"
+    )
+    return source
+
+
+def package_digest() -> str:
+    """Byte-for-byte the digest :func:`itransformer_btc.train.code_sha256` returns.
+
+    Computed from ``src/`` and deliberately not from the flattened cells: §12 asks
+    a run to name *the code that produced it*, and the answer has to be the same
+    number whether that code ran from a checkout or from this notebook. Drift
+    between the two implementations would surface as a phantom change of code
+    vintage — a false positive on the one check §12 exists to make possible.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(PACKAGE.glob("*.py")):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+    return digest.hexdigest()
 
 
 # -- prose -------------------------------------------------------------------
@@ -64,19 +259,20 @@ MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, 
   <hr style="border: none; border-top: 1px solid #2a4365; margin: 16px 0;">
   <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
     <strong>Self-contained.</strong> This notebook needs exactly two things: itself, and
-    <code>BTCUSDT_1h.parquet</code> attached as a Kaggle Dataset. It carries the whole
-    <code>itransformer_btc</code> package in the <em>Materialise</em> cells below and writes it to
-    disk before importing it &mdash; there is no repository to attach and no <code>src/</code> on
+    <code>BTCUSDT_1h.parquet</code> attached as a Kaggle Dataset. Every definition it uses is
+    <em>in</em> it &mdash; the cells below are ordinary <code>def</code>, <code>class</code> and
+    constant bodies, run top to bottom. Nothing is written to disk to be imported back, there is
+    no <code>itransformer_btc</code> package on this machine, and no <code>src/</code> on
     <code>sys.path</code>.
   </p>
   <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
     <strong>It is still a launcher, not a program.</strong> Every definition &mdash; the twelve
-    variates, the segment law, the window semantics, the scaler, the model, the metrics, the
-    tests &mdash; lives in the materialised package, unit-tested on CPU. A cell here that
-    <em>defined</em> a feature or a loss would be a defect. <strong>Do not hand-edit the
-    <em>Materialise</em> cells:</strong> they are generated from <code>src/itransformer_btc/</code>
-    by <code>tools/build_notebook.py</code>, and <code>tests/test_notebook_sync.py</code> fails if
-    the two ever diverge.
+    variates, the segment law, the window semantics, the scaler, the model, the metrics &mdash; is
+    authored in <code>src/itransformer_btc/</code> and unit-tested on CPU; the cells below are a
+    transcription, not an authoring surface. <strong>Do not hand-edit the <em>Definitions</em>
+    cells:</strong> they are generated by <code>tools/build_notebook.py</code>,
+    <code>tests/test_notebook_sync.py</code> fails the moment they diverge from the package, and
+    the next generator run reverts the edit.
   </p>
   <p style="color: #7f9cc0; font-size: 0.93em; margin: 0;">
     Answers <strong>RQ1</strong> (does benefit track K or K<sub>eff</sub>?),
@@ -96,23 +292,32 @@ MD_SETUP = """<div style="background: linear-gradient(90deg, #0b1021, #112240); 
     forbids numbers from two vintages sharing a table.</p>
 </div>"""
 
-MD_MATERIALISE = """<div style="background: linear-gradient(90deg, #0a1a12, #0f2a1c); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128230; 0b &middot; Materialise the package</h2>
-  <p style="color: #b8c7e0; margin: 0;">Twelve <code>%%writefile</code> cells reconstruct <code>itransformer_btc/</code> on this machine. Generated &mdash; do not hand-edit.</p>
+MD_DEFINE = """<div style="background: linear-gradient(90deg, #0a1a12, #0f2a1c); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128230; 0b &middot; Definitions</h2>
+  <p style="color: #b8c7e0; margin: 0;">Twelve cells, one per module, in dependency order. Plain definitions &mdash; run them and every name the rest of the notebook calls exists. Generated from <code>src/</code>; do not hand-edit.</p>
   <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>Why files, and not definitions in cells.</strong> The grid runs as <strong>two
-    subprocesses</strong>, one pinned per GPU (&sect;10.3). A subprocess is a fresh interpreter: it
-    inherits none of this kernel's namespace and can reach the code only by importing it, so the
-    code has to exist on disk. Threads would avoid that and are rejected &mdash;
-    <code>torch.manual_seed</code> seeds <em>every</em> CUDA device, so two threads would clobber
-    each other's generator mid-run and &sect;12's reproducibility contract would be
-    unenforceable.</li>
-    <li><strong>Run these top to bottom, once.</strong> <em>Save Version &rarr; Save &amp; Run All</em>
-    does exactly that. Each cell overwrites one file, so a re-run is idempotent rather than
-    additive.</li>
-    <li><strong>The digest is the provenance.</strong> There is no git repository on Kaggle, so
-    <code>meta/*.json</code> records <code>code_sha256</code> &mdash; the hash of these twelve files
-    &mdash; where &sect;12 asks for a git sha (<code>D54</code>).</li>
+    <li><strong>Definitions, not files.</strong> The earlier launcher wrote these twelve modules to
+    disk with <code>%%writefile</code> and imported them back, because the grid ran as two
+    subprocesses and a subprocess inherits none of this kernel's namespace. Measured on Kaggle, the
+    completed grid was <strong>534 runs in 2.31 h at ~30 s per run</strong> against a &sect;10.3
+    estimate of 60&ndash;100 s and 10&ndash;20 h (<code>D57</code>), so one process running the grid
+    in sequence is ~4.5 h &mdash; inside the 11 h budget with room. The subprocesses stopped paying
+    for themselves, and the files existed only to feed them.</li>
+    <li><strong>Order is load-bearing now.</strong> These cells are <em>executed</em>, not merely
+    written: decorators run, dataclass field types resolve, module constants evaluate. A cell naming
+    something a later cell defines fails at once rather than at call time. <em>Save Version &rarr;
+    Save &amp; Run All</em> runs them in order, which is the only order that works.</li>
+    <li><strong>Two edits, and only two.</strong> Intra-package imports are removed &mdash; the names
+    are already in this namespace, and the import would fail for want of a package. And
+    <code>runner</code>'s <code>if __name__ == "__main__":</code> guard is removed: in a notebook
+    cell <code>__name__</code> <em>is</em> <code>"__main__"</code>, so it would launch the entire
+    grid the instant its definition cell ran. Everything else is the package, character for
+    character.</li>
+    <li><strong>The digest is the provenance.</strong> There is no git repository on Kaggle and now
+    no package files either, so the cell after these pins <code>code_sha256</code> to the digest of
+    <code>src/itransformer_btc/</code> taken at generation time &mdash; the same number a local
+    checkout of the same source reports (<code>D54b</code>), so a notebook run and a repository run
+    do not look like different code vintages.</li>
   </ul>
 </div>"""
 
@@ -192,34 +397,37 @@ MD_GATE = """<div style="background: linear-gradient(90deg, #2b0a00, #3d1000); b
 </div>"""
 
 MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); border-left: 4px solid #4cc9f0; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid &mdash; 2 &times; T4</h2>
-  <p style="color: #b8c7e0; margin: 0;">534 unique runs across four arms. One process per GPU, resume automatic, budget guard at run boundaries.</p>
+  <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid</h2>
+  <p style="color: #b8c7e0; margin: 0;">534 unique runs across four arms, executed in this kernel. Resume automatic, budget guard at run boundaries.</p>
   <ul style="color: #a9d6f5; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
     <li><strong>main 300</strong> &middot; <strong>uniform 75</strong> (<code>D50</code>) &middot;
     <strong>fresh 15</strong> (falsification) &middot; <strong>horizon 144</strong>. The sweep's
     H=24 slice shares 48 <code>run_id</code>s with the main grid, so 582 nominal cells are 534 real
     runs &mdash; executing one twice would mean two files racing for one path.</li>
-    <li><strong>Processes, not threads.</strong> <code>torch.manual_seed</code> seeds
-    <em>every</em> CUDA device, so two threads would clobber each other's generator mid-run and
-    &sect;12's reproducibility contract would be unenforceable. Each child is told where the
-    materialised package is, via <code>PYTHONPATH</code>, and which artifact it read, via
-    <code>ITBTC_PARQUET</code>.</li>
+    <li><strong>One process, one GPU, and a second T4 idles.</strong> A real cost, stated rather than
+    buried: it roughly doubles wall time against the two-worker form. It is what the notebook format
+    costs &mdash; definitions live in this namespace and a subprocess inherits none of it. The
+    measured arithmetic says it still fits: <strong>534 &times; ~30 s &asymp; 4.5 h</strong> against
+    an 11 h budget (<code>D57</code>). Threads are <em>not</em> the way to reclaim the second GPU:
+    <code>torch.manual_seed</code> seeds <em>every</em> CUDA device, so two threads would clobber
+    each other's generator mid-run and &sect;12's reproducibility contract would be
+    unenforceable.</li>
     <li><strong>No <code>DataLoader</code>.</strong> At ~280k parameters the run is dominated by data
     movement and Python overhead, which a per-item loader maximises &mdash; roughly 10&times; worse,
     which puts the grid outside the 30 h weekly quota outright.</li>
     <li>Run <em>Save Version &rarr; Save &amp; Run All</em>, never the editor: the 20-minute idle
     timeout kills interactive sessions, and hitting the 12 h wall interactively loses
     <code>/kaggle/working</code> entirely.</li>
-    <li><strong>Resume granularity is one run, ~90 s.</strong> A run counts as complete only when
+    <li><strong>Resume granularity is one run, ~30 s.</strong> A run counts as complete only when
     both <code>preds/</code> and <code>meta/</code> exist and <code>meta.status ==
-    "complete"</code>, so a session cut short at run 200 of 534 loses at most the one run in flight
-    per GPU. The next session subtracts what is done and continues &mdash; there is no bookkeeping
-    to do by hand and no state beyond the files themselves. Intra-run checkpointing is deliberately
-    omitted: at ~90 s per run it costs more complexity than it saves.</li>
-    <li><strong>The budget guard bounds the session, not the worker.</strong> Kaggle's 12 h wall
+    "complete"</code>, so a session cut short at run 200 of 534 loses at most the one run in flight.
+    The next session subtracts what is done and continues &mdash; there is no bookkeeping to do by
+    hand and no state beyond the files themselves. Intra-run checkpointing is deliberately omitted:
+    at ~30 s per run it costs more complexity than it saves.</li>
+    <li><strong>The budget guard bounds the session, not the grid call.</strong> Kaggle's 12 h wall
     starts at cell 0, so the prelude &mdash; data, K<sub>eff</sub>, invariants, the twelve pilot
-    runs &mdash; is subtracted before the workers are given their budget. Counting from the worker's
-    own start would let the two clocks drift apart by exactly however long the prelude took.</li>
+    runs &mdash; is subtracted before the guard is built. Counting from the grid's own start would
+    let the two clocks drift apart by exactly however long the prelude took.</li>
   </ul>
 </div>"""
 
@@ -254,12 +462,12 @@ import sys
 import time
 from pathlib import Path
 
-# Kaggle's 12 h wall runs from HERE, not from the moment the workers start. The
-# budget guard lives inside each worker and counts from its own start, so the
-# prelude — data, K_eff, invariants, the twelve pilot runs — would sit outside
-# the budget entirely and the two clocks would drift apart by however long it
-# took. Cell 6 subtracts this. Losing /kaggle/working to the wall costs the whole
-# session's runs, so the margin is not somewhere to be approximate.
+# Kaggle's 12 h wall runs from HERE, not from the moment the grid starts. The
+# budget guard counts from whatever it is handed, so the prelude — data, K_eff,
+# invariants, the twelve pilot runs — would sit outside the budget entirely and
+# the two clocks would drift apart by however long it took. The grid cell
+# subtracts this. Losing /kaggle/working to the wall costs the whole session's
+# runs, so the margin is not somewhere to be approximate.
 SESSION_T0 = time.perf_counter()
 
 ON_KAGGLE = Path("/kaggle/working").exists()
@@ -267,14 +475,13 @@ WORK = (Path("/kaggle/working") if ON_KAGGLE else Path.cwd()).resolve()
 ARTIFACTS = WORK / "artifacts"
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
-# `%%writefile` resolves against the process working directory, so the package
-# has to land beside the artifacts whichever machine this is. Kaggle already
-# starts in /kaggle/working; a local run started from notebooks/ does not.
+# Relative paths inside the definitions below resolve against the process working
+# directory, so artifacts have to land beside it whichever machine this is.
+# Kaggle already starts in /kaggle/working; a local run started from notebooks/
+# does not. Nothing is added to sys.path — there is no package to import, and an
+# entry there could only serve to shadow these cells with someone else's copy.
 if Path.cwd().resolve() != WORK:
     os.chdir(WORK)
-(WORK / "itransformer_btc").mkdir(parents=True, exist_ok=True)
-if str(WORK) not in sys.path:
-    sys.path.insert(0, str(WORK))
 
 
 def ensure(module: str, pip_name: str | None = None) -> None:
@@ -326,7 +533,7 @@ def find_parquet() -> Path:
 
 PARQUET = find_parquet()
 # Every meta/*.json records the digest of the artifact its run consumed (section
-# 12), and can only find it if told. Inherited by the worker subprocesses.
+# 12), and can only find it if told.
 os.environ["ITBTC_PARQUET"] = str(PARQUET)
 
 import numpy as np
@@ -351,19 +558,37 @@ if torch.cuda.is_available():
           f"and is not to be trusted here)")
 '''
 
-CODE_IMPORT = r'''import itransformer_btc
-from itransformer_btc.train import code_sha256
+#: ``{digest}`` is substituted at generation time — see :func:`package_digest`.
+CODE_PROVENANCE = r'''# Root section 12 asks a run to name the code that produced it, and names the git
+# sha as the way. There is no git repository on Kaggle and — the twelve cells
+# above being definitions rather than files — nothing on disk to hash either. So
+# the digest is taken from src/itransformer_btc/ when this notebook is generated
+# and pinned here (D54b). It is the SAME number a local checkout of the same
+# source reports, which is the point: a run from the notebook and a run from the
+# repository must not look like different code vintages.
+CODE_SHA256_OVERRIDE = "{digest}"
 
-_pkg = Path(itransformer_btc.__file__).resolve().parent
-assert _pkg.parent == WORK, (
-    f"imported itransformer_btc from {_pkg}, not from this notebook's own "
-    f"materialisation under {WORK}. A stray src/ on sys.path would make every "
-    f"number untraceable to the code in the cells above — which is exactly the "
-    f"dependency this notebook exists to remove."
+# These cells are EXECUTED, not written, so a skipped one leaves a hole rather
+# than a stale file — and the hole surfaces hours later, inside the grid. Twelve
+# sentinels, one per module, in MODULE_ORDER: cheap here, unbounded there.
+_sentinels = (
+    "ORIGINS", "__all__", "build_segments", "count_windows", "budget_table",
+    "build_features", "build_origin_tensors", "ITransformer", "code_sha256",
+    "keff_table", "seed_average", "manifest",
+)
+_missing = [name for name in _sentinels if name not in globals()]
+assert not _missing, (
+    f"{len(_missing)} of {len(_sentinels)} definition cells have not run: "
+    f"{_missing}. Run the Definitions cells above in order, top to bottom."
+)
+assert "itransformer_btc" not in sys.modules, (
+    "an installed or on-path itransformer_btc package was imported. This notebook "
+    "must run its OWN definitions, or every number it produces is traceable to "
+    "code that is not in the cells above — exactly the dependency this format "
+    "exists to remove."
 )
 
-print(f"package     {_pkg}")
-print(f"modules     {sorted(p.name for p in _pkg.glob('*.py'))}")
+print(f"modules defined in-kernel: {len(MODULE_NAMES)}  {MODULE_NAMES}")
 print(f"code_sha256 {code_sha256()}")
 print("\nThat digest goes into every meta/*.json. There is no git repository on "
       "Kaggle, so it is what the traceability contract has to name the code with "
@@ -371,11 +596,7 @@ print("\nThat digest goes into every meta/*.json. There is no git repository on 
       "that ran, not the commit someone was standing on with a dirty tree.")
 '''
 
-CODE_DATA = r'''from itransformer_btc.budget import COMMITTED_TRAIN_BUDGET, budget_table
-from itransformer_btc.config import ORIGINS
-from itransformer_btc.segments import load_bars, usable_mask
-
-bars = usable_mask(load_bars(PARQUET))
+CODE_DATA = r'''bars = usable_mask(load_bars(PARQUET))
 print(f"bars {bars.height:,}  usable {int(bars['usable'].sum()):,}  "
       f"unusable {int((~bars['usable']).sum())}")
 
@@ -409,9 +630,7 @@ print("The closed form disagrees wherever a segment is shorter than one window "
       "(D51a) and is kept only as an upper bound.")
 '''
 
-CODE_FEATURES = r'''from itransformer_btc.features import VARIATE_ORDER, build_features, ladder_columns
-
-features = build_features(bars)
+CODE_FEATURES = r'''features = build_features(bars)
 print(f"feature frame {features.height:,} rows x {len(VARIATE_ORDER)} variates")
 print(f"dropped {int(bars['usable'].sum()) - features.height} rows = one per segment "
       f"(D52c: r is per segment, so each segment's first bar has no predecessor)")
@@ -433,13 +652,11 @@ assert features.select([pl.col(c).is_finite().all() for c in VARIATE_ORDER]).row
     == tuple([True] * 12), "a variate is non-finite; the segment law did not run"
 '''
 
-CODE_KEFF = r'''from itransformer_btc import keff
-
-gate = keff.gate_pr(features, k=8)
-print(keff.gate_verdict(gate))
+CODE_KEFF = r'''gate = gate_pr(features, k=8)
+print(gate_verdict(gate))
 
 t0 = time.perf_counter()
-keff_tbl = keff.keff_table(features)          # 15 origins x 4 rungs, training spans only
+keff_tbl = keff_table(features)          # 15 origins x 4 rungs, training spans only
 print(f"\nmeasured in {time.perf_counter() - t0:.0f}s")
 
 rung_view = (
@@ -455,7 +672,7 @@ rung_view = (
     .sort("k")
 )
 print(rung_view)
-print(f"\ncorr(K, K_eff) = {keff.corr_k_keff(keff_tbl):.4f}")
+print(f"\ncorr(K, K_eff) = {corr_k_keff(keff_tbl):.4f}")
 print("A reader is entitled to that before reading the K-vs-K_eff horse race: near "
       "1 means the two theories are close to collinear and there is little to "
       "separate, whatever the p-value says.")
@@ -465,11 +682,7 @@ print("Section 5.2 expected 1 / ~3.5 / ~6.5 / ~7, reasoned from family structure
 keff_tbl.write_parquet(ARTIFACTS / "keff_table.parquet")
 '''
 
-CODE_INVARIANTS = r'''from itransformer_btc.model import ITransformer, ITransformerConfig
-from itransformer_btc.splits import build_origin_tensors
-from itransformer_btc.train import pick_device, scale_invariance_check, set_seed
-
-device = pick_device()
+CODE_INVARIANTS = r'''device = pick_device()
 print(f"device {device}")
 
 set_seed(42)
@@ -517,9 +730,7 @@ print(f"mu_g/sigma_g spans {naive['mu_over_sigma'].min():+.5f} … "
 naive.write_parquet(ARTIFACTS / "naive_rw_by_origin.parquet")
 '''
 
-CODE_PILOT = r'''from itransformer_btc import runner
-
-pilot = runner.stage5_pilot(features, out_root=ARTIFACTS, device=device)
+CODE_PILOT = r'''pilot = stage5_pilot(features, out_root=ARTIFACTS, device=device)
 print(pilot)
 
 if not pilot.passed:
@@ -532,18 +743,18 @@ print("\nDisclose the pilot in section 13.2 as a SELECTION EVENT, stated separat
 
 CODE_GRID = r'''import gc
 
-# The pre-flight probe and the pilot both allocated on cuda:0, and worker 0 is
-# about to be pinned to that same physical GPU. Hand the memory back first: the
-# children are separate processes and cannot share this kernel's allocator.
+# The pre-flight probe and the pilot allocated on this same device, and the grid
+# is about to. Hand the memory back before it starts rather than carrying two
+# dead models through 534 runs.
 for _name in ("probe", "plumb", "xs", "ys", "opt", "loss"):
     globals().pop(_name, None)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
-ALL = runner.manifest()
-roots = runner.discover_roots(ARTIFACTS)
-todo = runner.pending(ALL, roots)
+ALL = manifest()
+roots = discover_roots(ARTIFACTS)
+todo = pending(ALL, roots)
 
 by_arm = {}
 for cell in ALL:
@@ -554,27 +765,37 @@ print(f"roots searched: {[str(r) for r in roots]}")
 print(f"already complete: {already_done}   pending: {len(todo)}")
 print("Completeness is per run_id: both preds/ and meta/ present and "
       "meta.status == 'complete'. A run interrupted mid-training leaves no meta, "
-      "so it is redone — losing at most one run per GPU, ~90 s (root §10.5).")
+      "so it is redone — losing at most one run, ~30 s (root §10.5).")
 
-# The budget the workers get is what is LEFT of the session, not a fresh 11 h.
+# The budget is what is LEFT of the session, not a fresh 11 h.
 SESSION_BUDGET_H = 11.0
 elapsed_h = (time.perf_counter() - SESSION_T0) / 3600.0
 budget_h = max(0.25, SESSION_BUDGET_H - elapsed_h)
-print(f"\nprelude took {elapsed_h * 60:.0f} min -> workers get {budget_h:.2f} h "
+print(f"\nprelude took {elapsed_h * 60:.0f} min -> grid gets {budget_h:.2f} h "
       f"of the {SESSION_BUDGET_H:.1f} h session budget, guard reserves 0.5 h more")
 
-t0 = time.perf_counter()
-rc = runner.launch_workers(
-    n_workers=max(1, torch.cuda.device_count()),
-    parquet=PARQUET,
-    out_root=ARTIFACTS,
-    budget_h=budget_h,
-    reserve_h=0.5,
-    package_root=WORK,      # where cell 0b materialised the package (D54)
-)
-print(f"workers exited {rc} after {(time.perf_counter() - t0) / 3600:.2f} h")
+# In-kernel and sequential. The definitions live in THIS namespace and nowhere
+# else, so a subprocess could not reach them — and at ~30 s per run measured
+# (D57) the 534 cells are ~4.5 h, which fits without a second worker. The second
+# GPU idles; that is the price of the format, and it is stated rather than hidden.
+if torch.cuda.device_count() > 1:
+    print(f"NOTE: {torch.cuda.device_count()} GPUs visible, using {device} only. "
+          f"Threads are not the fix — torch.manual_seed seeds EVERY CUDA device, "
+          f"so two threads would clobber each other's generator mid-run.")
 
-left = runner.pending(ALL, runner.discover_roots(ARTIFACTS))
+t0 = time.perf_counter()
+summary = execute(
+    todo, features,
+    out_root=ARTIFACTS,
+    roots=roots,
+    guard=BudgetGuard(budget_h, 0.5),
+    device=device,
+    log=lambda msg: print(msg, flush=True),
+)
+print(summary)
+print(f"grid finished after {(time.perf_counter() - t0) / 3600:.2f} h")
+
+left = pending(ALL, discover_roots(ARTIFACTS))
 GRID_COMPLETE = not left
 print(f"remaining after this session: {len(left)} of {len(ALL)}")
 if left:
@@ -591,19 +812,16 @@ if left:
     print("  3. Run this notebook again — completed runs are skipped automatically")
 
     ran = len(ALL) - len(left) - already_done
-    workers = max(1, torch.cuda.device_count())
     if ran > 0:
-        mean_s = (time.perf_counter() - t0) * workers / ran
+        mean_s = (time.perf_counter() - t0) / ran
         print(f"\n  {ran} runs this session at ~{mean_s:.0f}s each -> about "
-              f"{len(left) * mean_s / workers / 3600:.1f} h of wall still to do, "
-              f"{len(left) * mean_s / workers / 3600 / 10.5:.1f} more sessions")
+              f"{len(left) * mean_s / 3600:.1f} h of wall still to do, "
+              f"{len(left) * mean_s / 3600 / 10.5:.1f} more sessions")
 '''
 
-CODE_RQ1 = r'''from itransformer_btc import metrics
-
-done = sorted(runner.completed_run_ids(runner.discover_roots(ARTIFACTS)))
-grid = metrics.gather_grid(done, runner.discover_roots(ARTIFACTS))
-seed_avg = metrics.seed_average(grid)
+CODE_RQ1 = r'''done = sorted(completed_run_ids(discover_roots(ARTIFACTS)))
+grid = gather_grid(done, discover_roots(ARTIFACTS))
+seed_avg = seed_average(grid)
 print(f"gathered {len(done)} runs -> {grid.height} run-block rows -> "
       f"{seed_avg.height} seed-averaged cells")
 
@@ -643,7 +861,7 @@ print(f"\ndelta MSE 4->8 = {d_4_8.mean():+.6f}   8->12 = {d_8_12.mean():+.6f}")
 print("D49's margin is 0.25 x delta(4->8), fixed in advance: a non-significant "
       "delta is a failure to reject, not evidence of equivalence, and choosing the "
       "margin after seeing the rung is the p-hacking section 3 forbids for tau.")
-print(metrics.tost_equivalence(d_8_12, margin))
+print(tost_equivalence(d_8_12, margin))
 
 # D32: RQ1 is a NON-NESTED comparison, not an OLS on three points. Four rungs give
 # three deltas, and stacking 360 rows creates no information about a slope that
@@ -652,11 +870,11 @@ print(metrics.tost_equivalence(d_8_12, margin))
 keff_join = keff_tbl.select(["origin", "k", "pr_raw"]).rename({"pr_raw": "k_eff"})
 race = main.join(keff_join, on=["origin", "k"], how="inner")
 groups = race["origin_index"].to_numpy() * 100 + race["block"].to_numpy()
-t_ab, p_ab = metrics.j_test(race["mse"].to_numpy(),
-                            race["k"].to_numpy().astype(float),
-                            race["k_eff"].to_numpy(), groups)
-t_ba, p_ba = metrics.j_test(race["mse"].to_numpy(), race["k_eff"].to_numpy(),
-                            race["k"].to_numpy().astype(float), groups)
+t_ab, p_ab = j_test(race["mse"].to_numpy(),
+                    race["k"].to_numpy().astype(float),
+                    race["k_eff"].to_numpy(), groups)
+t_ba, p_ba = j_test(race["mse"].to_numpy(), race["k_eff"].to_numpy(),
+                    race["k"].to_numpy().astype(float), groups)
 print(f"\nJ-test  K augmented by K_eff: t={t_ab:+.3f} p={p_ab:.4f}   |   "
       f"K_eff augmented by K: t={t_ba:+.3f} p={p_ba:.4f}")
 print("Both reject -> neither explanation alone suffices. Neither rejects -> the "
@@ -665,12 +883,12 @@ print("Both reject -> neither explanation alone suffices. Neither rejects -> the
 '''
 
 CODE_RQ2 = r'''print("--- RQ2: does the multivariate gap narrow with model age? ---")
-amp = metrics.amplification(seed_avg, k_small=1, k_large=8)
+amp = amplification(seed_avg, k_small=1, k_large=8)
 print(amp.select(["origin", "block", "mse_small", "mse_large", "A"]).head(12))
 
-beta = metrics.panel_beta1(amp, value="A", B=99_999, seed=42)
+beta = panel_beta1(amp, value="A", B=99_999, seed=42)
 print(f"\n{beta}")
-mde = metrics.minimum_detectable_beta1(beta.within_slopes)
+mde = minimum_detectable_beta1(beta.within_slopes)
 print(f"\nminimum detectable beta1 at 80% power, alpha=0.05: {mde:+.6f}")
 print(f"observed {beta.beta1:+.6f} is "
       f"{'INSIDE (undetectable)' if abs(beta.beta1) < abs(mde) else 'outside'} it")
@@ -687,7 +905,7 @@ for offset in range(5):
     triple = [ORIGINS[i].label for i in range(offset, len(ORIGINS), 5)]
     subset = amp.filter(pl.col("origin").is_in(triple))
     if subset.height == len(triple) * 6:
-        sub = metrics.panel_beta1(subset, value="A", B=9_999, seed=42)
+        sub = panel_beta1(subset, value="A", B=9_999, seed=42)
         print(f"  {triple}: beta1={sub.beta1:+.6f}  p={sub.headline_p:.4f}  (G=3)")
 print("At G=3 these will very likely be inconclusive, and THAT IS THE FINDING — it "
       "bounds what the full-panel p-value can honestly claim.")
@@ -695,9 +913,9 @@ print("At G=3 these will very likely be inconclusive, and THAT IS THE FINDING �
 # D50: K=1 vs K=8 differs in information AND in whether attention is active, at the
 # same time. This holds information fixed and varies only what attention selects.
 try:
-    attn = metrics.attention_amplification(seed_avg, k=8)
+    attn = attention_amplification(seed_avg, k=8)
     print(f"\nA_attn (uniform-attention control, D50):")
-    print(metrics.panel_beta1(attn, value="A_attn", B=99_999, seed=42))
+    print(panel_beta1(attn, value="A_attn", B=99_999, seed=42))
     print("Reporting both decompositions answers information-versus-attention "
           "directly, at runs Figure 5 needs anyway.")
 except (ValueError, KeyError) as exc:
@@ -721,7 +939,7 @@ else:
 '''
 
 CODE_RQ3 = r'''print("--- RQ3: what retraining cadence? ---")
-dec = metrics.decay(seed_avg, k=8)
+dec = decay(seed_avg, k=8)
 print(dec.table)
 if dec.excluded_origins:
     print(f"\nEXCLUDED, mean R2_oos <= 0 so there is no edge to lose a proportion "
@@ -739,8 +957,8 @@ if not dec.table.height:
     # censored origin has an edge that never decays past tau within 180 days,
     # whereas here there is no edge to lose a proportion of. Reporting the two
     # in one wording would claim skill the grid never found.
-    for tau in metrics.TAU_SENSITIVITY:
-        flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
+    for tau in TAU_SENSITIVITY:
+        flag = "   <-- HEADLINE" if abs(tau - TAU_HEADLINE) < 1e-9 else ""
         print(f"  tau={tau:>6.1%}  UNDEFINED — no origin has positive mean skill{flag}")
         b_star_rows.append({"tau": tau, "status": "undefined", "median_b_star": None,
                             "ci_low": None, "ci_high": None, "events": 0,
@@ -753,13 +971,13 @@ if not dec.table.height:
           "non-positive out-of-sample skill' — never as 'no decay detected within "
           "180 days', which is the right-censored wording and asserts an edge.")
 else:
-    for tau in metrics.TAU_SENSITIVITY:
+    for tau in TAU_SENSITIVITY:
         bs = dec.b_star(tau)
-        km = metrics.kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy())
+        km = kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy())
         lo, hi = km.median_interval
         median = "censored >6" if km.median == float("inf") else f"{km.median:.0f}"
         interval = "censored" if lo == float("inf") else f"[{lo:.0f}, {hi:.0f}]"
-        flag = "   <-- HEADLINE" if abs(tau - metrics.TAU_HEADLINE) < 1e-9 else ""
+        flag = "   <-- HEADLINE" if abs(tau - TAU_HEADLINE) < 1e-9 else ""
         print(f"  tau={tau:>6.1%}  crossings {km.n_events}/"
               f"{km.n_events + km.n_censored}  median b* {median}  CI {interval}{flag}")
         b_star_rows.append({"tau": tau, "status": "estimated",
@@ -776,13 +994,13 @@ else:
 # with zero events in both arms the log-rank variance is zero and the statistic
 # is 0/0, which prints as nan and reads like a computed result. Section 12 calls
 # a number that cannot be regenerated a documented failure, so say why instead.
-a = dec.b_star(metrics.TAU_HEADLINE)
-b = metrics.decay(seed_avg, k=1).b_star(metrics.TAU_HEADLINE)
+a = dec.b_star(TAU_HEADLINE)
+b = decay(seed_avg, k=1).b_star(TAU_HEADLINE)
 events = (int(a["event"].sum()) if a.height else 0,
           int(b["event"].sum()) if b.height else 0)
 if a.height and b.height and sum(events):
-    chi2, p = metrics.logrank(a["b_star"].to_numpy(), a["event"].to_numpy(),
-                              b["b_star"].to_numpy(), b["event"].to_numpy())
+    chi2, p = logrank(a["b_star"].to_numpy(), a["event"].to_numpy(),
+                      b["b_star"].to_numpy(), b["event"].to_numpy())
     print(f"\nlog-rank K=8 vs K=1 at tau=5%: chi2={chi2:.3f}  p={p:.4f}  "
           f"(H3; crossings K=8 {events[0]}, K=1 {events[1]})")
 elif not (a.height and b.height):
@@ -796,9 +1014,7 @@ else:
           "nan as though it were computed would be the same defect as D55.")
 '''
 
-CODE_SAVE = r'''from itransformer_btc.train import _input_sha256
-
-_digest, _provenance = _input_sha256(PARQUET)
+CODE_SAVE = r'''_digest, _provenance = _input_sha256(PARQUET)
 
 paper_numbers = {
     "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -810,8 +1026,8 @@ paper_numbers = {
     "runs_in_manifest": len(ALL),
     "keff": {
         "gate_pr_k8_pre_first_origin": gate,
-        "gate_floor": keff.GATE_PR_FLOOR,
-        "corr_k_keff": keff.corr_k_keff(keff_tbl),
+        "gate_floor": GATE_PR_FLOOR,
+        "corr_k_keff": corr_k_keff(keff_tbl),
         "per_rung": rung_view.to_dicts(),
     },
     "rq1": {
@@ -819,7 +1035,7 @@ paper_numbers = {
         "delta_4_to_8": float(d_4_8.mean()),
         "delta_8_to_12": float(d_8_12.mean()),
         "tost_margin": margin,
-        "tost": str(metrics.tost_equivalence(d_8_12, margin)),
+        "tost": str(tost_equivalence(d_8_12, margin)),
         "j_test_k_augmented_by_keff": {"t": t_ab, "p": p_ab},
         "j_test_keff_augmented_by_k": {"t": t_ba, "p": p_ba},
     },
@@ -834,7 +1050,7 @@ paper_numbers = {
         "consecutive_origin_overlap_pct": 79.2,
     },
     "rq3": {
-        "tau_headline": metrics.TAU_HEADLINE,
+        "tau_headline": TAU_HEADLINE,
         "b_star": b_star_rows,
         "excluded_origins": list(dec.excluded_origins),
     },
@@ -852,8 +1068,7 @@ for path in sorted(ARTIFACTS.glob("*.parquet")):
     print(f"  {path.name}  {path.stat().st_size / 1e6:.2f} MB")
 print(f"\npreds {len(list((ARTIFACTS / 'preds').glob('*.parquet')))} files  |  "
       f"meta {len(list((ARTIFACTS / 'meta').glob('*.json')))} files")
-print(f"remaining runs: "
-      f"{len(runner.pending(ALL, runner.discover_roots(ARTIFACTS)))}")
+print(f"remaining runs: {len(pending(ALL, discover_roots(ARTIFACTS)))}")
 print("\nSave Version now, then attach this output as the next session's input "
       "Dataset. Nothing else needs doing by hand.")
 '''
@@ -916,13 +1131,15 @@ def _code(index: int, text: str) -> dict:
 
 
 def module_cell_source(name: str) -> str:
-    """``%%writefile`` header plus the module verbatim.
+    """Banner comment plus the flattened module.
 
-    Verbatim is the point: ``tests/test_notebook_sync.py`` compares the cell body
-    against the file, so the two cannot drift without a test failing.
+    ``tests/test_notebook_sync.py`` locates module cells by the banner and
+    compares what follows against :func:`flatten_module_source`, so the two
+    cannot drift without a test failing. The banner also gives a reader scrolling
+    the notebook the module's name, which the ``%%writefile`` line used to supply
+    and nothing else now does.
     """
-    text = (PACKAGE / name).read_text(encoding="utf-8")
-    return f"%%writefile {WRITEFILE_TARGET.format(name=name)}\n{text}"
+    return f"{MODULE_BANNER.format(name=name)}\n{flatten_module_source(name)}"
 
 
 def build() -> dict:
@@ -944,10 +1161,12 @@ def build() -> dict:
     md(MD_SETUP)
     code(CODE_SETUP)
 
-    md(MD_MATERIALISE)
+    md(MD_DEFINE)
     for name in MODULE_ORDER:
         code(module_cell_source(name))
-    code(CODE_IMPORT)
+    code("MODULE_NAMES = [\n" + "".join(
+        f"    {name!r},\n" for name in MODULE_ORDER) + "]\n")
+    code(CODE_PROVENANCE.replace("{digest}", package_digest()))
 
     md(MD_DATA)
     code(CODE_DATA)
@@ -1005,8 +1224,9 @@ def main(argv: list[str] | None = None) -> int:
     if extra:
         raise SystemExit(
             f"{extra} exist in src/itransformer_btc/ but are absent from "
-            f"MODULE_ORDER, so the notebook would materialise an incomplete "
-            f"package. Add them here, in dependency order."
+            f"MODULE_ORDER, so the notebook would define an incomplete package "
+            f"while code_sha256 still named every file. Add them here, in "
+            f"dependency order — which is now execution order and must be right."
         )
 
     notebook = build()
@@ -1033,7 +1253,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"wrote {NOTEBOOK}  "
         f"({len(notebook['cells'])} cells, {n_code} code, "
-        f"{len(text) / 1e3:.0f} kB)"
+        f"{len(text) / 1e3:.0f} kB)  code_sha256 {package_digest()[:16]}"
     )
     return 0
 
