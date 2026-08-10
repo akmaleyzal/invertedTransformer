@@ -71,11 +71,15 @@ invertedTransformer/
 └── artifacts/{preds,meta,logs}/    + paper_numbers.json
 ```
 
-**The notebook carries the package** (`D54`). Twelve `%%writefile` cells reconstruct
-`itransformer_btc/` on whatever machine runs it, so a Kaggle session needs the notebook and
-`BTCUSDT_1h.parquet` and nothing else. Those cells are **generated from `src/`** and
-`tests/test_notebook_sync.py` asserts they are byte-identical to it, so the workflow after any change
-under `src/` is:
+**The notebook carries the package** (`D54`, `D58`). Twelve cells **define** each module directly in
+the kernel namespace — no files, no package, nothing to import — so a Kaggle session needs the
+notebook and `BTCUSDT_1h.parquet` and nothing else. (It used to write those files with
+`%%writefile`; that existed only so two GPU *subprocesses* could import them, and `D57`'s measured
+~30 s per run made the sequential path fit the budget, so the files bought nothing.)
+
+Those cells are **generated from `src/`** and `tests/test_notebook_sync.py` asserts each equals its
+module under the two declared removals — intra-package imports and the `__main__` guard — so the
+workflow after any change under `src/` is:
 
 ```bash
 python tools/build_notebook.py        # regenerate
@@ -308,6 +312,13 @@ CUDA device, so two threads seeding concurrently would clobber each other's gene
 `CUDA_VISIBLE_DEVICES` pinned gives each worker its own global RNG, its own interpreter lock and
 crash isolation.
 
+**This CLI path is for a checkout, not for the notebook (`D58`).** Subprocesses import
+`itransformer_btc`, and the notebook has no package to import — its modules are definitions in one
+kernel namespace, so it runs the grid **in-kernel and sequentially** via `execute()`. That costs
+roughly 4.5 h against 2.31 h and was accepted because `D57` showed both fit an 11 h session.
+`launch_workers` remains here, tested, and is the path to use from a checkout — and the one a
+1-minute grid will need, where sequential does not fit.
+
 **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather costs more than the split saves.
 Parallelism belongs at the *run* level — the grid is many small runs, not one large one.
 
@@ -357,8 +368,9 @@ is generated from that file, never transcribed.**
 
 ## 4. Running on Kaggle
 
-`notebooks/iTransformer.ipynb`, 35 cells (24 code), load through evaluation. **Self-contained**: it
-materialises `itransformer_btc/` from its own cells, so the repository is not uploaded (`D54`).
+`notebooks/iTransformer.ipynb`, 36 cells (25 code), load through evaluation. **Self-contained**: its
+twelve module cells define the package in the kernel namespace, so nothing is imported and the
+repository is not uploaded (`D54`, `D58`).
 
 Setup:
 
@@ -382,12 +394,15 @@ bookkeeping: a run is complete only when **both** artifacts exist and `meta.stat
 
 ### If the session ends mid-grid — the expected case
 
-The grid is ~10–20 wall hours against an 11 h budget, so **two sessions is the plan**, not the
-accident. Nothing restarts from zero:
+Written when the grid was estimated at ~10–20 wall hours against an 11 h budget, which made two
+sessions the plan rather than the accident. **Measured, the 534-run grid took 2.31 h** on two T4s and
+~4.5 h in one kernel (`D57`), so one session is now the expected case and this section is the
+contingency it was built to be. It still holds verbatim, and a 1-minute grid will need it. Nothing
+restarts from zero:
 
 | | |
 |---|---|
-| What is lost | At most **one run per GPU** — the one in flight. ~90 s each. An interrupted run leaves no `meta`, so it is redone |
+| What is lost | At most **one run** — the one in flight, ~30 s measured. An interrupted run leaves no `meta`, so it is redone |
 | What is kept | Every completed `preds/{run_id}.parquet` + `meta/{run_id}.json`, plus `keff_table.parquet` and `naive_rw_by_origin.parquet` |
 | How the next session knows | `pending()` = manifest − completed, matched by `run_id`. Roots are discovered by **glob** over `/kaggle/input/*/preds` and `/kaggle/input/*/*/preds`, so the Dataset's name and nesting do not matter |
 | What you do | Save Version → attach that output as the next session's input → run again |
@@ -402,7 +417,8 @@ Two guards make that hold, and both were added on 2026-08-07 (`D54e`, `D54f`):
   half-panel `β₁` is a different estimand, not a noisier one.
 - **The budget guard bounds the session, not the worker.** Kaggle's 12 h wall starts at cell 0, so
   the prelude — data, `K_eff`, invariants, and the twelve pilot runs, ~20–25 min — is subtracted
-  before the workers get their budget.
+  before the grid gets its budget. Unchanged by `D58`: the arithmetic never depended on where the
+  grid ran, only on when the session started.
 
 **Do not use the interactive editor.** The 20-minute idle timeout kills the session, and hitting the
 12 h wall interactively loses `/kaggle/working` **entirely** — that is the one way to actually lose

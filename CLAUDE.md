@@ -2,7 +2,7 @@
 
 Governing document for this repository. Read it before doing anything else.
 
-**Status:** authoritative as of **2026-08-07**. It supersedes both source specifications
+**Status:** authoritative as of **2026-08-08**. It supersedes both source specifications
 (`research_specification_itransformer_btc.md`, `reference_library_itransformer_btc.md`), which are
 **inputs, not authority**. Where they disagree with this file, this file wins, and
 `docs/DIVERGENCE_REGISTER.md` says why. It also supersedes the pre-2026-08-05 version of itself
@@ -1041,7 +1041,14 @@ Derived against **15 origins** (`D26`, §8.1).
 8→12 rung is RQ1's designed contrast and cannot carry the fewest seeds. **`D48` names the four sweep
 origins in advance** — choosing them after the main grid would be origin selection.
 
-**Quota check.** At the §10.3 regime (~60–100 s per run, two GPUs as independent workers), 837 runs
+**Superseded twice, and the table above is the nominal count, not the run count.** `D53e`
+deduplicates the sweep's H=24 slice against the main grid, giving **789** real runs — 534
+iTransformer + 195 baselines + 60 ridge — and the 534 iTransformer half is what actually executed on
+2026-08-08. `D57` then replaced the timing this paragraph rests on. Both are recorded below rather
+than by editing the arithmetic away, because the trade-offs elsewhere in this document were made
+against these figures and a reader needs to see which ones moved.
+
+**Quota check, as written and now falsified.** At the §10.3 regime (~60–100 s per run, two GPUs as independent workers), 837 runs
 land at **≈ 7–12 wall-hours**, plus the horizon sweep's H=168 cells and the ARIMA/LSTM baselines,
 which are heavier — call it **10–20 h**. That fits inside one 30 h weekly quota with room for a
 re-run, across **two sessions** at the 11 h self-imposed budget. The grid grew from ≈ 621 to ≈ 837
@@ -1066,12 +1073,24 @@ resident there.**
 **~420–475 steps/epoch** at batch 32) the compute is trivial and the run is dominated entirely by
 data movement and Python overhead.
 
-| Regime | Per run | Whole grid (837 runs), 2 GPUs |
+| Regime | Per run | Whole grid |
 |---|---|---|
-| **GPU-resident, no DataLoader** | ~60–100 s | **≈ 10–20 wall-hours** — two sessions, inside one week's quota |
-| Naive `DataLoader`, 4 workers | ~10× worse | ~100–200 h — **exceeds the weekly quota outright** |
+| **GPU-resident, no DataLoader** | **~30 s measured** (`D57`) | **2.31 h** at 534 runs on two T4s; **~4.5 h** in one kernel |
+| Naive `DataLoader`, 4 workers | ~10× worse | ~45 h — **exceeds the weekly quota outright** |
 
 Both numbers are stated so the regime is understood as load-bearing, not stylistic.
+
+**The estimate was 2–3× pessimistic per run and 4–8× overall (`D57`).** The row above read
+"~60–100 s" and "≈ 10–20 wall-hours" until the grid actually ran on 2026-08-08: 534 runs, two T4
+workers, **2.31 h wall**, mean 31.6 s and 28.3 s per run on the two devices. Nothing about the
+*regime* was wrong — the GPU-resident path is what made it fast — only the arithmetic on top of it.
+Two consequences follow, and the second is larger than it looks:
+
+- the weekly quota was never the binding constraint it was written to be, so a second granularity or
+  an extra arm is affordable in a way §10.2 assumed it was not; and
+- **two GPU workers stopped being necessary**, which is what let §15's notebook drop to a single
+  kernel. At ~4.5 h sequential the grid fits the 11 h budget with room, so the second T4 now buys
+  wall-clock rather than feasibility.
 
 **First real measurement, 2026-08-06** — `itr_o01_K08_H024_s42`, the run this table's estimate was
 written for:
@@ -1083,12 +1102,15 @@ written for:
 | Device | **CPU, 6 threads.** No CUDA device was available locally |
 | Parameters | 280,472, matching §6.2's "≈ 280k" exactly |
 
-**This does not confirm the 60–100 s figure, and must not be read as confirming it.** The estimate is
-for a **T4**, and the T4 measurement has not been taken. What it does establish is that the estimate's
-*order of magnitude* survives contact: 837 runs × ~98 s ÷ 2 workers ≈ 11 wall-hours, inside the
-10–20 h the table claims and inside one 30 h weekly quota. It also establishes the regime — the
-GPU-resident path was implemented as specified, with no `DataLoader`, and the whole training split is
-42.8 MB at K=8. Take the T4 number on the first Kaggle session and replace this block.
+**The T4 measurement has now been taken, as that block instructed (2026-08-08, `D57`).** The full
+grid ran on 2 × T4: **534 runs, 2.31 h wall**, mean **31.6 s** on `cuda:0` over 263 runs and
+**28.3 s** on `cuda:1` over 259, zero failures, zero skips. So the CPU figure above was ~3× the T4
+figure, and the T4 is ~3× faster than the estimate this table was built on.
+
+The regime is confirmed exactly as specified — GPU-resident, no `DataLoader`, whole training split
+42.8 MB at K=8, 280,472 parameters. What is **not** confirmed is the arithmetic layered on it: the
+weekly quota was never close to binding, and that slack is what §15's single-kernel notebook spends
+(`D58`) and what makes a second sampling granularity affordable at all.
 
 **The first result, recorded because §12 requires every number be regenerable.** On origin 1's six
 test blocks: `MSE_model = 1.3194`, `MSE_naive = 1.2956`, **`RelMSE = 1.0183`, `R²_oos = −0.0183`** —
@@ -1098,10 +1120,22 @@ evidence about nothing in §3 yet. It is worth stating for one reason: `D20` ant
 survives the grid, RQ2's `A(i,b)` is a ratio of two negative skills and §9.1's guard on
 `R²_oos(i,1) ≤ 0` stops being an edge case and becomes the common case. Watch it.
 
-**Use both GPUs as two independent workers**, one pinned per `cuda:N`, pulling from a shared run
-queue. **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather transfer costs more than
-the split saves. Parallelism belongs at the *run* level, not the batch level — the grid is many
-small runs, not one large one.
+**Parallelism belongs at the *run* level, never the batch level** — the grid is many small runs, not
+one large one. **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather transfer costs more
+than the split saves.
+
+**Run-level parallelism is now optional, and the notebook does without it (`D58`).** Two independent
+workers, one pinned per `cuda:N` off a shared queue, is what produced the 2.31 h measurement and
+remains the fastest way to execute the grid. It is no longer *required*, because `D57`'s numbers put
+the sequential path at ~4.5 h inside an 11 h budget. That mattered because workers are
+**subprocesses**, a subprocess inherits none of the kernel's namespace, and §15's notebook now
+carries the package as definitions in that namespace rather than as files on disk — so a subprocess
+could not reach the code at all. The trade was made deliberately: roughly 2 h of wall-clock bought
+the removal of the materialise-then-import step and everything that could go stale inside it.
+
+`launch_workers` stays in `runner.py` and stays tested. It is the path to take from a checkout,
+where the package *is* importable, and it is what a future granularity grid should use if the
+sequential figure ever stops fitting the budget — at 1-minute bars it will not fit.
 
 **Precision.** T4 is sm_75. `torch.cuda.is_bf16_supported()` defaults to
 `including_emulation=True` and returns **True** there, selecting *emulated* bf16 that is slower than
@@ -1129,8 +1163,9 @@ is an expensive, avoidable mistake.
 ### 10.5 Continuation across sessions
 
 **Idempotence.** A run is complete **only when both files exist and `meta.status == "complete"`.**
-Anything else is re-run from scratch. Intra-run checkpointing is deliberately omitted: at ~90 s per
-run it costs more complexity than it saves.
+Anything else is re-run from scratch. Intra-run checkpointing is deliberately omitted: at **~30 s**
+per run measured (`D57`) it costs far more complexity than it saves — the figure was written as
+~90 s and the real one makes the argument three times stronger.
 
 **Resume.** Discover completed `run_id`s by globbing `/kaggle/input/*/preds/` ∪
 `/kaggle/working/preds/` — **never a hard-coded dataset slug**, so the Kaggle Dataset name is free to
@@ -1143,19 +1178,20 @@ trip: stop, flush, print the remaining count and the estimated sessions left, ex
 version saves. **Hitting Kaggle's own 12 h wall interactively loses `/kaggle/working` entirely.**
 
 **The guard measures the session, not the worker (`D54f`).** `BudgetGuard` sets its deadline from
-`time.perf_counter()` inside each worker process, but the 12 h wall runs from the notebook's first
+`time.perf_counter()` where it is constructed, but the 12 h wall runs from the notebook's first
 cell — so the prelude (Stage 2, Stage 3b, Stage 4, and the *twelve pilot training runs* of Stage 5,
 call it 20–25 minutes) would sit outside the budget and the two clocks would drift apart by exactly
-that much. The notebook stamps `SESSION_T0` in cell 0 and hands `launch_workers` what is **left** of
-the 11 h, not a fresh 11 h.
+that much. The notebook stamps `SESSION_T0` in cell 0 and hands the grid what is **left** of the
+11 h, not a fresh 11 h. This survived the `D58` flattening unchanged: the arithmetic never depended
+on where the grid ran, only on when the session started.
 
 **A partial session is the expected case, and it ends cleanly (`D54e`).** The grid is ~10–20 wall
 hours against an 11 h budget, so two sessions is the plan and not the exception. Three properties
 make that safe, and the third had to be added:
 
-1. **Resume granularity is one run**, ~90 s. A run is complete only when both artifacts exist and
-   `meta.status == "complete"`, so an interrupted run leaves no meta and is simply redone — the loss
-   is at most one run per GPU.
+1. **Resume granularity is one run**, ~30 s measured (`D57`). A run is complete only when both
+   artifacts exist and `meta.status == "complete"`, so an interrupted run leaves no meta and is
+   simply redone — the loss is at most one run.
 2. **Discovery is by glob**, `/kaggle/input/*/preds` and `/kaggle/input/*/*/preds`, so the previous
    session's output Dataset is found under whatever name it was given and however Kaggle nested it.
    Verified against both layouts.
@@ -1173,7 +1209,8 @@ grid, the 30 h weekly budget absorbs one complete pass plus a re-run, in one or 
 
 **What is attached, and what is not (`D54`).** Exactly two kinds of Dataset: the **immutable data
 artifact**, and the **previous session's output** when resuming. The repository is *not* attached —
-`notebooks/iTransformer.ipynb` carries the package and materialises it itself (§15). Uploading the
+`notebooks/iTransformer.ipynb` carries the package as definition cells and needs nothing on disk
+(§15, `D58`). Uploading the
 repository as a second Dataset was the old protocol and its failure mode was silent: the notebook and
 the code Dataset were two artifacts required to agree, with nothing checking that they did, so a
 notebook updated without re-uploading the code ran last week's package and said nothing. The parquet
@@ -1269,7 +1306,17 @@ resolve to:
 until 2026-08-07, and it is `"unknown"` on Kaggle — there is no git repository there, which is to say
 the contract lost its code half at exactly the place the grid executes. `meta/*.json` therefore
 carries **`code_sha256`**, the hash of the package's own source with line endings normalised, beside
-`git_sha`. It answers the same question and answers it better: it identifies the code that ran, not
+`git_sha`.
+
+**Off-repo the digest is pinned, not computed (`D58`).** `code_sha256()` hashes the `*.py` beside
+itself, and §15's notebook has no files at all — the modules are definition cells. So the generator
+computes the digest from `src/itransformer_btc/` and pins it as `CODE_SHA256_OVERRIDE`, which
+`code_sha256()` returns unchanged when set. This is weaker in one specific way and it must be stated
+rather than glossed: a computed hash cannot lie about the code beside it, whereas a pinned one is
+only as honest as the generator that wrote it. That is what `tests/test_notebook_sync.py` exists to
+enforce, asserting every cell equals its module under the declared transformation — the digest and
+the cells are checked by the same run, so a notebook carrying a stale digest carries stale cells too
+and fails there first. It answers the same question and answers it better: it identifies the code that ran, not
 the commit someone was standing on with a dirty tree. Likewise `input_sha256` resolves through the
 **`ITBTC_PARQUET`** environment variable rather than a repository-relative path, and
 `input_sha256_source` records whether the digest came from the Stage 1 report beside the artifact or
@@ -1581,7 +1628,21 @@ origins, gate PR **4.393**, `corr(K, K_eff)` **0.828**, **280,472** parameters, 
 −0.00818 … +0.01733 — and one worker subprocess wrote a `meta` carrying
 `input_sha256 = 8270a84b07c2923b…` from source `"report"`, matching §4.1's pinned digest.
 
-New contradictions found later take IDs **D55+**. Absorbing one silently is the exact failure this
+### Seventh pass — defects found by *running the grid to completion*, 2026-08-08
+
+`D51`–`D53` came from building the pipeline and `D54` from asking what Kaggle needs. **`D55`–`D58`
+came from the first full 534-run session** — the only lens that reads the code *after* the answers
+exist rather than before, and it found two defects that are invisible until the results have a
+particular shape.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D55** | F | `DecayResult.b_star()` inferred its schema from its rows, so when `decay`'s `R2_oos > 0` guard excluded **every** origin it returned a frame with no columns and the RQ3 cell's `bs["b_star"]` raised `ColumnNotFoundError` — marking the twelve-hour version failed at the moment its grid output was the only thing worth keeping. The guard firing is the **expected** outcome under non-positive skill, not an edge case: §10.3's first run already returned `R2_oos = -0.0183` and the grid returned it at all fifteen origins. `D54e` gates on grid *completeness*, a different failure | `B_STAR_SCHEMA` declares the four columns. The RQ3 cell branches: an empty table means the estimand is **undefined** — there is no edge to lose a proportion of — which is *not* the right-censored "no decay detected within 180 days" §3 pre-registers, and reporting both in one wording would claim skill the grid never found. Log-rank likewise refuses to print `chi2=nan` where the statistic is 0/0. **Closed 2026-08-08** |
+| **D56** | F | §7 calls DLinear and PatchTST "not optional" and §10.2 budgets 255 baseline runs, but **no baseline model exists in `src/`** and the manifest (534 = `main 300 + uniform 75 + fresh 15 + horizon 144`) never contained one. §10.2's 789 was never executable. `metrics.dm_nonnested()` sits waiting for input that has never existed, so Table 6 has no inputs and the paper's central architectural comparison has no data | `src/itransformer_btc/baselines.py` + manifest keys. Minimum defensible set first: **ridge (K=1,4,8,12), DLinear (K=8), PatchTST (K=8)** — enough to answer whether iTransformer failed or the whole LTSF class did, which is the question that decides what the negative result means. ARIMA, LSTM and the naive variants follow or are struck from §7 **with a written reason**, never left silently unbuilt. **Open** |
+| **D57** | U | §10.3 estimated 60–100 s per run on a T4 and 10–20 h for the grid. Measured: **~30 s** and **2.31 h** for 534 runs on two T4s. The regime was right; the arithmetic on it was 2–3× pessimistic per run and 4–8× overall, so the weekly quota was never the binding constraint every §10.2 trade-off was made against | §10.3 carries the measured numbers, §10.5's resume argument reads ~30 s. The slack is what makes a second granularity affordable and what made `D58` possible. **Closed 2026-08-08** |
+| **D58** | C | §15 and §10.3 described twelve `%%writefile` cells materialising a package, imported by **two GPU subprocesses**. That form existed for one reason — a subprocess reaches code only from disk — and `D57` dissolved it. Keeping the description would have left the governing document contradicting the artifact, which is worse than the defects it catches | Notebook flattened to **definition cells** in one kernel namespace; grid runs in-kernel and sequential. `D54a`'s *conclusion* (no repository Dataset) stands; its *mechanism* is superseded. `launch_workers` is retained and tested for the checkout path and for a 1-minute grid, where sequential will not fit. `code_sha256` is pinned by the generator, with the honesty cost stated in §12. **Closed 2026-08-08** |
+
+New contradictions found later take IDs **D59+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---
@@ -1613,27 +1674,48 @@ CPU. **Never leave a notebook whose outputs are stale relative to `src/`**: outp
 stale evidence is worse than none.
 
 **The launcher is self-contained, and that is not a weakening of the rule above (`D54`).**
-`notebooks/iTransformer.ipynb` carries the whole package in twelve `%%writefile` cells and
-materialises `itransformer_btc/` into the working directory before importing it, so a Kaggle session
-needs the notebook and `BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload,
-keep in step by hand, and silently run stale. The rule is unchanged because no definition moved: the
-cells *transcribe* `src/` byte for byte and the notebook then imports the result, asserting at
-runtime that `itransformer_btc.__file__` sits under its own working directory so a stray `src/` on
-`sys.path` fails loudly rather than quietly supplying different code.
+`notebooks/iTransformer.ipynb` carries the whole package, so a Kaggle session needs the notebook and
+`BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload, keep in step by hand,
+and silently run stale. The rule is unchanged because no definition moved: the cells *transcribe*
+`src/` and the generator is what writes them.
 
-Three consequences, each load-bearing:
+**It carries the package as definition cells, not as files (`D58`, superseding `D54a`'s form).**
+Twelve cells define each module directly in the kernel namespace — plain `def`, `class` and constant
+bodies that the cells below call by name. There is no `itransformer_btc` package on the running
+machine, nothing on `sys.path`, and nothing to import. The earlier form wrote twelve files with
+`%%writefile` and imported them back, and existed for exactly one reason: the grid ran as two
+subprocesses and a subprocess can reach code only from disk. `D57` removed that reason — at ~30 s per
+run the sequential grid is ~4.5 h inside an 11 h budget — so the files bought nothing and the
+materialise-then-import step went with them.
 
-- **Files, not definitions in cells.** The grid runs as two *subprocesses*, one pinned per GPU
-  (§10.3), and a subprocess inherits none of the kernel's namespace — it can reach the code only by
-  importing it, so the code must exist on disk. `launch_workers` passes the materialisation
-  directory as `PYTHONPATH` and the artifact path as `ITBTC_PARQUET`.
-- **Generated, never hand-edited.** A second copy of ~4,000 lines is the drift this repository has
-  a whole register to prevent, so it is not maintained by hand: `python tools/build_notebook.py`
-  writes it, `tests/test_notebook_sync.py` asserts it byte-identical to `src/`, and
-  `--check` fails the suite the moment `src/` moves without it. **Edit `src/`, re-run the generator,
-  commit both.** A hand-edit to a package cell is a defect and the next generator run reverts it.
-- **The digest replaces the commit.** There is no git repository on Kaggle, so `code_sha256`
-  identifies the code that ran (§12).
+Four consequences, each load-bearing:
+
+- **The flattening is subtractive, over exactly two declared categories.** Intra-package imports are
+  removed, by `ast` node span rather than line matching so parenthesised and function-local ones come
+  out right; and `runner.py`'s `if __name__ == "__main__":` guard is removed, because in a cell
+  `__name__` *is* `"__main__"` and the guard would launch the entire grid the moment its definition
+  cell ran. Everything else is verbatim, and `tests/test_notebook_sync.py` asserts each cell equals
+  the module under exactly that transformation — not "equivalent", not "equal after formatting".
+- **Two module-level names collide** once the namespaces merge — `DEFAULT_PARQUET` (`segments`,
+  `train`) and `HOUR_MS` (`segments`, `metrics`). Both are the same value in both definitions, so
+  last-cell-wins is harmless. Anything else colliding would not be, which is why the generator
+  compiles what it emits and the sync tests re-derive the set rather than trusting a list.
+- **Generated, never hand-edited.** A second copy of ~4,000 lines is the drift this repository has a
+  whole register to prevent: `python tools/build_notebook.py` writes it, the sync tests police it,
+  and `--check` fails the suite the moment `src/` moves without it. **Edit `src/`, re-run the
+  generator, commit both.** A hand-edit to a definition cell is a defect and the next generator run
+  reverts it.
+- **The digest replaces the commit, and is now pinned rather than computed.** `code_sha256()` hashes
+  the `*.py` beside itself, which needs a `__file__` no definition cell has. The generator therefore
+  computes the digest from `src/itransformer_btc/` and pins it into the notebook as
+  `CODE_SHA256_OVERRIDE` (§12, `D54b`). It is the **same number** a local checkout of the same source
+  reports, which is the whole point: a run from the notebook and a run from the repository must not
+  look like different code vintages.
+
+**The evaluation cells are code that exists only in the notebook, and they are tested as such.**
+`tests/test_notebook_cells.py` executes the bytes the notebook actually contains against synthetic
+panels. Testing the generator's constants instead would pass while a stale notebook still crashed —
+which is precisely how `D55` reached Kaggle and cost a twelve-hour session.
 
 **Two rules for `src/` that are not derivable from the sections above.** Shuffle by permuting an
 index tensor *on device*, never by moving data — the point of §10.3's GPU-resident regime is that
@@ -1679,11 +1761,12 @@ every Kaggle session (§12, `D54`).
 
 **The notebook is generated, and regenerating it is part of editing `src/`.** After any change under
 `src/itransformer_btc/`, run `python tools/build_notebook.py` and commit the notebook with the same
-change. `tests/test_notebook_sync.py` asserts the notebook's `%%writefile` cells are byte-identical
-to the package, so skipping this fails the suite rather than shipping a launcher that runs last
-week's code. Adding a module to the package means adding it to `MODULE_ORDER` in the generator; the
-generator refuses to run otherwise, because a silently omitted module would materialise a package
-that imports and then fails somewhere deep in a twelve-hour session.
+change. `tests/test_notebook_sync.py` asserts each definition cell equals its module under the two
+declared removals (§15, `D58`) — not "equivalent", not "equal after formatting" — so skipping this
+fails the suite rather than shipping a launcher that runs last week's code. `tests/test_notebook_cells.py`
+covers the evaluation cells, which exist nowhere else. Adding a module to the package means adding it
+to `MODULE_ORDER` in the generator; the generator refuses to run otherwise, because a silently
+omitted module would leave a name undefined somewhere deep in a twelve-hour session.
 
 **Before any long run.** Overfit a single batch: if the model cannot drive loss to ~0 on 8 samples
 in 200 steps, the plumbing is broken. **Run it with `dropout=0.0`** (`D52`) — with the configured
