@@ -1714,7 +1714,29 @@ particular shape.
 | **D57** | U | §10.3 estimated 60–100 s per run on a T4 and 10–20 h for the grid. Measured: **~30 s** and **2.31 h** for 534 runs on two T4s. The regime was right; the arithmetic on it was 2–3× pessimistic per run and 4–8× overall, so the weekly quota was never the binding constraint every §10.2 trade-off was made against | §10.3 carries the measured numbers, §10.5's resume argument reads ~30 s. The slack is what makes a second granularity affordable and what made `D58` possible. **Closed 2026-08-08** |
 | **D58** | C | §15 and §10.3 described twelve `%%writefile` cells materialising a package, imported by **two GPU subprocesses**. That form existed for one reason — a subprocess reaches code only from disk — and `D57` dissolved it. Keeping the description would have left the governing document contradicting the artifact, which is worse than the defects it catches | Notebook flattened to **definition cells** in one kernel namespace; grid runs in-kernel and sequential. `D54a`'s *conclusion* (no repository Dataset) stands; its *mechanism* is superseded. `launch_workers` is retained and tested for the checkout path and for a 1-minute grid, where sequential will not fit. `code_sha256` is pinned by the generator, with the honesty cost stated in §12. **Closed 2026-08-08** |
 
-New contradictions found later take IDs **D59+**. Absorbing one silently is the exact failure this
+### Eighth pass — the first defect found by *running the flattened notebook*, 2026-08-11
+
+`D54` came from asking what Kaggle needs and `D55`–`D58` from running the grid. **`D59` came from
+running the notebook `D58` produced**, and it is the flattening's own failure mode: a defect that
+every check in this repository answers correctly and that only the interpreter can see.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D59** | F | `stage5_pilot` reached the gate statistic through `from itransformer_btc import metrics` — an import binding a **module object**. Flattening drops intra-package imports (§15) and **no cell defines a module object**, so `metrics.clark_west_test` was a `NameError`. Every existing check passed, because each asks a question this defect answers correctly: the cell parses, it compiles, it equals `src/` byte for byte, it names no surviving `itransformer_btc`, and `test_definition_cells_execute_in_one_namespace` executes the definitions without ever entering that function body. It surfaced at **365 s on Kaggle** — past Stage 2, Stage 3b, Stage 4 and all twelve Stage 5 pilot runs — and marked the version failed. `runner.py` already carried the rule in a comment, for the baseline configs (`D56`); `metrics` was simply missed | Import the **name**: `from itransformer_btc.metrics import clark_west_test`. Three defences, because a comment is not a check. (1) `flatten_module_source` computes the names each dropped import would have bound to a module object and **refuses to emit a cell that still reads one**, carrying the fix in the message. (2) `_intra_package_import` now also matches the **relative** form `from . import x`, which it did not — that form survived flattening and would raise `ImportError` on the first run rather than being quietly equivalent. (3) `tests/test_notebook_sync.py` walks **every** cell with `symtable` against the executed namespace and fails on any global that is read and never bound — a symbol-table question rather than a spelling one, so a local named `metrics` does not cry wolf. It finds exactly one permitted hole, `__file__` inside `code_sha256`, unreachable behind the pinned `CODE_SHA256_OVERRIDE` and listed by name rather than allowed everywhere. **Closed 2026-08-11** |
+
+**What this says about the format, stated because it is the cost side of `D58`'s trade.** Flattening
+is subtractive over two declared categories, and *that is still true*: the defect was not a rewrite
+but a deletion whose consequence lived elsewhere in the file. A module-object import is the one
+construct whose meaning the deletion changes rather than preserves, so `src/` may reach a sibling
+**only by name**. The rule is now enforced at generation instead of remembered.
+
+**The twelve pilot runs may or may not survive, and the difference is Kaggle's, not the code's.**
+They are ordinary main-grid `run_id`s and their artifacts were written before the exception, so
+§10.5's resume finds them complete **if** the failed version published `/kaggle/working` as its
+output. Whether a version that ends in a papermill error publishes anything is not established here
+and must not be assumed; if it did not, the loss is those twelve runs, about six minutes.
+
+New contradictions found later take IDs **D60+**. Absorbing one silently is the exact failure this
 register exists to prevent.
 
 ---
@@ -1768,6 +1790,13 @@ Four consequences, each load-bearing:
   `__name__` *is* `"__main__"` and the guard would launch the entire grid the moment its definition
   cell ran. Everything else is verbatim, and `tests/test_notebook_sync.py` asserts each cell equals
   the module under exactly that transformation — not "equivalent", not "equal after formatting".
+- **A module therefore reaches a sibling by name, never by module object** (`D59`).
+  `from itransformer_btc.metrics import clark_west_test` binds a function another cell defines and
+  the deletion costs nothing; `from itransformer_btc import metrics` binds a *module*, which no cell
+  defines, so every `metrics.x` below it is left dangling and raises `NameError` when execution first
+  reaches that line — six minutes into a Kaggle session, in the case that happened. The generator
+  refuses to emit such a cell, and the sync tests check every cell's names against the executed
+  namespace with `symtable`.
 - **Two module-level names collide** once the namespaces merge — `DEFAULT_PARQUET` (`segments`,
   `train`) and `HOUR_MS` (`segments`, `metrics`). Both are the same value in both definitions, so
   last-cell-wins is harmless. Anything else colliding would not be, which is why the generator

@@ -60,6 +60,7 @@ import argparse
 import ast
 import hashlib
 import json
+import symtable
 import sys
 import textwrap
 from pathlib import Path
@@ -145,10 +146,73 @@ def _is_main_guard(node: ast.stmt) -> bool:
 
 def _intra_package_import(node: ast.AST) -> bool:
     if isinstance(node, ast.ImportFrom):
-        return (node.module or "").split(".")[0] == PKG_NAME
+        # ``node.level > 0`` is the relative form, ``from . import x``, whose
+        # ``module`` is None. The package writes absolute imports throughout, but
+        # a relative one left in place would not merely be untidy: there is no
+        # parent package in a flattened cell, so it raises ImportError on the
+        # first run rather than being quietly equivalent.
+        return node.level > 0 or (node.module or "").split(".")[0] == PKG_NAME
     if isinstance(node, ast.Import):
         return any(a.name.split(".")[0] == PKG_NAME for a in node.names)
     return False
+
+
+def _module_object_bindings(node: ast.AST) -> list[str]:
+    """Names a dropped import would have bound to a **module object**.
+
+    The distinction decides whether flattening is lossless.
+    ``from itransformer_btc.metrics import clark_west_test`` binds a *function*,
+    and that function is defined by another cell, so deleting the import costs
+    nothing. ``from itransformer_btc import metrics`` binds the *module*, and no
+    cell defines any module object at all — so ``metrics.clark_west_test`` is
+    left dangling and raises NameError the first time that line is reached.
+
+    Which is exactly what happened (`D59`): the reference sat inside
+    ``stage5_pilot``, six minutes into a Kaggle session, past the data stage, the
+    K_eff stage and twelve training runs. Every check the repository had passed,
+    because each one asked a question this defect does not answer to — the cell
+    parses, it compiles, it matches ``src/`` byte for byte, and it names no
+    surviving ``itransformer_btc``.
+    """
+    bound: list[str] = []
+    if isinstance(node, ast.ImportFrom):
+        if node.level > 0 or (node.module or "") == PKG_NAME:
+            for alias in node.names:
+                if (PACKAGE / f"{alias.name}.py").exists():
+                    bound.append(alias.asname or alias.name)
+    elif isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.name.split(".")[0] == PKG_NAME:
+                bound.append(alias.asname or alias.name.split(".")[0])
+    return bound
+
+
+def unbound_global_reads(source: str, label: str, names: set[str]) -> set[str]:
+    """Which of ``names`` the source *reads* as a global it never binds.
+
+    :mod:`symtable` rather than an ``ast.Name`` walk because the question is
+    about scope, not spelling: a local variable that happens to be called
+    ``metrics`` is a Load node too, and would make a name-matching check cry wolf
+    on correct code. The symbol table knows which scope each name belongs to,
+    handles comprehensions, class bodies and ``global``/``nonlocal`` correctly,
+    and is in the standard library.
+    """
+    hits: set[str] = set()
+    stack = [symtable.symtable(source, label, "exec")]
+    while stack:
+        table = stack.pop()
+        stack.extend(table.get_children())
+        for sym in table.get_symbols():
+            if (
+                sym.get_name() in names
+                and sym.is_referenced()
+                and sym.is_global()
+                # ``is_assigned()`` alone would miss a rebinding by import, which
+                # sets a different flag.
+                and not (sym.is_assigned() or sym.is_imported())
+            ):
+                hits.add(sym.get_name())
+    return hits
 
 
 def _executable_source(source: str) -> str:
@@ -191,6 +255,12 @@ def flatten_module_source(name: str) -> str:
         for node in ast.walk(tree)
         if _intra_package_import(node)
     ]
+    module_objects = {
+        binding
+        for node in ast.walk(tree)
+        if _intra_package_import(node)
+        for binding in _module_object_bindings(node)
+    }
     spans += [
         (node.lineno, node.end_lineno or node.lineno)
         for node in tree.body
@@ -230,6 +300,15 @@ def flatten_module_source(name: str) -> str:
     assert PKG_NAME not in _executable_source(source), (
         f"{name}: an executable reference to {PKG_NAME} survived flattening, so "
         f"the cell would fail on a machine with no such package installed"
+    )
+    dangling = unbound_global_reads(source, f"<cell:{name}>", module_objects)
+    assert not dangling, (
+        f"{name}: {sorted(dangling)} is still read after its import was dropped, "
+        f"and it named a module rather than a definition — nothing in the merged "
+        f"namespace will bind it, so the cell raises NameError when that line is "
+        f"first reached and not before. Import the names instead: "
+        f"`from {PKG_NAME}.{sorted(dangling)[0]} import <name>`, then call "
+        f"`<name>(...)` rather than `{sorted(dangling)[0]}.<name>(...)` (`D59`)."
     )
     return source
 

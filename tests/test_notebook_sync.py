@@ -26,10 +26,12 @@ installed — from the notebook alone.
 from __future__ import annotations
 
 import ast
+import builtins
 import importlib.util
 import json
 import re
 import subprocess
+import symtable
 import sys
 from pathlib import Path
 
@@ -282,6 +284,196 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
     # `python -m itransformer_btc.runner`, which cannot resolve here.
     assert "launch_workers" not in namespace
     assert "_main" not in namespace
+
+
+def test_flattening_rejects_imports_that_bind_a_module_object(generator) -> None:
+    """The generator can tell a dropped *name* import from a dropped *module* one.
+
+    Both forms vanish when the cells are flattened, and only one of them is
+    lossless. ``from itransformer_btc.metrics import clark_west_test`` binds a
+    function another cell defines; ``from itransformer_btc import metrics`` binds
+    a module object no cell defines, leaving every ``metrics.x`` in the file
+    dangling. That second form shipped, and cost a Kaggle session (`D59`).
+
+    Asserted on synthetic source rather than through
+    :func:`flatten_module_source`, which reads real files: the point is that the
+    two halves of the guard classify correctly, including the case that would
+    make a name-matching check cry wolf — a *local* called ``metrics``.
+    """
+
+    def bindings(source: str) -> set[str]:
+        return {
+            name
+            for node in ast.walk(ast.parse(source))
+            if generator._intra_package_import(node)
+            for name in generator._module_object_bindings(node)
+        }
+
+    assert bindings("from itransformer_btc import metrics") == {"metrics"}
+    assert bindings("from itransformer_btc import metrics as m") == {"m"}
+    assert bindings("from . import metrics") == {"metrics"}
+    assert bindings("import itransformer_btc.metrics") == {"itransformer_btc"}
+    # Binds a definition, not a module: harmless, and the common form here.
+    assert bindings("from itransformer_btc.metrics import clark_west_test") == set()
+    assert bindings("import numpy as np") == set()
+
+    reads = generator.unbound_global_reads
+    assert reads("cw = metrics.clark_west_test(y)", "<t>", {"metrics"}) == {"metrics"}
+    # An import inside the flattened source really does bind it, so the guard
+    # must not fire on a name the cell rebinds for itself.
+    assert reads("import metrics\nmetrics.f()", "<t>", {"metrics"}) == set()
+    assert reads(
+        "def f():\n    return metrics.clark_west_test(y)\n", "<t>", {"metrics"}
+    ) == {"metrics"}
+    # A local of the same name is not a dangling global — this is why the check
+    # is a symbol-table question rather than a spelling one.
+    assert reads(
+        "def f():\n    metrics = {}\n    return metrics['x']\n", "<t>", {"metrics"}
+    ) == set()
+
+
+def test_flatten_refuses_the_defect_that_reached_kaggle(generator, tmp_path, monkeypatch) -> None:
+    """``flatten_module_source`` raises on the exact form that shipped.
+
+    The classification test above proves the two helpers answer correctly; this
+    proves they are *wired in*. Without it, deleting the call from
+    :func:`flatten_module_source` leaves every test in this file green and puts
+    the notebook back where it was on 2026-08-11.
+
+    ``PACKAGE`` is redirected at a throwaway pair of modules so the case can be
+    written as it was rather than reconstructed by editing ``src/``.
+    """
+    (tmp_path / "metrics.py").write_text(
+        "def clark_west_test(y, small, large, h=24, name=''):\n    return 0.0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "runner.py").write_text(
+        "from itransformer_btc import metrics\n"
+        "\n"
+        "\n"
+        "def gate(y, small, large):\n"
+        "    return metrics.clark_west_test(y, small, large)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(generator, "PACKAGE", tmp_path)
+    monkeypatch.setattr(generator, "FLATTEN_DROP_FUNCTIONS", {})
+
+    with pytest.raises(AssertionError, match="metrics"):
+        generator.flatten_module_source("runner.py")
+
+    # The same module written the way the package writes it flattens cleanly.
+    (tmp_path / "runner.py").write_text(
+        "from itransformer_btc.metrics import clark_west_test\n"
+        "\n"
+        "\n"
+        "def gate(y, small, large):\n"
+        "    return clark_west_test(y, small, large)\n",
+        encoding="utf-8",
+    )
+    flattened = generator.flatten_module_source("runner.py")
+    assert "clark_west_test(y, small, large)" in flattened
+    assert "import" not in flattened
+
+
+#: Global reads that stay unbound in the notebook **on purpose**, as
+#: ``(module cell, scope, name)``.
+#:
+#: ``code_sha256`` hashes the ``*.py`` beside ``__file__``, and a definition cell
+#: has no file. The lookup sits *after* the ``CODE_SHA256_OVERRIDE`` check for
+#: exactly that reason (``train.py``), and the notebook always pins the override
+#: (`D54b`), so the line is unreachable there. Listing it rather than allowing
+#: ``__file__`` everywhere keeps the net closed around the one known hole.
+ALLOWED_UNBOUND: set[tuple[str, str, str]] = {
+    ("train.py", "code_sha256", "__file__"),
+}
+
+
+def _unbound_reads(source: str, label: str, defined: set[str]) -> list[tuple[str, str]]:
+    """``(scope, name)`` for every global this source reads but never binds."""
+    out: list[tuple[str, str]] = []
+    stack = [symtable.symtable(source, label, "exec")]
+    while stack:
+        table = stack.pop()
+        stack.extend(table.get_children())
+        for sym in table.get_symbols():
+            if (
+                sym.is_referenced()
+                and sym.is_global()
+                and not _binds(sym)
+                and sym.get_name() not in defined
+            ):
+                out.append((table.get_name(), sym.get_name()))
+    return out
+
+
+def _binds(sym: symtable.Symbol) -> bool:
+    """Does this scope give the name a value?
+
+    ``is_assigned()`` alone does not: an ``import gc`` sets a different flag, so
+    reading ``gc`` two lines later would look unbound.
+    """
+    return sym.is_assigned() or sym.is_imported()
+
+
+def _assigned_names(source: str, label: str) -> set[str]:
+    """Module-level names a cell binds, which the cells below it may then read."""
+    return {
+        sym.get_name()
+        for sym in symtable.symtable(source, label, "exec").get_symbols()
+        if _binds(sym)
+    }
+
+
+def test_every_name_the_notebook_reads_is_defined_somewhere(notebook: dict) -> None:
+    """No cell reads a global that nothing binds. The general net under `D59`.
+
+    The defect that reached Kaggle was not a syntax error, not a stale cell and
+    not a surviving package reference — it was a *name*, read in one function
+    body, that the flattening had quietly unbound. Every other test in this file
+    asks a question that defect answers correctly, which is why it shipped, and
+    it surfaced only when the interpreter reached that line: past the data stage,
+    past K_eff, past twelve training runs, six minutes in.
+
+    So this asks the interpreter's own question instead, without running anything
+    expensive. Definition cells are executed to get the real namespace; every
+    code cell is then walked with :mod:`symtable`, which knows a local from a
+    global and so does not cry wolf over a variable that shares a module's name.
+    Scaffolding cells accumulate: each may read what the cells above it bound and
+    nothing more, which is the rule *Save & Run All* enforces anyway.
+    """
+    pytest.importorskip("torch")
+    namespace: dict = {"__name__": "__main__"}
+    module_cells = _module_cells(notebook)
+    for name, body in module_cells.items():
+        exec(compile(body, f"<cell:{name}>", "exec"), namespace)
+
+    defined = set(namespace) | set(dir(builtins))
+    offenders: list[tuple[str, str, str]] = []
+
+    for name, body in module_cells.items():
+        for scope, symbol in _unbound_reads(body, f"<cell:{name}>", defined):
+            if (name, scope, symbol) not in ALLOWED_UNBOUND:
+                offenders.append((name, scope, symbol))
+
+    running = set(defined)
+    for index, source in enumerate(_code_sources(notebook)):
+        if BANNER.match(source):
+            continue
+        stripped = _strip_magics(source)
+        label = f"cell[{index}]"
+        # A cell's own bindings count before it is checked: ``find_parquet``
+        # legitimately closes over ``WORK`` from the lines above it, and the grid
+        # cell imports ``gc`` at its top. What stays forbidden is reading forward
+        # into a cell that has not run yet, which is the ordering *Save & Run
+        # All* fixes and a reader cannot see.
+        running |= _assigned_names(stripped, label)
+        for scope, symbol in _unbound_reads(stripped, label, running):
+            offenders.append((label, scope, symbol))
+
+    assert not offenders, (
+        "these names are read but never bound, so the notebook raises NameError "
+        f"when execution first reaches them: {sorted(offenders)}"
+    )
 
 
 def test_notebook_is_valid_nbformat_with_gpu_metadata(notebook: dict) -> None:

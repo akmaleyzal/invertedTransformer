@@ -605,7 +605,12 @@ def stage5_pilot(
     tested. Predictions are averaged across seeds before the test, matching §9.1's
     order of operations.
     """
-    from itransformer_btc import metrics
+    # The *name*, not the module, for the reason given at the top of this file.
+    # ``from itransformer_btc import metrics`` binds a module **object**, and the
+    # flattened notebook has no such object — so ``metrics.clark_west_test`` was a
+    # NameError six minutes into a Kaggle session while satisfying every check the
+    # repository had (`D59`).
+    from itransformer_btc.metrics import clark_west_test
     from itransformer_btc.train import predict
 
     device = device or pick_device()
@@ -641,7 +646,7 @@ def stage5_pilot(
     small, large = min(rungs), 8
     # One loss value per forecast origin: the DM/CW series is indexed by the
     # moment the forecast was issued, not by the (origin, step) pair.
-    cw = metrics.clark_west_test(
+    cw = clark_west_test(
         y_val.mean(axis=1),
         val_pred[small].mean(axis=1),
         val_pred[large].mean(axis=1),
