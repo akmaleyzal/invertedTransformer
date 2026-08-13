@@ -1,0 +1,61 @@
+{
+  "run_id": "itr_o12_K01_H024_s46",
+  "spec": {
+    "model": "itr",
+    "origin_index": 12,
+    "k": 1,
+    "pred_len": 24,
+    "seed": 46
+  },
+  "config": {
+    "seq_len": 96,
+    "pred_len": 24,
+    "d_model": 128,
+    "d_ff": 256,
+    "e_layers": 2,
+    "n_heads": 8,
+    "dropout": 0.1,
+    "use_norm": true,
+    "uniform_attention": false
+  },
+  "origin": "2024-08",
+  "origin_index": 12,
+  "block_labels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "k": 1,
+  "variates": [
+    "r"
+  ],
+  "git_sha": "unknown",
+  "code_sha256": "ee63120991695c6c0f0aac928922a6f06f2b82e2f83d013983bc3420285c3d47",
+  "input_parquet": "/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
+  "input_sha256": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
+  "input_sha256_source": "file-digest",
+  "n_train": 15095,
+  "n_val": 2089,
+  "n_test_per_block": [
+    720,
+    720,
+    720,
+    720,
+    720,
+    720
+  ],
+  "mu_g": 6.26465494072688e-05,
+  "sigma_g": 0.005080440533407666,
+  "mu_over_sigma": 0.012330928586865892,
+  "naive_rw_z": -0.012330928586865892,
+  "epochs_run": 14,
+  "best_val_mse": 0.8417569932440013,
+  "train_loss": 0.9996176265138157,
+  "wall_time_s": 48.449012289000166,
+  "n_parameters": 280472,
+  "device": "cuda:0",
+  "status": "complete"
+}

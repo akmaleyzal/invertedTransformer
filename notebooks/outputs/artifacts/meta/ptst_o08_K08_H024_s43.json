@@ -1,0 +1,71 @@
+{
+  "run_id": "ptst_o08_K08_H024_s43",
+  "spec": {
+    "model": "ptst",
+    "origin_index": 8,
+    "k": 8,
+    "pred_len": 24,
+    "seed": 43
+  },
+  "config": {
+    "seq_len": 96,
+    "pred_len": 24,
+    "patch_len": 16,
+    "stride": 8,
+    "d_model": 128,
+    "d_ff": 256,
+    "e_layers": 2,
+    "n_heads": 8,
+    "dropout": 0.1,
+    "revin": true,
+    "loss_channels": "all",
+    "channel_independent": true
+  },
+  "origin": "2022-12",
+  "origin_index": 8,
+  "block_labels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "k": 8,
+  "variates": [
+    "r",
+    "upper_shadow",
+    "lower_shadow",
+    "log_quote_volume",
+    "log_trade_count",
+    "taker_buy_ratio",
+    "signed_flow",
+    "vwap_location"
+  ],
+  "git_sha": "unknown",
+  "code_sha256": "ee63120991695c6c0f0aac928922a6f06f2b82e2f83d013983bc3420285c3d47",
+  "input_parquet": "/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
+  "input_sha256": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
+  "input_sha256_source": "file-digest",
+  "n_train": 14278,
+  "n_val": 2065,
+  "n_test_per_block": [
+    720,
+    720,
+    720,
+    598,
+    720,
+    720
+  ],
+  "mu_g": -1.2248747727735949e-06,
+  "sigma_g": 0.008486761043004797,
+  "mu_over_sigma": -0.0001443277083644527,
+  "naive_rw_z": 0.0001443277083644527,
+  "epochs_run": 30,
+  "best_val_mse": 0.4396556010642679,
+  "train_loss": 0.8612199961629831,
+  "wall_time_s": 109.20435653800087,
+  "n_parameters": 302360,
+  "device": "cuda:0",
+  "status": "complete"
+}
