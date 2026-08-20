@@ -680,6 +680,22 @@ def _normal_quantile(p: float) -> float:
            (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
 
 
+def normal_quantile(p: float) -> float:
+    """Standard normal inverse CDF -- the public name of :func:`_normal_quantile`.
+
+    Exists because :mod:`itransformer_btc.economics` needs it for the Deflated
+    Sharpe Ratio threshold, and root §15's flattening rule says a module reaches a
+    sibling **by name**. Reaching for a private one across modules would work in
+    the package and read as an accident in the notebook.
+    """
+    return _normal_quantile(p)
+
+
+def normal_cdf(x: float) -> float:
+    """Standard normal CDF, via ``erfc`` so no optional dependency is implied."""
+    return 0.5 * math.erfc(-x / math.sqrt(2.0))
+
+
 def _loglog_band(surv: float, var_sum: float, z: float) -> tuple[float, float]:
     """Log-log transformed Greenwood band — stays inside ``[0, 1]`` at small G.
 

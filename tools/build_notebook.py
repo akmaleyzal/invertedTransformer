@@ -103,6 +103,8 @@ MODULE_ORDER: tuple[str, ...] = (
     # After `metrics`, whose hln_test, load_predictions and parse_run_id it
     # imports by name. Nothing in the package imports it back.
     "comparisons.py",
+    # Reads metrics' non_overlapping_mask and the two normal helpers by name.
+    "economics.py",
     "runner.py",
 )
 
