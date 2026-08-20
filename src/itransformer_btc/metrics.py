@@ -50,6 +50,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from itransformer_btc.config import BLOCK_HOURS
+
 #: ``{model}_o{origin:02d}_K{K:02d}_H{H:03d}_s{seed}`` (root §10.4).
 RUN_ID_PATTERN = re.compile(
     r"^(?P<model>[a-z0-9]+)_o(?P<origin>\d{2})_K(?P<k>\d{2})"
@@ -1203,3 +1205,162 @@ def minimum_detectable_beta1(
         return float("nan")
     se = float(np.std(within_slopes, ddof=1) / math.sqrt(g))
     return -(_normal_quantile(1 - alpha) + _normal_quantile(power)) * se
+
+
+# -- drivers for the paper's tables (`D62a`) ---------------------------------
+#
+# Everything below reads what the grid already wrote. None of it trains and none
+# of it needs a GPU. Each existed as a function nobody called, or as a number
+# that lived only in `CLAUDE.md` prose and therefore fell outside §12's
+# regenerability contract.
+
+
+def directional_accuracy_table(run_ids: list[str], roots: list[Path]) -> pl.DataFrame:
+    """DA at all three horizons for many runs (`D21`) -- an input to Table 4.
+
+    :func:`directional_accuracy` has existed and been tested since the model
+    plane was built and **was never called**: no DA figure appears in
+    ``paper_numbers.json`` or anywhere in the session log. This is the driver.
+
+    The three variants do not share a testing regime and the table keeps that
+    visible rather than tidying it away. ``da_h1`` carries a Pesaran-Timmermann
+    p-value on hourly spacing. ``da_hH`` and ``da_cum`` carry one **only** on the
+    non-overlapping sample; their ``*_overlapping`` twins are descriptive and have
+    no p-value at all, because on hourly spacing those targets overlap by 23 of
+    24 hours, giving lag-1 autocorrelation near 23/24 -- PT's variance is then far
+    too small and the test over-rejects badly. The resulting power loss is
+    **stated** as ``n_non_overlapping``, never recovered by using the invalid
+    sample.
+
+    Args:
+        run_ids: Runs to measure.
+        roots: Artifact roots, working directory first.
+
+    Returns:
+        One row per run: its identity, all eight DA figures, and both sample sizes.
+    """
+    rows: list[dict[str, float | str | int]] = []
+    for run_id in run_ids:
+        parts = parse_run_id(run_id)
+        meta = load_meta(run_id, roots)
+        da = directional_accuracy(load_predictions(run_id, roots))
+        rows.append(
+            {
+                "run_id": run_id,
+                "model": str(parts["model"]),
+                "origin": str(meta["origin"]),
+                "origin_index": int(parts["origin_index"]),
+                "k": int(parts["k"]),
+                "pred_len": int(parts["pred_len"]),
+                "seed": int(parts["seed"]),
+                "da_h1": da.da_h1,
+                "p_h1": da.p_h1,
+                "da_hH": da.da_hH,
+                "p_hH": da.p_hH,
+                "da_hH_overlapping": da.da_hH_overlapping,
+                "da_cum": da.da_cum,
+                "p_cum": da.p_cum,
+                "da_cum_overlapping": da.da_cum_overlapping,
+                "n_h1": da.n_h1,
+                "n_non_overlapping": da.n_non_overlapping,
+            }
+        )
+    return pl.DataFrame(rows)
+
+
+def raw_scale_table(seed_avg: pl.DataFrame) -> pl.DataFrame:
+    """Add RMSE in raw log-return units -- root §9.1's second metric scale.
+
+    "RMSE 0.0043 on hourly log-returns" tells a reader far more than "MSE 0.187
+    on normalized data". Both scales are reported and ``sigma_g`` is stated, which
+    is what lets the two reconcile. :func:`raw_rmse` has existed all along and,
+    like :func:`directional_accuracy`, was never called.
+    """
+    return seed_avg.with_columns(
+        (pl.col("mse").sqrt() * pl.col("sigma_g")).alias("rmse_raw")
+    )
+
+
+def falsification_relmse(seed_avg: pl.DataFrame) -> pl.DataFrame:
+    """``aged - fresh`` on **RelMSE**, per (origin, block) -- `D60i`.
+
+    Root §8.1's falsification arm is the only design in the study that identifies
+    decay directly, and the number reported for it was a units artefact. The
+    notebook printed ``mean(aged - fresh) = -0.053341`` as a raw scaler-space MSE
+    difference. The two arms are fitted at origins 90 days apart and therefore
+    carry **different sigma_g** -- 0.009151 against 0.007297 at origin 1 -- so
+    that difference compares numbers in different units. The matching naive
+    baselines differ by -0.053196, i.e. about **99.7% of it is scaler drift**, and
+    the sign reads backwards, appearing to say the aged model beat the fresh one.
+
+    Root §9.1 already forbade the comparison by requiring RelMSE "to control for
+    period difficulty". The arm was simply never brought under the rule, and the
+    corrected figure lived only in prose. **The raw-MSE figure must not appear in
+    the manuscript**, and the general rule this defect bought is that any
+    cross-origin model comparison is on RelMSE or ``R2_oos``, never on
+    scaler-space MSE.
+
+    Returns:
+        ``origin_index, origin, block, rel_aged, rel_fresh, gap_rel_mse`` over the
+        cells the arm covers -- blocks 4-6 at each origin, which are the same
+        calendar hours the aged model was scored on.
+    """
+    sel = seed_avg.filter(pl.col("pred_len") == 24)
+    aged = (
+        sel.filter((pl.col("model") == "itr") & (pl.col("k") == 8))
+        .select(["origin_index", "origin", "block", "rel_mse"])
+        .rename({"rel_mse": "rel_aged"})
+    )
+    fresh = (
+        sel.filter(pl.col("model") == "itrf")
+        .select(["origin_index", "block", "rel_mse"])
+        .rename({"rel_mse": "rel_fresh"})
+    )
+    return (
+        aged.join(fresh, on=["origin_index", "block"], how="inner")
+        .with_columns((pl.col("rel_aged") - pl.col("rel_fresh")).alias("gap_rel_mse"))
+        .sort(["origin_index", "block"])
+    )
+
+
+def beta1_with_coverage(
+    panel: pl.DataFrame,
+    min_coverage: float = 0.9,
+    B: int = 99_999,
+    seed: int = 42,
+) -> tuple[Beta1Result, Beta1Result | None]:
+    """beta1 on the full panel, and on well-covered blocks only (`D45`).
+
+    Test-window survival is conditioned on **future** gaps -- whether a forecast
+    issued at *s* is evaluated depends on whether the next 120 hours contain an
+    outage, information unavailable at *s* -- and Binance outages cluster on
+    stress. So within an origin the surviving sample composition trends, the
+    dropped targets are systematically the high-volatility ones, and beta1 would
+    absorb that trend as though it were decay. Root §9.2 requires either a
+    coverage covariate or a re-estimate on well-covered blocks; this is the
+    second.
+
+    Restricting usually leaves an **unbalanced** panel, and
+    :func:`_balanced_matrix` refuses one by design: beta1's reduction to the mean
+    of within-slopes holds only when every origin carries every block. ``None``
+    comes back in that case, and that is the honest report -- the check could not
+    be run, not that it passed. Only a restriction that removes whole origins
+    leaves something estimable.
+
+    Args:
+        panel: :func:`amplification`'s output, carrying ``n_large``.
+        min_coverage: Surviving windows as a fraction of :data:`BLOCK_HOURS`.
+        B: Bootstrap draws, passed through to :func:`panel_beta1`.
+        seed: Bootstrap seed, passed through.
+
+    Returns:
+        ``(full, restricted_or_None)``.
+    """
+    full = panel_beta1(panel, B=B, seed=seed)
+    restricted = panel.filter((pl.col("n_large") / float(BLOCK_HOURS)) >= min_coverage)
+    try:
+        return full, panel_beta1(restricted, B=B, seed=seed)
+    except ValueError:
+        # Unbalanced after the restriction. Loosening the estimator to produce a
+        # number here would answer a different question than the one asked.
+        return full, None

@@ -423,3 +423,133 @@ def test_kaplan_meier_reports_censoring_rather_than_hiding_it() -> None:
 
     crossed = metrics.kaplan_meier(np.array([2.0] * 5), np.array([True] * 5))
     assert crossed.median == 2.0
+
+
+# -- the table drivers `D62a` added, and the defect one of them corrects ------
+
+from pathlib import Path  # noqa: E402 -- section-local, appended after the header
+
+#: The 684-run grid output (`D60f`). Repo-root ``artifacts/`` holds one stale
+#: 2026-08-06 CPU smoke run and is deliberately not this path.
+ARTIFACTS_ROOT = (
+    Path(__file__).resolve().parent.parent / "notebooks" / "outputs" / "artifacts"
+)
+
+
+def _amp_panel(thin: dict[str, list[int]] | None = None) -> pl.DataFrame:
+    """A balanced 15x6 amplification panel shaped like :func:`metrics.amplification`.
+
+    ``thin`` names origins whose listed blocks survive only 300 of 720 window
+    starts, so a coverage restriction bites there and nowhere else.
+    """
+    thin = thin or {}
+    rows = []
+    for i, origin in enumerate(o.label for o in ORIGINS):
+        for block in range(1, 7):
+            n_large = 300 if block in thin.get(origin, []) else 720
+            rows.append(
+                {
+                    "origin_index": i + 1,
+                    "origin": origin,
+                    "block": block,
+                    "mse_small": 1.0,
+                    "n_small": n_large,
+                    "mse_large": 1.0,
+                    "n_large": n_large,
+                    "A": 0.001 * block + 0.0001 * i,
+                }
+            )
+    return pl.DataFrame(rows)
+
+
+def test_falsification_gap_is_reported_on_relmse_not_scaler_mse() -> None:
+    """`D60i`. The aged and fresh arms are fitted 90 days apart and carry
+    different ``sigma_g`` --- 0.009151 against 0.007297 at origin 1 --- so a raw
+    scaler-space MSE difference compares numbers in different units.
+
+    Here both arms have identical RelMSE under deliberately different scales. The
+    raw MSE gap is a whole unit; the correct answer is exactly zero.
+    """
+    panel = pl.DataFrame(
+        {
+            "model": ["itr"] * 3 + ["itrf"] * 3,
+            "origin_index": [1] * 6,
+            "origin": ["2020-01"] * 6,
+            "k": [8] * 6,
+            "pred_len": [24] * 6,
+            "block": [4, 5, 6, 4, 5, 6],
+            "mse": [2.0, 3.0, 4.0, 1.0, 1.5, 2.0],
+            "mse_naive": [2.0, 3.0, 4.0, 1.0, 1.5, 2.0],
+            "rel_mse": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    out = metrics.falsification_relmse(panel)
+    assert out.height == 3, "blocks 4-6, the only ones the arm covers"
+    raw_gap = 3.0 - 1.5  # what the notebook reported: mean(aged) - mean(fresh)
+    assert raw_gap > 1.0
+    assert abs(float(out.get_column("gap_rel_mse").mean())) < 1e-12
+
+
+def test_raw_scale_table_reconciles_the_two_scales() -> None:
+    """Root §9.1 reports MSE in scaler space and RMSE in raw log-return units,
+    with ``sigma_g`` stated so a reader can move between them."""
+    frame = pl.DataFrame({"mse": [0.25, 4.0], "sigma_g": [0.01, 0.02]})
+    out = metrics.raw_scale_table(frame)
+    assert out.get_column("rmse_raw").to_list() == pytest.approx([0.005, 0.04])
+
+
+def test_beta1_with_coverage_returns_none_when_the_restriction_unbalances() -> None:
+    """`D45`'s restriction usually leaves an unbalanced panel, and beta1's
+    reduction to the mean of within-slopes holds only on a balanced one.
+
+    ``None`` is the honest report --- the check could not be run, not that it
+    passed. Loosening the estimator to produce a number would answer a different
+    question than the one asked.
+    """
+    panel = _amp_panel(thin={"2020-01": [3], "2021-09": [6]})
+    full, restricted = metrics.beta1_with_coverage(panel, B=999)
+    assert full.n_observations == 90
+    assert full.n_clusters == 15
+    assert restricted is None
+
+
+def test_beta1_with_coverage_estimates_when_whole_origins_drop_out() -> None:
+    """Only a restriction that removes entire origins leaves something estimable."""
+    thin = {"2020-01": [1, 2, 3, 4, 5, 6], "2020-06": [1, 2, 3, 4, 5, 6]}
+    full, restricted = metrics.beta1_with_coverage(_amp_panel(thin=thin), B=999)
+    assert full.n_observations == 90
+    assert restricted is not None
+    assert restricted.n_clusters == 13
+    assert restricted.n_observations == 78
+
+
+def test_beta1_with_coverage_is_a_no_op_when_every_block_is_complete() -> None:
+    panel = _amp_panel()
+    full, restricted = metrics.beta1_with_coverage(panel, B=999)
+    assert restricted is not None
+    assert restricted.n_observations == full.n_observations
+    assert restricted.beta1 == pytest.approx(full.beta1)
+
+
+@pytest.mark.skipif(
+    not (ARTIFACTS_ROOT / "preds" / "itr_o01_K08_H024_s42.parquet").exists(),
+    reason="grid output not present in this checkout",
+)
+def test_directional_accuracy_table_keeps_both_testing_regimes() -> None:
+    """`D21`. The overlapping figures are descriptive and must survive into the
+    table rather than being tidied away, and the power loss they were traded for
+    is stated as ``n_non_overlapping`` rather than recovered."""
+    runs = ["itr_o01_K08_H024_s42", "rdg_o01_K08_H024_s42"]
+    table = metrics.directional_accuracy_table(runs, [ARTIFACTS_ROOT])
+    assert table.height == 2
+    assert set(table.columns) >= {
+        "da_h1", "p_h1", "da_hH", "p_hH", "da_hH_overlapping",
+        "da_cum", "p_cum", "da_cum_overlapping", "n_h1", "n_non_overlapping",
+    }
+    for column in ("da_h1", "da_hH", "da_cum", "da_hH_overlapping", "da_cum_overlapping"):
+        values = table.get_column(column).to_numpy()
+        assert ((values >= 0.0) & (values <= 1.0)).all(), column
+    assert (
+        table.get_column("n_non_overlapping").to_numpy()
+        < table.get_column("n_h1").to_numpy()
+    ).all(), "the non-overlapping sample is the smaller one; that is the power loss"
