@@ -868,6 +868,27 @@ def _hln_and_p(d: np.ndarray, h: int, name: str, one_sided: bool) -> TestResult:
     return TestResult(name, stat, float(min(p, 1.0)), t, h, one_sided, fallback)
 
 
+def hln_test(
+    d: np.ndarray, h: int, name: str = "HLN", one_sided: bool = False
+) -> TestResult:
+    """Harvey-Leybourne-Newbold on a **pre-assembled** loss differential.
+
+    :func:`dm_test` and :func:`clark_west_test` build their own differential from
+    forecasts. Table 6 assembles one itself --- the Clark-West adjusted series
+    aggregated over the 24 forecast steps of each origin, so that ``T`` counts
+    window starts and ``h`` stays 24, which is the sample root §9.2 pins. Handing
+    that series back through the forecasts would require inventing a pair of
+    pseudo-forecasts whose differential happens to equal it.
+
+    Args:
+        d: The loss differential, one value per forecast origin.
+        h: Forecast horizon, setting the truncation lag at ``h - 1``.
+        name: Label carried into the result.
+        one_sided: True for a nested pair, where the alternative is directional.
+    """
+    return _hln_and_p(np.asarray(d, dtype=np.float64), h, name, one_sided)
+
+
 def dm_test(
     loss_a: np.ndarray, loss_b: np.ndarray, h: int, name: str = "DM"
 ) -> TestResult:

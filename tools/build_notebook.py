@@ -100,6 +100,9 @@ MODULE_ORDER: tuple[str, ...] = (
     # After `metrics`, which it imports `assert_same_windows` from, and before
     # `runner`, which imports its three configs by name (`D56`).
     "baselines.py",
+    # After `metrics`, whose hln_test, load_predictions and parse_run_id it
+    # imports by name. Nothing in the package imports it back.
+    "comparisons.py",
     "runner.py",
 )
 
