@@ -93,6 +93,9 @@ MODULE_ORDER: tuple[str, ...] = (
     "model.py",
     "train.py",
     "keff.py",
+    # Consumes the feature frame and root §4.5's stats boundary; nothing in the
+    # package consumes it, so its position only has to follow `config`.
+    "efficiency.py",
     "metrics.py",
     # After `metrics`, which it imports `assert_same_windows` from, and before
     # `runner`, which imports its three configs by name (`D56`).
