@@ -110,6 +110,10 @@ MODULE_ORDER: tuple[str, ...] = (
     # arm (`D62d`).
     "attention.py",
     "runner.py",
+    # Last, and it has to be: it reads `completed_run_ids` from `runner` and a
+    # driver from every analysis module above it. Nothing imports it back, so no
+    # cell below depends on a name it defines.
+    "report.py",
 )
 
 #: Header comment opening each module cell. ``tests/test_notebook_sync.py``
@@ -610,7 +614,12 @@ def ensure(module: str, pip_name: str | None = None) -> None:
         )
 
 
-for _mod in ("polars", "pyarrow", "numpy", "torch"):
+# torch and the data plane run the grid; the rest are the reporting pass, which
+# root section 16 confines to one named stats boundary. Kaggle ships scipy,
+# statsmodels and matplotlib and usually not `arch`, so this list is the whole
+# difference between a session that renders Table 2 and one that raises on it.
+for _mod in ("polars", "pyarrow", "numpy", "torch",
+             "scipy", "statsmodels", "arch", "matplotlib"):
     ensure(_mod)
 
 
@@ -1188,6 +1197,81 @@ print("\nSave Version now, then attach this output as the next session's input "
 '''
 
 
+MD_REPORT = """<div style="background: linear-gradient(90deg, #001a0d, #003317); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
+  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128202; 9 &middot; Tables and figures</h2>
+  <p style="color: #b8c7e0; margin: 0;">Everything section 13.4 promises, rendered from
+    <code>paper_numbers.json</code> and never transcribed.</p>
+  <p style="color: #95d5b2; margin: 10px 0 0 0; font-size: 0.92em;">This is the cell
+    <code>D60g</code> was about. The grid produced the numbers and left every table and figure
+    ungenerated; four of them &mdash; the DM matrix, the economic evaluation, the attention
+    heatmap and the equity curve &mdash; had no inputs at all. Three of those four are computed
+    here from the 684 prediction files already on disk. <b>Figure 5 is the exception</b>: attention
+    weights were never persisted, so it needs the <code>attention</code> arm and is skipped
+    <i>by name</i> until that arm runs &mdash; an empty axes labelled as a figure reads as a
+    measurement of nothing.</p>
+</div>"""
+
+
+CODE_REPORT = r'''PAPER = WORK / "paper"
+
+# The manuscript's single source. The grid's own paper_numbers.json written above
+# stays immutable evidence; this reads it, adds every analysis pass the grid never
+# ran — section 4.5's efficiency tests, the DM/Romano-Wolf/MCS matrix, the
+# economic evaluation, directional accuracy, the horizon aggregation, the raw
+# metric scale, D60i's RelMSE falsification gap and D45's coverage check — and
+# names the grid file by digest so the two cannot silently diverge (root §12).
+report_inputs = build_report(
+    ARTIFACTS,
+    bars,
+    features,
+    roots=discover_roots(ARTIFACTS),
+    bootstrap_b=9_999,
+    seed=42,
+    log=lambda message: print(message, flush=True),
+)
+
+PAPER.mkdir(parents=True, exist_ok=True)
+numbers_path = PAPER / "paper_numbers.json"
+numbers_path.write_text(json.dumps(report_inputs.numbers, indent=2, default=float))
+print(f"\nwrote {numbers_path}")
+
+print("\ntables:")
+for path in render_tables(report_inputs.numbers, PAPER / "tables"):
+    print(f"  {path.name}")
+
+print("\nfigures:")
+for path in render_figures(report_inputs, PAPER / "figures", log=print):
+    print(f"  {path.name}")
+
+# The frames a figure reads, persisted beside the numbers so a plot can be redone
+# without re-running the whole aggregation. Figure 2b alone is ~3,000 points and
+# has no business inside a JSON file a human is expected to read.
+panels = PAPER / "panels"
+panels.mkdir(parents=True, exist_ok=True)
+for _name, _frame in (
+    ("seed_averaged_cells", report_inputs.seed_avg),
+    ("amplification_panel", report_inputs.amplification),
+    ("rolling_pr", report_inputs.rolling_pr),
+    ("rolling_ols_r2", report_inputs.rolling_r2),
+    ("equity_curves", report_inputs.equity),
+):
+    _frame.write_parquet(panels / f"{_name}.parquet")
+if report_inputs.attention is not None:
+    report_inputs.attention.write_parquet(panels / "attention_maps.parquet")
+print(f"\nwrote panels to {panels}")
+
+_robustness = report_inputs.numbers["robustness"]
+print("\nD62 robustness arms:")
+for _arm, _state in _robustness.items():
+    print(f"  {_arm:12s} {_state['status']}")
+print(
+    "\nAn arm reading 'not run' is a pre-registered exploratory arm awaiting its "
+    "runs, not a failure. Whatever it returns goes in the paper: an arm reported "
+    "only when it agrees with the headline is not a robustness arm (root §13.2)."
+)
+'''
+
+
 # -- assembly ----------------------------------------------------------------
 
 
@@ -1300,6 +1384,8 @@ def build() -> dict:
     code(guarded(CODE_RQ3, "RQ3"))
     md(MD_SAVE)
     code(guarded(CODE_SAVE, "paper_numbers.json"))
+    md(MD_REPORT)
+    code(guarded(CODE_REPORT, "tables and figures"))
 
     return {
         "cells": cells,

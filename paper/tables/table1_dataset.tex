@@ -1,0 +1,29 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Data provenance and the per-origin window budget.}
+\label{tab:dataset}
+\begin{tabular}{lrrrc}
+\toprule
+Origin & Train windows & Loss (\%) & Worst test block & Closed form agrees \\
+\midrule
+2020-01 & 13,934 & 8.29 & 439 & no \\
+2020-06 & 13,701 & 9.96 & 598 & no \\
+2020-11 & 13,741 & 9.70 & 477 & yes \\
+2021-04 & 13,716 & 10.15 & 477 & no \\
+2021-09 & 13,560 & 10.89 & 599 & no \\
+2022-02 & 13,558 & 10.90 & 720 & no \\
+2022-07 & 14,165 & 6.91 & 720 & no \\
+2022-12 & 14,285 & 6.12 & 599 & no \\
+2023-05 & 15,021 & 1.60 & 720 & yes \\
+2023-10 & 15,072 & 0.80 & 720 & yes \\
+2024-03 & 15,120 & 0.79 & 720 & yes \\
+2024-08 & 15,096 & 0.80 & 720 & yes \\
+2025-01 & 15,096 & 0.80 & 720 & yes \\
+2025-06 & 15,217 & 0.00 & 720 & yes \\
+2025-11 & 15,217 & 0.00 & 720 & yes \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize BTCUSDT spot 1\,h, Binance REST. Window 2018-01-01 to 2026-08-01, end exclusive. 75,216 expected, 75,094 actual, 122 missing across 27 downtime blocks. Unusable bars: 3 zero-volume, 3 with $H=L$, 3 zero-trade --- and they are the \emph{same} bars (`D51c'), so the total is 125, not their sum. Windows are counted segment-wise; the closed form of section 4.3 is kept only as an upper bound (`D51a').
+\end{table}

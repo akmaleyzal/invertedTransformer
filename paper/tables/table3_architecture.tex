@@ -1,0 +1,26 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Architectures, capacity, and epochs to early stop at $H=24$.}
+\label{tab:hyperparameters}
+\begin{tabular}{lrrrrrr}
+\toprule
+Model & $K$ & Params & Epochs (mean) & Max & At cap & Runs \\
+\midrule
+DLinear & 8 & 4,656 & 27.38 & 30 & 32 & 45 \\
+iTransformer & 1 & 280,472 & 13.69 & 23 & 0 & 75 \\
+iTransformer & 4 & 280,472 & 9.35 & 13 & 0 & 75 \\
+iTransformer & 8 & 280,472 & 9.08 & 11 & 0 & 75 \\
+iTransformer & 12 & 280,472 & 9.15 & 11 & 0 & 75 \\
+iTransformer (fresh) & 8 & 280,472 & 9.00 & 10 & 0 & 15 \\
+iTransformer (uniform attn.) & 8 & 280,472 & 9.37 & 12 & 0 & 75 \\
+PatchTST & 8 & 302,360 & 25.58 & 30 & 27 & 45 \\
+Ridge & 1 & 2,328 & 0.00 & 0 & 0 & 15 \\
+Ridge & 4 & 9,240 & 0.00 & 0 & 0 & 15 \\
+Ridge & 8 & 18,456 & 0.00 & 0 & 0 & 15 \\
+Ridge & 12 & 27,672 & 0.00 & 0 & 0 & 15 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Every hyperparameter is adopted unchanged from Liu et al. (2024) except $d_{model}$, reduced from 512 to 128 against $\sim$14{,}000 training windows; \textbf{nothing is tuned per rung} (`D38'), which is what makes the rungs comparable. Ridge's $\alpha$ is the only hyperparameter selected anywhere in this study, on the validation sub-block. Parameter count is identical across rungs \emph{at a fixed horizon} (`D60h'). \textbf{Epochs at cap} counts runs reaching the 30-epoch budget: no iTransformer run ever does, so the binding constraint is the learning-rate schedule, not the budget. For DLinear and PatchTST, $K=8$ means \emph{trained on eight channels} through their published all-channel objective, not \emph{predicts the target from eight channels}, and their validation losses are all-channel figures not comparable to the ladder's (`D56').
+\end{table}

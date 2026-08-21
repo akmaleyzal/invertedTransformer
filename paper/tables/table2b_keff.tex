@@ -1,0 +1,18 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Effective dimensionality per rung.}
+\label{tab:keff}
+\begin{tabular}{rrrrr}
+\toprule
+$K$ & PR (raw) & PR (window-norm.) & Stable rank & Cross-lag share \\
+\midrule
+1 & 1.000 $\pm$ 0.000 & 1.000 & 1.000 & 0.980 \\
+4 & 3.327 $\pm$ 0.103 & 3.317 & 2.355 & 0.078 \\
+8 & 4.269 $\pm$ 0.117 & 4.013 & 2.701 & 0.047 \\
+12 & 3.984 $\pm$ 0.307 & 3.654 & 2.173 & 0.020 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Participation ratio per rung, measured \textbf{per origin on that origin's own 21-month training sub-block} (`D44'), which is what keeps RQ1's regressor from reading a single bar its outcome is measured on. $\pm$ is the standard deviation across origins. $corr(K, K_{eff}) = 0.828$, against the $\approx 0.97$ section 9.1 anticipated --- so the $K$-versus-$K_{eff}$ horse race is \emph{more} identifiable than that section feared. The Stage 3b gate measured 4.393 at $K=8$ on the pre-first-origin span, below the pre-registered floor of 5.0; `D48''s prescribed action is disclosure, not a re-cut, and the grid proceeded unchanged. $K=12$ carries a \emph{lower} PR than $K=8$, so the redundancy that rung was designed to contain is stronger than section 5.2 expected, not weaker.
+\end{table}

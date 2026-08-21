@@ -37,6 +37,7 @@ Provenance for the statistic itself: Laloux et al. (1999), Plerou et al. (2002).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 import numpy as np
 import polars as pl
@@ -51,6 +52,7 @@ from itransformer_btc.config import (
     OriginLike,
 )
 from itransformer_btc.features import ladder_columns
+from itransformer_btc.segments import HOUR_MS
 from itransformer_btc.splits import window_starts
 
 #: Root §8.5's Stage 3b trigger, pre-registered numerically **before** measuring:
@@ -366,3 +368,133 @@ def gate_verdict(measured: float, floor: float = GATE_PR_FLOOR) -> str:
         f"from §5.2's expected K_eff in §4.1b. Do not re-cut the ladder: `D01` "
         f"leaves no second consistent cut over F1-F5."
     )
+
+
+# -- Figure 2b: the descriptive rolling statistics (root §5.4) ---------------
+#
+# Both functions below are **descriptive only**, and the constraint is not
+# decorative. Every origin's test block lies inside the full sample, so a
+# full-sample rolling statistic **may inform no design decision** (`D02`): the
+# statistic that *gates* the ladder is :func:`gate_pr` on the pre-first-origin
+# span, and substituting one for the other would be the leak §5.4 exists to
+# forbid. What these are for is establishing H2's premise --- that the
+# microstructure-to-return mapping is regime-specific --- **before a single
+# epoch runs**, which is why Figure 2b sits in the paper ahead of every result.
+
+#: Root §5.4's window. Ninety days is long enough for an 8 x 8 correlation to be
+#: estimated from ~2,160 bars and short enough to resolve a regime change.
+ROLLING_WINDOW_DAYS: Final = 90
+
+#: Step between consecutive windows. One day, so the curve is readable without
+#: emitting one point per bar. Deterministic, so root §12 can regenerate it.
+ROLLING_STEP_DAYS: Final = 1
+
+
+def _rolling_spans(
+    ts: np.ndarray, window_days: int, step_days: int
+) -> list[tuple[int, int, int]]:
+    """``(window_end_ms, lo, hi)`` for each window, sliced **by time, not position**.
+
+    Position slicing would silently shorten a window wherever the series has a
+    gap, and gaps are not uniform: 26 of 27 downtime blocks fall in 2018-2021 and
+    none after 2023-03 (`D45`). A position-sliced "90-day" window would therefore
+    span more calendar time early in the sample than late --- a trend in the
+    estimator that a reader would read as a trend in the market.
+    """
+    window_ms = window_days * 24 * HOUR_MS
+    step_ms = step_days * 24 * HOUR_MS
+    spans: list[tuple[int, int, int]] = []
+    for end in range(int(ts[0]) + window_ms, int(ts[-1]) + 1, step_ms):
+        lo = int(np.searchsorted(ts, end - window_ms, side="left"))
+        hi = int(np.searchsorted(ts, end, side="left"))
+        spans.append((end, lo, hi))
+    return spans
+
+
+def rolling_pr(
+    features: pl.DataFrame,
+    k: int = 8,
+    window_days: int = ROLLING_WINDOW_DAYS,
+    step_days: int = ROLLING_STEP_DAYS,
+) -> pl.DataFrame:
+    """Rolling participation ratio over the full sample --- **descriptive only**.
+
+    Args:
+        features: The frame :func:`itransformer_btc.features.build_features`
+            returns, carrying ``ts_ms`` and the twelve variates.
+        k: Rung to measure. Eight is the rung RQ2 contrasts against K=1.
+
+    Returns:
+        ``window_end_ms, n_rows, pr`` --- one row per window.
+
+    Never pass this to a regression and never compare it against
+    :data:`GATE_PR_FLOOR`. It reads the test period by construction.
+    """
+    columns = ladder_columns(k)
+    ts = features.get_column("ts_ms").to_numpy()
+    values = features.select(columns).to_numpy()
+
+    rows = []
+    for end, lo, hi in _rolling_spans(ts, window_days, step_days):
+        block = values[lo:hi]
+        if len(block) <= len(columns):
+            continue        # a correlation needs more rows than columns
+        rows.append(
+            {"window_end_ms": end, "n_rows": len(block), "pr": contemporaneous_pr(block)}
+        )
+    return pl.DataFrame(rows)
+
+
+def rolling_ols_r2(
+    features: pl.DataFrame,
+    k: int = 8,
+    window_days: int = ROLLING_WINDOW_DAYS,
+    step_days: int = ROLLING_STEP_DAYS,
+) -> pl.DataFrame:
+    """In-window R^2 of ``r_{t+1} ~ (K features at t)`` --- **descriptive only**.
+
+    Root §5.4: if this is unstable, H2's premise --- that the
+    microstructure-to-return mapping is regime-specific --- is established before
+    a single epoch runs. In-window rather than out-of-sample, deliberately: the
+    question is whether the *relationship* moves, not whether it forecasts, and
+    the second question is what the entire rest of the study answers.
+
+    The target is formed **within a segment**: a row whose successor is not
+    exactly one hour later is dropped, because ``r`` at the next row would then
+    be the first return after an outage and the pair would straddle a gap the
+    segment law (§4.3) exists to keep apart.
+
+    Returns:
+        ``window_end_ms, n_pairs, r2`` --- one row per window.
+    """
+    columns = ladder_columns(k)
+    ts = features.get_column("ts_ms").to_numpy()
+    values = features.select(columns).to_numpy()
+    target = features.get_column("r").to_numpy()
+
+    contiguous = np.zeros(len(ts), dtype=bool)
+    contiguous[:-1] = np.diff(ts) == HOUR_MS
+
+    rows = []
+    for end, lo, hi in _rolling_spans(ts, window_days, step_days):
+        # Clamped so the last window cannot ask for a successor that does not
+        # exist; the mask and both slices then have one length by construction
+        # rather than by a length check that fires after an IndexError would.
+        n = min(hi, len(ts) - 1) - lo
+        if n <= 0:
+            continue
+        keep = contiguous[lo : lo + n]
+        x = values[lo : lo + n][keep]
+        y = target[lo + 1 : lo + 1 + n][keep]
+        if len(x) <= len(columns) + 1:
+            continue
+        design = np.column_stack([np.ones(len(x)), x])
+        coefficients, *_ = np.linalg.lstsq(design, y, rcond=None)
+        residual = y - design @ coefficients
+        total = float(((y - y.mean()) ** 2).sum())
+        rows.append({
+            "window_end_ms": end,
+            "n_pairs": len(y),
+            "r2": float(1.0 - (residual ** 2).sum() / total) if total > 0 else 0.0,
+        })
+    return pl.DataFrame(rows)

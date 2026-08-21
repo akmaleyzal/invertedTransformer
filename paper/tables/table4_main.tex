@@ -1,0 +1,25 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Main results at $H=24$, aggregated across all fifteen origins.}
+\label{tab:main}
+\begin{tabular}{lrrrcrr}
+\toprule
+Model & RelMSE & $R^2_{oos}$ & Seed std & In MCS & Origins & Seeds \\
+\midrule
+itr-K1 & 1.0205 & -0.0205 $\pm$ 0.0014 & 0.000915 & --- & 15 & 5 \\
+itr-K4 & 1.0187 & -0.0187 $\pm$ 0.0011 & 0.001624 & --- & 15 & 5 \\
+itr-K8 & 1.0180 & -0.0180 $\pm$ 0.0011 & 0.001387 & --- & 15 & 5 \\
+itr-K12 & 1.0186 & -0.0186 $\pm$ 0.0011 & 0.001410 & --- & 15 & 5 \\
+itru-K8 & 1.0177 & -0.0177 $\pm$ 0.0010 & 0.001286 & --- & 15 & 5 \\
+rdg-K1 & 1.0008 & -0.0008 $\pm$ 0.0005 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K4 & 1.0003 & -0.0003 $\pm$ 0.0001 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K8 & 1.0005 & -0.0005 $\pm$ 0.0002 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K12 & 1.0007 & -0.0007 $\pm$ 0.0003 & --- & 90\%, 75\% & 15 & 1 \\
+dlin-K8 & 1.0262 & -0.0262 $\pm$ 0.0011 & 0.000576 & --- & 15 & 3 \\
+ptst-K8 & 1.0163 & -0.0163 $\pm$ 0.0007 & 0.000649 & --- & 15 & 3 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize $R^2_{oos} = 1 - \text{RelMSE}$ against Naive-RW, which forecasts a zero raw log-return and is mapped into scaler space as $\hat{y}_z = -\mu_g/\sigma_g$ (`D31'). \textbf{Every model is worse than Naive-RW at every rung}; ridge is worse by roughly thirty times less than any deep model. The $\pm$ is the standard error \emph{across origins}; the seed column is Monte-Carlo noise on one fixed dataset and is a diagnostic, never the error bar (`D30'). MCS is the Model Confidence Set (Hansen, Lunde \& Nason 2011) at the stated levels.
+\end{table}

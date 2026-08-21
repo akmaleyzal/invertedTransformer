@@ -53,6 +53,14 @@ train = [
     "torch>=2.2",
 ]
 
+# Figures only, and behind an extra for the same reason every other dependency
+# is: each dependency's reason stays visible rather than ambient. The Kaggle
+# image ships matplotlib, and no figure is rendered inside a GPU session anyway
+# --- `tools/build_report.py` runs on CPU against the artifacts already on disk.
+plot = [
+    "matplotlib>=3.8",
+]
+
 dev = [
     "pytest>=8.0",
 ]
