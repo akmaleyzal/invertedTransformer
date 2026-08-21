@@ -128,7 +128,7 @@ Nine stages. Each names what it reads, what it writes, and what it will refuse t
      │
   Stage 5  pilot gate ─────► 12 main-grid runs, judged on VALIDATION
      │
-  Stage 6  the grid ───────► artifacts/{preds,meta}/*  (684 runs)
+  Stage 6  the grid ───────► artifacts/{preds,meta}/*  (684 runs; output at notebooks/outputs/artifacts/)
      │
   Stage 7  evaluation ─────► RQ1, RQ2, RQ3
      │
@@ -539,17 +539,59 @@ of two *negative* skills, and §9.1's guard on `R²_oos(i,1) ≤ 0` stops being 
 
 ## 8. What is not built yet
 
-Stated plainly, because a reader should not have to discover it by running:
+Stated plainly, because a reader should not have to discover it by running.
+**Rewritten 2026-08-20 against the completed grid (root `D60f`, `D60g`); three of the four entries
+below were stale.**
 
-- **Comparison baselines** — ARIMA, LSTM, DLinear, PatchTST and ridge (~255 runs). Naive-RW *is*
-  available, computed from the scaler, and every RelMSE divides by it, so **RQ1, RQ2 and RQ3 are all
-  answerable without them**. The baselines are for Table 4's positioning and Table 6's DM matrix.
-- **The economic evaluation** of §13.5 — the sign rule, per-segment holding returns, the cost band
-  and the per-origin DSR.
-- **The optional K=16 rung** (`D22`), whose run condition is origin 1's Stage 5 gate passing at
-  α = 0.05 **and** ≥ 5 GPU-hours of weekly quota remaining. Running it reopens the no-embargo
-  argument in §8.3, which must be re-derived first.
-- **A confirmed T4 timing.** Everything measured so far is CPU.
+**Built since this list was written, and no longer missing:**
+
+- **Ridge, DLinear and PatchTST** — built by `D56` and *run*: 60 + 45 + 45 = 150 baseline runs are on
+  disk. ARIMA, LSTM, naive-persist and seasonal-naive remain deferred, with the written reason in
+  root §7. The old "~255 runs, none built" wording contradicted this file's own §2 and §6.
+- **T4 timing** — measured twice. 534 runs in 2.31 h on two T4s (`D57`); the full 684-run manifest in
+  **6.52 h** on a single `cuda:0`, mean 35.0 s per run (`D60d`). Nothing here is CPU-only any more.
+- **The K=16 rung's run condition** — resolved, not pending. **Clause 1 failed**: origin 1's Stage 5
+  gate returned Clark-West `S* = +0.8759, p = 0.1906`, so the arm is **not run** and the no-embargo
+  re-derivation is not needed (root `D60a`).
+
+**Built since, and no longer missing (root `D62a`, 2026-08-21):**
+
+- **Table 6** — `comparisons.pair_matrix` and `comparisons.mcs_table`, 66 pairs over 12 models,
+  Clark-West on every nested pair and DM+HLN on the rest, Romano-Wolf stepdown across all of them.
+- **Table 2** — `efficiency.efficiency_table`: ADF, Hurst by rescaled range, and the Lo-MacKinlay
+  variance ratio, over the full sample and every origin's training sub-block.
+- **The economic evaluation** — `economics.economics_table` and `economics.equity_curves`: the
+  00:00-UTC sign rule, per-segment holding returns, the three-level slippage band, Sharpe with a
+  Jobson-Korkie/Memmel test against buy-and-hold, a bootstrapped MDD interval and the per-origin DSR.
+- **Every table and figure** — `python tools/build_report.py` writes `paper/paper_numbers.json` and
+  renders nine `.tex` floats and five figures from it. `--check` is the drift guard.
+
+**Still genuinely not built:**
+
+- **Figure 5's attention maps.** Attention weights were not persisted by the 684-run grid, so this
+  one needs a re-run, not a re-query. The `attention` arm is in the manifest (45 runs, ~26 min) and
+  `render_figures` skips Figure 5 **by name** until it has run.
+- **The two `D62` robustness arms** — `longsched` (90 runs) and `capacity` (75 runs). Both are in the
+  manifest and both report `status: "not run"` in `paper_numbers.json` until executed.
+- **ARIMA, LSTM, naive-persist, seasonal-naive** — deferred with the written reason in root §7.
+
+### Rendering the paper's deliverables
+
+```bash
+python tools/build_report.py                     # writes paper/{paper_numbers.json,tables,figures,panels}
+python tools/build_report.py --check             # exit 1 if the artifacts moved without a re-render
+python tools/build_report.py --bootstrap-b 199   # fast pass while iterating; the paper uses 9,999
+```
+
+CPU only, roughly four minutes at the full bootstrap. It reads `notebooks/outputs/artifacts/` and
+`data/raw/BTCUSDT_1h.parquet`, and needs the `stats` and `plot` extras:
+
+```bash
+pip install -e ".[stats,plot,dev]"
+```
+
+The notebook's cell 9 calls the same functions, so a Kaggle session produces the same deliverables
+under `/kaggle/working/paper/` without anything extra attached.
 
 ---
 
