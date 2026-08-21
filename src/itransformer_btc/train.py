@@ -128,6 +128,30 @@ class TrainOutcome:
     device: str
 
 
+@dataclass(frozen=True, slots=True)
+class TrainSchedule:
+    """Root §6.2's optimisation budget, as data rather than as call-site defaults.
+
+    The defaults reproduce the 684-run grid exactly, and that is the point.
+    `D47` fixed ``lr_halve_every`` at 4 because per-epoch halving reaches ~4e-7
+    by epoch 9, which makes both the 30-epoch budget and the patience-5 stop
+    decorative.
+
+    Measured afterwards, the grid early-stopped at a **mean of 10.49 epochs and
+    never once reached the cap** across 444 iTransformer runs, maximum 26. So the
+    binding constraint was the schedule, not the budget: by epoch 26 the learning
+    rate is ~1.6e-6 and by epoch 30 ~7.8e-7, and raising ``max_epochs`` alone
+    would have been a no-op. That is why `D62c`'s robustness arm widens the
+    schedule instead, and why this exists as an overridable object rather than as
+    four numbers frozen into a signature.
+    """
+
+    max_epochs: int = 30
+    patience: int = 5
+    lr: float = 1e-4
+    lr_halve_every: int = 4
+
+
 class Architecture(Protocol):
     """What the trainer, the runner and the artifact writer need of a config.
 
@@ -253,10 +277,10 @@ def train_one(
     *,
     device: torch.device | None = None,
     batch_size: int = 32,
-    max_epochs: int = 30,
-    patience: int = 5,
-    lr: float = 1e-4,
-    lr_halve_every: int = 4,
+    max_epochs: int | None = None,
+    patience: int | None = None,
+    lr: float | None = None,
+    lr_halve_every: int | None = None,
 ) -> tuple[nn.Module, TrainOutcome]:
     """Train one (origin, K, seed) cell and return the best-validation model.
 
@@ -278,6 +302,20 @@ def train_one(
     """
     device = device or pick_device()
     set_seed(spec.seed)
+
+    # The schedule comes from the config when it declares one, so an arm can widen
+    # it without a new trainer (`D62c`). ``hasattr`` rather than a Protocol member:
+    # ridge is a solve with no epochs at all, and DLinear and PatchTST take root
+    # §6.2's schedule unchanged, so requiring the method would add a stub to three
+    # classes to say "nothing special". Explicit arguments still win, which is what
+    # keeps ``stage5_pilot`` and the tests able to shorten a run.
+    training_schedule = cfg.schedule() if hasattr(cfg, "schedule") else TrainSchedule()
+    max_epochs = training_schedule.max_epochs if max_epochs is None else max_epochs
+    patience = training_schedule.patience if patience is None else patience
+    lr = training_schedule.lr if lr is None else lr
+    lr_halve_every = (
+        training_schedule.lr_halve_every if lr_halve_every is None else lr_halve_every
+    )
 
     model = cfg.build().to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=lr)
@@ -444,6 +482,7 @@ def write_artifacts(
     outcome: TrainOutcome,
     device: torch.device,
     root: Path = ARTIFACTS,
+    attention: "pl.DataFrame | None" = None,
 ) -> tuple[Path, Path]:
     """Write ``preds/{run_id}.parquet`` and ``meta/{run_id}.json``.
 
@@ -502,12 +541,30 @@ def write_artifacts(
     meta_path = root / "meta" / f"{spec.run_id}.json"
     preds.write_parquet(preds_path)
 
+    if attention is not None:
+        # Figure 5's input (`D62d`). A third directory rather than a column on
+        # ``preds``: the maps are one row per (tercile, layer, variate pair) and
+        # the forecasts are one row per (block, timestamp, step), so joining them
+        # into one file would mean padding one of the two with nulls. Completeness
+        # still keys off ``preds`` and ``meta`` alone, so an arm that writes no map
+        # is complete without one.
+        (root / "attn").mkdir(parents=True, exist_ok=True)
+        attention.write_parquet(root / "attn" / f"{spec.run_id}.parquet")
+
     input_parquet = resolve_input_parquet()
     input_digest, input_provenance = _input_sha256(input_parquet)
     meta = {
         "run_id": spec.run_id,
         "spec": asdict(spec),
         "config": asdict(cfg),
+        # Recorded separately because a schedule override is a **method**, and
+        # ``asdict`` sees fields only (`D62c`). ``LongScheduleConfig`` adds no
+        # field, so its ``config`` block is byte-identical to the main arm's and
+        # this key is the only place the difference is visible --- besides the
+        # ``run_id`` tag, which is what keeps the two from colliding on disk.
+        "schedule": (
+            asdict(cfg.schedule()) if hasattr(cfg, "schedule") else None
+        ),
         "origin": tensors.origin.label,
         "origin_index": tensors.origin.index,
         "block_labels": list(tensors.block_labels),

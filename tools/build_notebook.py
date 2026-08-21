@@ -105,6 +105,10 @@ MODULE_ORDER: tuple[str, ...] = (
     "comparisons.py",
     # Reads metrics' non_overlapping_mask and the two normal helpers by name.
     "economics.py",
+    # After `model` and `splits`, whose ITransformer and SplitTensors it reads,
+    # and before `runner`, which imports tercile_maps by name for the attention
+    # arm (`D62d`).
+    "attention.py",
     "runner.py",
 )
 

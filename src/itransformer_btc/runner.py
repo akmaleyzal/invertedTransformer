@@ -58,7 +58,8 @@ from itransformer_btc.baselines import (
     RidgeConfig,
     assert_baseline_alignment,
 )
-from itransformer_btc.model import ITransformerConfig
+from itransformer_btc.attention import tercile_maps
+from itransformer_btc.model import ITransformerConfig, LongScheduleConfig
 from itransformer_btc.splits import OriginTensors, build_origin_tensors
 from itransformer_btc.train import (
     ARTIFACTS,
@@ -83,6 +84,11 @@ ARM_MODEL_TAG: dict[str, str] = {
     "ridge": "rdg",      # `D17` — is a transformer needed at all? K = 1,4,8,12
     "dlinear": "dlin",   # root §7 — "not optional", K=8
     "patchtst": "ptst",  # root §7 — SOTA channel-independent, K=8
+    # `D62`'s three exploratory arms. Distinct tags, so none can collide with a
+    # completed run_id and all 684 stay complete under resume.
+    "attention": "itra",  # `D62d` — Figure 5's attention maps, K=8
+    "longsched": "itrl",  # `D62c` — LR halved every 8, 60 epochs, patience 10
+    "capacity": "itrc",   # `D62b` — root §6.2's own larger-d_ff run at K=12
 }
 
 #: The §7 comparators (`D56`). Two things key off this set, and both follow from
@@ -95,7 +101,14 @@ BASELINE_ARMS: tuple[str, ...] = ("ridge", "dlinear", "patchtst")
 #: leaves the ladder — which RQ1, RQ2 and RQ3 all read — complete before the
 #: comparators, and so a baseline's alignment assertion finds its reference on
 #: disk rather than reporting itself unchecked.
-ALL_ARMS: tuple[str, ...] = ("main", "uniform", "fresh", "horizon", *BASELINE_ARMS)
+#: `D62`'s exploratory arms. Ordered **last** so a session cut short loses
+#: robustness rather than anything RQ1-RQ3 reads, on the same reasoning that put
+#: the baselines after the ladder.
+ROBUSTNESS_ARMS: tuple[str, ...] = ("attention", "longsched", "capacity")
+
+ALL_ARMS: tuple[str, ...] = (
+    "main", "uniform", "fresh", "horizon", *BASELINE_ARMS, *ROBUSTNESS_ARMS,
+)
 
 #: Seeds for the horizon sweep. Three, not five: root §10.2 budgets 192 runs for
 #: it, and root §10.3 says to cut the sweep before cutting seed counts if the
@@ -184,6 +197,18 @@ class RunCell:
             return DLinearConfig(pred_len=self.pred_len)
         if self.arm == "patchtst":
             return PatchTSTConfig(pred_len=self.pred_len)
+        if self.arm == "longsched":
+            # `D62c`. The only thing that moves is the schedule, which is a
+            # method, so meta['config'] is byte-identical to the main arm's and
+            # meta['schedule'] is where the difference shows.
+            return LongScheduleConfig(pred_len=self.pred_len)
+        if self.arm == "capacity":
+            # `D62b`. Root §6.2 pre-registers exactly this --- "one robustness run
+            # at K=12 with larger d_ff, so a flat 8->12 rung cannot be read as an
+            # under-tuning artefact" --- and it was never built. ``d_ff`` IS a
+            # config field, so this run's meta records the widening, correctly:
+            # it is the only thing differing from the rung it answers for.
+            return ITransformerConfig(pred_len=self.pred_len, d_ff=512)
         return ITransformerConfig(
             pred_len=self.pred_len,
             uniform_attention=(self.arm == "uniform"),
@@ -281,6 +306,31 @@ def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
         cells += [
             RunCell("patchtst", o.index, 8, PRED_LEN, s)
             for o in ORIGINS for s in BASELINE_SEEDS
+        ]
+    if "attention" in arms:
+        # Three seeds, because root §13.2 admits attention maps only when they are
+        # "validated for stability across seeds" (Jain & Wallace 2019; Wiegreffe &
+        # Pinter 2019). One seed makes that claim unfalsifiable; five would buy
+        # precision on a descriptive figure. Same seeds as the main arm, so each
+        # cell must reproduce its twin bit for bit --- which is the arm's second
+        # product and the study's reproducibility statement.
+        cells += [
+            RunCell("attention", o.index, 8, PRED_LEN, s)
+            for o in ORIGINS for s in BASELINE_SEEDS
+        ]
+    if "longsched" in arms:
+        # K in {1, 8} only: the arm asks whether the null survives a longer
+        # schedule, and that needs the control and the treatment, not the whole
+        # ladder. Three seeds --- `D49`'s five-seed rule protects the 8->12
+        # contrast, which this arm does not contain.
+        cells += [
+            RunCell("longsched", o.index, k, PRED_LEN, s)
+            for o in ORIGINS for k in (1, 8) for s in BASELINE_SEEDS
+        ]
+    if "capacity" in arms:
+        # Five seeds, matching the K=12 rung it is compared against.
+        cells += [
+            RunCell("capacity", o.index, 12, PRED_LEN, s) for o in ORIGINS for s in SEEDS
         ]
 
     seen: set[str] = set()
@@ -521,8 +571,16 @@ def execute(
             model, cfg, outcome = cell.model_config().fit(
                 tensors, cell.spec, device=device
             )
+            # Figure 5's maps, and only for the arm that exists to produce them
+            # (`D62d`). Captured after training rather than during it, so nothing
+            # about the optimisation changes and the arm reproduces its main-grid
+            # twin bit for bit.
+            maps = (
+                tercile_maps(model, tensors, device) if cell.arm == "attention" else None
+            )
             write_artifacts(
-                model, tensors, cell.spec, cfg, outcome, device, root=out_root,
+                model, tensors, cell.spec, cfg, outcome, device,
+                root=out_root, attention=maps,
             )
         except Exception as exc:  # noqa: BLE001 - one bad cell must not end the shard
             failed += 1

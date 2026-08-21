@@ -43,7 +43,7 @@ def test_manifest_is_deduplicated_by_run_id() -> None:
     cells = runner.manifest()
     ids = [c.run_id for c in cells]
     assert len(ids) == len(set(ids))
-    assert len(cells) == 684
+    assert len(cells) == 894
 
     counts: dict[str, int] = {}
     for cell in cells:
@@ -51,8 +51,44 @@ def test_manifest_is_deduplicated_by_run_id() -> None:
     assert counts == {
         "main": 300, "uniform": 75, "fresh": 15, "horizon": 144,
         "ridge": 60, "dlinear": 45, "patchtst": 45,
+        "attention": 45, "longsched": 90, "capacity": 75,
     }
     assert 300 + 75 + 15 + 192 - 534 == 48
+
+    # The pre-`D62` grid still totals 684, which is what is on disk and what every
+    # completed run_id resumes against.
+    core = tuple(a for a in runner.ALL_ARMS if a not in runner.ROBUSTNESS_ARMS)
+    assert len(runner.manifest(core)) == 684
+
+
+def test_robustness_arms_cannot_collide_with_a_completed_run() -> None:
+    """Root §10.4 makes ``run_id`` the identity of a run, so a shared id would mean
+    two files racing for one path --- and here it would also mean the 684 runs
+    already on disk resuming as complete under an arm that never produced them.
+
+    Three new tags, three new namespaces (`D62`).
+    """
+    core = tuple(a for a in runner.ALL_ARMS if a not in runner.ROBUSTNESS_ARMS)
+    old = {c.run_id for c in runner.manifest(core)}
+    robust = runner.manifest(runner.ROBUSTNESS_ARMS)
+    new = {c.run_id for c in robust}
+    assert len(new) == 45 + 90 + 75
+    assert not (old & new)
+    assert {c.run_id[:4] for c in robust} == {"itra", "itrl", "itrc"}
+
+
+def test_robustness_arms_run_last() -> None:
+    """Ordered after the baselines so a session cut short loses robustness rather
+    than anything RQ1-RQ3 reads --- the same reasoning that put the baselines
+    after the ladder."""
+    cells = runner.manifest()
+    first_robustness = min(
+        i for i, c in enumerate(cells) if c.arm in runner.ROBUSTNESS_ARMS
+    )
+    last_other = max(
+        i for i, c in enumerate(cells) if c.arm not in runner.ROBUSTNESS_ARMS
+    )
+    assert last_other < first_robustness
 
 
 def test_manifest_contains_the_section_seven_baselines() -> None:
@@ -80,8 +116,15 @@ def test_manifest_contains_the_section_seven_baselines() -> None:
         assert {c.k for c in cells if c.arm == arm} == {8}
         assert {c.seed for c in cells if c.arm == arm} == set(runner.BASELINE_SEEDS)
 
+    # Scoped to the pre-`D62` arms: the robustness arms come after the baselines
+    # by the same argument, so "everything that is not a baseline comes first" is
+    # no longer the claim. What still holds is that the ladder precedes them.
     first_baseline = min(i for i, c in enumerate(cells) if c.arm in runner.BASELINE_ARMS)
-    last_ladder = max(i for i, c in enumerate(cells) if c.arm not in runner.BASELINE_ARMS)
+    last_ladder = max(
+        i
+        for i, c in enumerate(cells)
+        if c.arm not in runner.BASELINE_ARMS and c.arm not in runner.ROBUSTNESS_ARMS
+    )
     assert last_ladder < first_baseline
 
     # Every baseline names a comparator that is itself in the manifest — `D45`

@@ -264,7 +264,7 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
     assert model.n_parameters() == 280_472
     assert len(namespace["ORIGINS"]) == 15
     assert len(namespace["VARIATE_ORDER"]) == 12
-    assert len(namespace["manifest"]()) == 684
+    assert len(namespace["manifest"]()) == 894  # 684 + `D62`'s 210 exploratory
     assert namespace["ladder_columns"](1) == ["r"]
 
     # Every arm must be able to *build and run its model* here, not merely be

@@ -76,6 +76,19 @@ class ITransformerConfig:
         """
         return "target"
 
+    def schedule(self) -> "TrainSchedule":
+        """Root §6.2's optimisation budget: 30 epochs, patience 5, LR halved every 4.
+
+        A method rather than a field, and that is load-bearing for the same reason
+        ``build`` and ``loss_target`` are: ``write_artifacts`` records
+        ``asdict(cfg)``, so a field added here would enter every iTransformer
+        ``meta/*.json`` and change bytes the 684-run grid has already produced.
+        The schedule is logged under its own ``meta`` key instead.
+        """
+        from itransformer_btc.train import TrainSchedule
+
+        return TrainSchedule()
+
     def fit(
         self,
         tensors: "OriginTensors",
@@ -99,6 +112,30 @@ class ITransformerConfig:
 
         model, outcome = train_one(tensors, spec, self, device=device)
         return model, self, outcome
+
+
+class LongScheduleConfig(ITransformerConfig):
+    """`D62c` --- the exploratory arm that answers "you under-trained".
+
+    The most obvious attack on a null result, and until now it had no answer. The
+    document implied the 30-epoch cap was the budget that bound; measured, **0 of
+    444** iTransformer runs reached it, mean 10.49, maximum 26. What bound was the
+    learning-rate schedule, so widening the cap alone would have changed nothing.
+    This widens the schedule: LR halved every 8 epochs instead of 4, 60 epochs
+    instead of 30, patience 10 instead of 5.
+
+    A **plain subclass adding no field**. ``asdict`` therefore returns exactly the
+    parent's dict, ``meta['config']`` is unchanged, and the difference lives in
+    the ``meta['schedule']`` key and in the ``run_id`` tag ``itrl``. Nothing about
+    the ladder's confirmatory numbers moves: this arm is **exploratory**, declared
+    as such under §13.2's confirmatory-versus-exploratory rule, and reported in
+    its own table because §12 forbids two code vintages sharing one.
+    """
+
+    def schedule(self) -> "TrainSchedule":
+        from itransformer_btc.train import TrainSchedule
+
+        return TrainSchedule(max_epochs=60, patience=10, lr_halve_every=8)
 
 
 class InvertedEmbedding(nn.Module):
@@ -137,6 +174,17 @@ class VariateAttention(nn.Module):
         self.v = nn.Linear(d_model, d_model)
         self.out = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
+        #: Runtime capture of the attention weights -- Figure 5's only input
+        #: (`D62d`). A plain module attribute, **never** an
+        #: :class:`ITransformerConfig` field: ``write_artifacts`` records
+        #: ``asdict(cfg)``, so a field here would appear in every iTransformer
+        #: ``meta/*.json`` and change bytes the 684-run grid has already
+        #: produced. Off by default, and the branch consumes no RNG, so a run
+        #: with capture on is bit-identical to one without --- which is what
+        #: makes the maps describe the model whose numbers the paper reports
+        #: rather than a second model that merely resembles it.
+        self.capture: bool = False
+        self.last_weights: Tensor | None = None
 
     def forward(self, x: Tensor) -> Tensor:
         b, n, d = x.shape
@@ -152,7 +200,12 @@ class VariateAttention(nn.Module):
             q = self.q(x).view(shape).transpose(1, 2)
             k = self.k(x).view(shape).transpose(1, 2)
             scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-            context = self.dropout(torch.softmax(scores, dim=-1)) @ v
+            weights = torch.softmax(scores, dim=-1)
+            if self.capture:
+                # Averaged over heads: Figure 5 shows variate-level reliance, and
+                # eight per-head panels per layer would be a different figure.
+                self.last_weights = weights.detach().mean(dim=1)
+            context = self.dropout(weights) @ v
 
         return self.out(context.transpose(1, 2).reshape(b, n, d))
 
