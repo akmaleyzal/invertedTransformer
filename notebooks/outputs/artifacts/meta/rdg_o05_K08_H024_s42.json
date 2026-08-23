@@ -23,6 +23,7 @@
     ],
     "alpha": 1000000.0
   },
+  "schedule": null,
   "origin": "2021-09",
   "origin_index": 5,
   "block_labels": [
@@ -45,7 +46,7 @@
     "vwap_location"
   ],
   "git_sha": "unknown",
-  "code_sha256": "ee63120991695c6c0f0aac928922a6f06f2b82e2f83d013983bc3420285c3d47",
+  "code_sha256": "fec3e8b4af4e453a904c7b3499bdc096baa6292149505b6f6e45f0c9683b5e64",
   "input_parquet": "/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
   "input_sha256": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
   "input_sha256_source": "file-digest",
@@ -66,7 +67,7 @@
   "epochs_run": 0,
   "best_val_mse": 0.8987961526681426,
   "train_loss": 1.0377022502059774,
-  "wall_time_s": 0.18697237699961988,
+  "wall_time_s": 0.18769800899826805,
   "n_parameters": 18456,
   "device": "cuda:0",
   "status": "complete"

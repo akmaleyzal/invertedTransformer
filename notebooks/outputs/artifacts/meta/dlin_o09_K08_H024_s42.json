@@ -14,6 +14,7 @@
     "loss_channels": "all",
     "channel_independent": true
   },
+  "schedule": null,
   "origin": "2023-05",
   "origin_index": 9,
   "block_labels": [
@@ -36,7 +37,7 @@
     "vwap_location"
   ],
   "git_sha": "unknown",
-  "code_sha256": "ee63120991695c6c0f0aac928922a6f06f2b82e2f83d013983bc3420285c3d47",
+  "code_sha256": "fec3e8b4af4e453a904c7b3499bdc096baa6292149505b6f6e45f0c9683b5e64",
   "input_parquet": "/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
   "input_sha256": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
   "input_sha256_source": "file-digest",
@@ -57,7 +58,7 @@
   "epochs_run": 25,
   "best_val_mse": 0.6329860610089599,
   "train_loss": 0.8287554505670013,
-  "wall_time_s": 19.92927855200105,
+  "wall_time_s": 18.99668606100022,
   "n_parameters": 4656,
   "device": "cuda:0",
   "status": "complete"
