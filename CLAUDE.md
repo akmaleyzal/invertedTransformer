@@ -1733,7 +1733,9 @@ purpose defeats the second.
 
 | D71 | **F** | `find_parquet` globbed five fixed patterns, deepest `*/*/BTCUSDT_1h.parquet`. The path Kaggle's web UI hands a user — `/kaggle/input/datasets/<owner>/<slug>/BTCUSDT_1h.parquet` — is **three** levels, one past the deepest. The file is attached, visible, and the session dies in the setup cell | `rglob` fallback after the ordered patterns; `data/raw/` still preferred, multiple copies reported rather than silently chosen (§12). Tested against four layouts, extracted **from the committed notebook** (`D55`). §10.5's slug-independence and depth-independence are one requirement | 10.5 |
 
-**New contradictions found later take IDs D72+. Absorbing one silently is the exact failure this
+| D72 | **F** | The 2026-08-27 session printed `parquet   /kaggle/working/__notebook__.ipynb` and died 48 s later inside polars: `File out of specification`. Discovery matched on **name** and never checked the file was a parquet, so a wrong answer travelled three cells before failing, and failed somewhere that could name neither the file nor why it was chosen. **Root cause of the binding is not established** — no committed `find_parquet` can produce that path, and replay raises correctly | `looks_like_parquet`: `PAR1` at both ends, checked at the point of selection. Failing candidates are skipped, so a corrupt copy no longer shadows a valid one; when all fail the error lists them. Rule: **matching on name has verified nothing** | 10.5 |
+
+**New contradictions found later take IDs D73+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---

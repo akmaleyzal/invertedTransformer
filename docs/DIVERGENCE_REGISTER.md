@@ -1399,4 +1399,49 @@ silently taking whichever the filesystem listed first is the invisible failure r
 the generator's constant — `D55`'s reason: testing the constant would pass while a stale notebook still
 shipped the old patterns — and runs it against four layouts, including the exact path above.
 
-New contradictions found later take IDs **D72+**.
+---
+
+## `D72` — discovery accepted a file it had not checked was a parquet
+
+The 2026-08-27 Kaggle session died 48 seconds in:
+
+```
+bars = usable_mask(load_bars(PARQUET))
+ComputeError: parquet: File out of specification: The file must end with PAR1
+```
+
+and the setup cell had printed, thirty seconds earlier:
+
+```
+parquet   /kaggle/working/__notebook__.ipynb  (0.7 MB)
+```
+
+`find_parquet` had returned **the notebook itself**.
+
+**The root cause is not established, and this entry says so rather than inventing one.** Every version
+of `find_parquet` in git globs literal `BTCUSDT_1h.parquet` patterns, which cannot match
+`__notebook__.ipynb`; the committed function was replayed against a reconstructed Kaggle tree and
+correctly raised `FileNotFoundError`. Whatever produced that binding is not visible in the log, and
+the log does not record the attached Dataset's contents.
+
+**What is fixable without knowing, and is the more useful fix anyway: the acceptance.** Discovery
+matched on *name* and never asked whether the file was a parquet. So a wrong answer travelled three
+cells before failing, and failed from inside polars — naming neither the file nor the reason it had
+been chosen.
+
+`looks_like_parquet` now checks four bytes at each end. A parquet opens with `PAR1` and closes with
+`PAR1` after its footer, so one cheap check rejects a truncated upload, a Git LFS pointer, an HTML
+error page saved under the right name, and anything else merely occupying the path. Candidates that
+fail are skipped rather than accepted, so **a corrupt copy no longer shadows a valid one** — without
+the check, which of the two won depended on sorted order, which is arbitrary with respect to validity.
+When every candidate fails, the error lists them and names the likely causes.
+
+**The transferable rule: a discovery that matches on name has not verified anything.** `D71` made
+discovery depth-independent and left this half untouched — the same function, the same session, one
+defect deeper. Finding a path and finding *the artifact* are different questions, and only the second
+one is what §12's traceability contract is about.
+
+Tests live in `tests/test_notebook_cells.py` and read the function out of the **committed notebook**
+(`D55`): four rejection cases, the shadowing case, and the depth cases from `D71`.
+
+New contradictions found later take IDs **D73+**.

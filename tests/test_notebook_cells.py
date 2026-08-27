@@ -203,6 +203,11 @@ def test_estimator_cells_skip_cleanly_on_a_partial_grid(cells, marker) -> None:
     assert "Resume in the next session" in out
 
 
+#: The smallest byte string that satisfies the notebook's magic check: a parquet
+#: file opens with ``PAR1`` and closes with ``PAR1`` after its footer.
+PARQUET_BYTES = b"PAR1" + bytes(64) + b"PAR1"
+
+
 def _find_parquet_from_the_notebook(input_root: Path, work: Path):
     """``find_parquet`` as the notebook actually defines it, pointed at a fixture.
 
@@ -221,9 +226,11 @@ def _find_parquet_from_the_notebook(input_root: Path, work: Path):
         for c in notebook["cells"]
         if c["cell_type"] == "code" and "def find_parquet(" in "".join(c["source"])
     )
-    source = ast.get_source_segment(
-        setup,
-        next(n for n in ast.parse(setup).body if getattr(n, "name", "") == "find_parquet"),
+    wanted = {"looks_like_parquet", "find_parquet"}
+    source = (chr(10) * 2).join(
+        ast.get_source_segment(setup, node)
+        for node in ast.parse(setup).body
+        if getattr(node, "name", "") in wanted
     )
     namespace: dict = {
         "Path": Path,
@@ -260,7 +267,7 @@ def test_find_parquet_is_depth_independent(layout: str, tmp_path) -> None:
     root = tmp_path / "input"
     target = root / layout
     target.parent.mkdir(parents=True)
-    target.write_bytes(b"parquet")
+    target.write_bytes(PARQUET_BYTES)
     work = tmp_path / "working"
     work.mkdir()
 
@@ -281,7 +288,7 @@ def test_find_parquet_prefers_data_raw_when_a_dataset_holds_both(tmp_path) -> No
     stray = root / "repo" / "scratch" / "copies" / "BTCUSDT_1h.parquet"
     for path in (canonical, stray):
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"parquet")
+        path.write_bytes(PARQUET_BYTES)
     work = tmp_path / "working"
     work.mkdir()
 
@@ -297,3 +304,52 @@ def test_find_parquet_still_says_what_to_do_when_nothing_is_there(tmp_path) -> N
 
     with pytest.raises(FileNotFoundError, match="Attach data/raw/"):
         _find_parquet_from_the_notebook(root, work)()
+
+
+@pytest.mark.parametrize(
+    ("blob", "what"),
+    [
+        (b"not a parquet at all", "the wrong file under the right name"),
+        (b"PAR1" + bytes(32), "a truncated upload -- no footer magic"),
+        (b"version https://git-lfs.github.com/spec/v1" + bytes([10]), "a Git LFS pointer"),
+        (b"", "an empty file"),
+    ],
+)
+def test_find_parquet_refuses_anything_that_is_not_a_parquet(blob, what, tmp_path) -> None:
+    """A candidate must prove it is a parquet before it is accepted (`D72`).
+
+    The session this comes from accepted something that was not one, and the
+    failure surfaced three cells later as ``ComputeError: parquet: File out of
+    specification: The file must end with PAR1`` from inside polars --- naming
+    neither the file nor the reason it had been chosen. Four bytes at each end
+    settle it at the point of selection, where the error can say both.
+
+    ``{what}`` is the case under test.
+    """
+    root = tmp_path / "input"
+    target = root / "btc1h-raw" / "BTCUSDT_1h.parquet"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(blob)
+    work = tmp_path / "working"
+    work.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="PAR1 magic check"):
+        _find_parquet_from_the_notebook(root, work)()
+
+
+def test_find_parquet_skips_a_broken_copy_for_a_good_one(tmp_path) -> None:
+    """One corrupt copy must not shadow a valid one (`D72`).
+
+    Sorted order is arbitrary with respect to validity, so without the check the
+    session's fate would depend on a directory listing.
+    """
+    root = tmp_path / "input"
+    broken = root / "a" / "BTCUSDT_1h.parquet"
+    good = root / "b" / "BTCUSDT_1h.parquet"
+    for path, blob in ((broken, b"truncated"), (good, PARQUET_BYTES)):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(blob)
+    work = tmp_path / "working"
+    work.mkdir()
+
+    assert _find_parquet_from_the_notebook(root, work)() == good.resolve()

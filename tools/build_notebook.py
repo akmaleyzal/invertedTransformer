@@ -1203,6 +1203,30 @@ for _mod in ("polars", "pyarrow", "numpy", "torch",
     ensure(_mod)
 
 
+def looks_like_parquet(path: Path) -> bool:
+    """True only for a file that begins and ends with the parquet magic.
+
+    Four bytes at each end. A parquet file opens with ``PAR1`` and closes with
+    ``PAR1`` after its footer, so this catches a truncated upload, a Git LFS
+    pointer, an HTML error page saved under the right name, and anything else
+    that merely occupies the path.
+
+    It exists because the alternative is what happened: something that was not a
+    parquet was accepted here, and the failure surfaced three cells later as
+    ``ComputeError: File out of specification`` from inside polars, naming
+    neither the file nor the reason it was chosen. A check at the point of
+    selection can say both.
+    """
+    try:
+        with path.open("rb") as handle:
+            if handle.read(4) != b"PAR1":
+                return False
+            handle.seek(-4, 2)
+            return handle.read(4) == b"PAR1"
+    except OSError:
+        return False
+
+
 def find_parquet() -> Path:
     """Locate BTCUSDT_1h.parquet by globbing — never by Kaggle dataset slug.
 
@@ -1226,25 +1250,44 @@ def find_parquet() -> Path:
         "*/*/BTCUSDT_1h.parquet",
     )
     roots = [WORK, Path("/kaggle/input")] if ON_KAGGLE else [WORK, WORK.parent]
+    rejected: list[str] = []
+
+    def accept(candidate: Path):
+        """The candidate, or None once it has failed the magic check."""
+        if candidate.is_file() and looks_like_parquet(candidate):
+            return candidate.resolve()
+        rejected.append(str(candidate))
+        return None
+
     for root in roots:
         if not root.exists():
             continue
         for pattern in patterns:
             for hit in sorted(root.glob(pattern)):
-                return hit.resolve()
+                if (found := accept(hit)) is not None:
+                    return found
     # Depth-independent fallback. Preferring data/raw/ still, then anything.
     for root in roots:
         if not root.exists():
             continue
-        hits = sorted(root.rglob("BTCUSDT_1h.parquet"))
-        if hits:
-            preferred = [h for h in hits if h.parent.name == "raw"]
-            chosen = (preferred or hits)[0]
-            if len(hits) > 1:
-                print(f"note: {len(hits)} copies of BTCUSDT_1h.parquet under "
+        hits = [h for h in sorted(root.rglob("BTCUSDT_1h.parquet")) if h.is_file()]
+        valid = [h for h in hits if looks_like_parquet(h)]
+        rejected += [str(h) for h in hits if h not in valid]
+        if valid:
+            preferred = [h for h in valid if h.parent.name == "raw"]
+            chosen = (preferred or valid)[0]
+            if len(valid) > 1:
+                print(f"note: {len(valid)} copies of BTCUSDT_1h.parquet under "
                       f"{root}; using {chosen}. Section 12 forbids two vintages "
                       f"in one table -- check they are the same file.")
             return chosen.resolve()
+
+    if rejected:
+        raise FileNotFoundError(
+            "found candidates but none is a parquet file -- each failed the "
+            f"PAR1 magic check at one or both ends: {rejected}. A truncated "
+            "upload, a Git LFS pointer, or the wrong file under the right name."
+        )
     raise FileNotFoundError(
         "BTCUSDT_1h.parquet not found under "
         f"{[str(r) for r in roots]}. Attach data/raw/ as a Kaggle Dataset. "
