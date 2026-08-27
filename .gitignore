@@ -236,3 +236,11 @@ artifacts/logs/
 # of the package with no test policing it.
 notebooks/itransformer_btc/
 notebooks/artifacts/
+
+# PDFs are ignored by default: renderings of documents that already live here as
+# Markdown, and supervision material that is not this repository's to carry.
+*.pdf
+# Except the generated figures. Root section 13.4 lists them as deliverables and
+# tools/build_report.py --check compares against what is committed, so ignoring
+# them would make the report generator's drift guard unenforceable.
+!paper/figures/*.pdf
