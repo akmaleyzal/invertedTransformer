@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import dataclasses
 import hashlib
 import json
 import symtable
@@ -115,12 +116,6 @@ MODULE_ORDER: tuple[str, ...] = (
     # cell below depends on a name it defines.
     "report.py",
 )
-
-#: Header comment opening each module cell. ``tests/test_notebook_sync.py``
-#: locates module cells by this, so its pattern must track this format. With the
-#: ``%%writefile`` line gone there is otherwise nothing naming the module a
-#: reader is looking at.
-MODULE_BANNER = "# ═══ {name} " + "═" * 8
 
 #: Definitions dropped from the flattened cells because they **cannot work
 #: there**, per module.
@@ -345,6 +340,564 @@ def package_digest() -> str:
     return digest.hexdigest()
 
 
+# -- sections ----------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class Section:
+    """One notebook cell's worth of a module, plus the heading above it.
+
+    ``starts_at`` names the first module-level definition the section owns; the
+    first section of every module carries ``None`` and starts at line one. Cells
+    are the half-open line ranges between consecutive ``starts_at`` anchors, so
+    they are **contiguous and exhaustive by construction** — the concatenation of
+    a module's cells is its flattened source byte for byte, with no normalisation
+    step for a reader to distrust (`D63`).
+    """
+
+    title: str
+    emoji: str
+    blurb: str
+    starts_at: str | None = None
+
+
+#: Per-module colour, so a reader navigating a ~300-cell notebook can tell which
+#: module they are inside without reading the heading text. ``(from, to, accent,
+#: heading, body)`` — the five slots `markdown-example.ipynb` uses.
+MODULE_THEME: dict[str, tuple[str, str, str, str, str]] = {
+    "config.py": ("#0b1021", "#14213d", "#8ecae6", "#8ecae6", "#a8c7d8"),
+    "__init__.py": ("#101010", "#1c1c1c", "#9e9e9e", "#d0d0d0", "#a8a8a8"),
+    "segments.py": ("#1a1200", "#2b1d00", "#ffb703", "#ffd60a", "#ffca7a"),
+    "windows.py": ("#1a1200", "#2b1d00", "#fb8500", "#ffb703", "#ffca7a"),
+    "budget.py": ("#231400", "#3a2200", "#f48c06", "#ffba08", "#ffd08a"),
+    "features.py": ("#001a1a", "#002b2b", "#48cae4", "#90e0ef", "#ade8f4"),
+    "splits.py": ("#001233", "#001845", "#4cc9f0", "#8ecae6", "#a9d6e5"),
+    "model.py": ("#150029", "#22003d", "#c77dff", "#e0aaff", "#cbb2e8"),
+    "train.py": ("#1b0033", "#2d0052", "#bf5af2", "#e0aaff", "#cbb2e8"),
+    "keff.py": ("#150029", "#240046", "#9d4edd", "#e0aaff", "#c8a2e0"),
+    "efficiency.py": ("#002200", "#003300", "#7ae582", "#95d5b2", "#b7e4c7"),
+    "metrics.py": ("#03071e", "#370617", "#e94560", "#f5a623", "#ffd6a5"),
+    "baselines.py": ("#0a1a12", "#0f2a1c", "#52b788", "#95d5b2", "#b7e4c7"),
+    "comparisons.py": ("#2b0a00", "#3d1000", "#ff7b54", "#ffb4a2", "#ffd8c2"),
+    "economics.py": ("#0d1b2a", "#1b263b", "#00b4d8", "#90e0ef", "#ade8f4"),
+    "attention.py": ("#2d0036", "#4a0060", "#e0aaff", "#e0aaff", "#c77dff"),
+    "runner.py": ("#012a4a", "#013a63", "#48cae4", "#90e0ef", "#caf0f8"),
+    "report.py": ("#001a0d", "#003317", "#52b788", "#95d5b2", "#b7e4c7"),
+}
+
+#: What each module is, in one line, under its ``##`` heading.
+MODULE_BLURB: dict[str, str] = {
+    "config.py": "Setiap angka protokol yang root §8.1 kunci, sebagai konstanta bernama. Tidak ada magic number di modul lain.",
+    "__init__.py": "Permukaan paket. Di notebook ia tidak mengimpor apa pun — seluruh nama sudah hidup di namespace kernel yang sama.",
+    "segments.py": "Hukum segmen root §4.3: gap memutus deret, dan bar tak-layak-pakai memutusnya juga. Tidak ada imputasi di mana pun.",
+    "windows.py": "Jendela divalidasi lewat <strong>timestamp</strong>, tidak pernah lewat indeks posisional — bug paling senyap di pipeline ini.",
+    "budget.py": "Anggaran jendela per origin, ditegakkan dengan kesamaan persis terhadap <code>docs/ORIGIN_WINDOW_BUDGET.md</code> (<code>D45</code>).",
+    "features.py": "Dua belas variat F1–F5, seluruhnya fungsi per-bar. Tidak satu pun memakai rolling window (root §5.3).",
+    "splits.py": "Purge H langkah di <strong>kedua</strong> batas, dan scaler yang dipasang hanya pada sub-blok 21 bulan (<code>D24</code>).",
+    "model.py": "iTransformer encoder-only. Attention berjalan lintas variat, bukan lintas waktu; kausalitas ditegakkan di hulu.",
+    "train.py": "Loop latih GPU-resident, tanpa <code>DataLoader</code>, plus kontrak keterlacakan root §12 yang setiap run tulis.",
+    "keff.py": "Dimensionalitas efektif — regresor RQ1. Dihitung hanya pada rentang latih, per origin (<code>D02</code>, <code>D44</code>).",
+    "efficiency.py": "Uji efisiensi pasar root §4.5: ADF, variance ratio, Hurst. Full sample dan per sub-blok latih.",
+    "metrics.py": "Seluruh estimator paper: metrik, DM/Clark–West, survival, dan bootstrap klaster liar untuk β₁.",
+    "baselines.py": "Ridge, DLinear, PatchTST — masing-masing dengan K eksplisit (<code>D40</code>) dan objektif terbitannya sendiri (<code>D56</code>).",
+    "comparisons.py": "Matriks pasangan, stepdown Romano–Wolf, dan Model Confidence Set (<code>D35</code>).",
+    "economics.py": "Evaluasi ekonomi root §13.5: fase 00:00 UTC, non-overlapping, per segmen, DSR per origin.",
+    "attention.py": "Peta attention per tercile volatilitas untuk Figure 5. Cabang <code>capture</code> tidak mengonsumsi RNG (<code>D62d</code>).",
+    "runner.py": "Manifes 969 run, penemuan resume lewat glob, penjaga anggaran sesi, dan eksekutor grid.",
+    "report.py": "Sembilan tabel dan enam figure, seluruhnya di-render dari <code>paper_numbers.json</code> — tidak pernah disalin tangan.",
+}
+
+#: Where every module is cut, and what the heading above each cut says.
+#:
+#: ``main()`` refuses to run when a module is missing from this table, for the
+#: same reason it refuses on a missing ``MODULE_ORDER`` entry: a silently
+#: unsegmented module would ship as one unreadable cell and nothing would say so.
+SECTION_MAP: dict[str, tuple[Section, ...]] = {
+    "config.py": (
+        Section("Header", "📄", "Docstring modul. Impornya hidup di sel Library di atas."),
+        Section("Kontrak data & jendela", "📐", "Angka terukur dari laporan Stage 1, plus L=96 dan H=24. Root §4.1 dan §6.2.", "DATA_START"),
+        Section("Protokol walk-forward", "🗓️", "24 bulan latih, 21/3 latih-validasi, enam blok 30 hari, spasi lima bulan (<code>D26</code>).", "TRAIN_MONTHS"),
+        Section("Origin", "📍", "Satu titik latih-ulang: batas latih, validasi, uji, seluruhnya epoch-based UTC.", "Origin"),
+        Section("Origin falsifikasi", "🧪", "Model fresh di <code>o + 90 hari</code>, dievaluasi pada blok kalender yang sama (root §8.1).", "FalsificationOrigin"),
+        Section("Grid lima belas origin", "🧭", "2020-01 hingga 2025-11. Spasi lima bulan koprima terhadap 12, jadi indeks blok tidak kolinear dengan bulan kalender.", "OriginLike"),
+    ),
+    "__init__.py": (
+        Section("Permukaan paket", "📦", "Di checkout ia mengekspor nama; di notebook impornya dibuang dan <code>__all__</code> tinggal dokumentasi."),
+    ),
+    "segments.py": (
+        Section("Header & konstanta", "📄", "Jam dalam milidetik dan path parquet bawaan."),
+        Section("Segmen", "🧱", "Deretan maksimal bar per-jam yang bersambung dan layak pakai.", "Segment"),
+        Section("Memuat bar & masker layak-pakai", "📥", "Bar bervolume nol atau ber-<code>H == L</code> dikecualikan — tiga bar, dan ketiganya bar yang sama (<code>D51c</code>).", "load_bars"),
+        Section("Membangun segmen", "✂️", "Gap memutus deret. Tidak ada ffill, tidak ada reindex ke grid jam penuh (root §4.2).", "build_segments"),
+        Section("Ringkasan break", "📊", "Break per origin — target asersi kesamaan-persis yang <code>D45</code> tuntut.", "BreakSummary"),
+    ),
+    "windows.py": (
+        Section("Header", "📄", "Docstring modul."),
+        Section("Enumerasi jendela", "🪟", "<strong>Divalidasi lewat timestamp, tidak pernah lewat indeks posisional.</strong> Setelah baris manapun jatuh, sliding posisional menutup gap tanpa terlihat.", "enumerate_windows"),
+        Section("Menghitung jendela", "🔢", "Bentuk tertutup hanyalah batas atas; hitungan sebenarnya per segmen (<code>D51a</code>).", "count_windows"),
+    ),
+    "budget.py": (
+        Section("Header & anggaran terkomit", "📄", "Angka per origin yang <code>docs/ORIGIN_WINDOW_BUDGET.md</code> kunci."),
+        Section("Anggaran per origin", "💰", "Jendela latih yang bertahan, break, dan bar hilang untuk satu origin.", "OriginBudget"),
+        Section("Start blok uji yang bertahan", "🎯", "720 origin ramalan per blok bersih, bukan 601 — akuntansi uji memakai semantik uji (<code>D51b</code>).", "surviving_block_starts"),
+        Section("Tabel anggaran", "📋", "Lima belas baris yang Tabel 1 render, diukur bukan disalin.", "origin_budget"),
+    ),
+    "features.py": (
+        Section("Header, tangga variat, konstanta", "📄", "Dua belas variat berurutan, target <code>r</code>, dan penstabil κ = 1e-9 untuk Rogers–Satchell (<code>D52a</code>)."),
+        Section("Kolom per rung", "🪜", "K ∈ {1, 4, 8, 12} — satu-satunya potongan konsisten yang <code>D01</code> tetapkan.", "ladder_columns"),
+        Section("Membangun dua belas variat", "🔬", "Seluruhnya fungsi per-bar. <strong>Tidak satu pun memakai rolling window</strong>, jadi kelas kebocoran <code>center=True</code> tak terwakili (root §5.3).", "build_features"),
+    ),
+    "splits.py": (
+        Section("Header & semantik", "📄", "Semantik latih lawan uji — yang membedakan 601 dari 720."),
+        Section("Start jendela per semantik", "🪟", "Enumerasi hingga <code>val_start − L − H</code>: purge H langkah di batas latih→validasi (<code>D24</code>).", "window_starts"),
+        Section("Scaler", "⚖️", "StandardScaler dipasang <strong>hanya</strong> pada sub-blok 21 bulan. Memindahkan <code>train_end</code> adalah kebocoran, bukan ketidakcocokan.", "Scaler"),
+        Section("Tensor split", "🧮", "Tensor GPU-resident per split, plus <code>mu_g</code>/<code>sigma_g</code> yang Naive-RW butuh (<code>D31</code>).", "SplitTensors"),
+        Section("Merakit tensor origin", "🏗️", "Satu origin, tiga split, tanpa <code>DataLoader</code> di mana pun (root §10.3).", "_gather"),
+    ),
+    "model.py": (
+        Section("Header", "📄", "Hanya torch yang dipakai modul ini. TensorFlow, Keras, dan JAX terlarang (root §2)."),
+        Section("Konfigurasi arsitektur", "🎛️", "<code>d_model=128</code>, bukan 512 — panjang urutan attention adalah N ≤ 12, dan 512 akan over-parameterise terhadap ~14.000 sampel (<code>D25</code>).", "ITransformerConfig"),
+        Section("Jadwal panjang", "⏱️", "Arm <code>longsched</code>: <code>lr_halve_every=8</code>, 60 epoch, patience 10 (<code>D62c</code>).", "LongScheduleConfig"),
+        Section("Blok encoder", "🧠", "Embedding terbalik <code>Linear(L → d_model)</code>, attention lintas variat, FFN. Tanpa causal mask — semua token sezaman.", "InvertedEmbedding"),
+        Section("ITransformer", "🔁", "Encoder-only. Loss dihitung hanya pada kanal target, di setiap rung (<code>D39</code>).", "ITransformer"),
+    ),
+    "train.py": (
+        Section("Header & konstanta", "📄", "Path artefak dan <code>CODE_SHA256_OVERRIDE</code> — digest yang dipin generator (root §12)."),
+        Section("Seed & pemilihan perangkat", "🎲", "Presisi digerbangi <code>get_device_capability(0)[0] >= 8</code>, tidak pernah <code>is_bf16_supported()</code>, yang mengembalikan True palsu di T4.", "set_seed"),
+        Section("Spesifikasi run & hasil latih", "📝", "Satu sel grid: model, origin, K, H, seed — komponen <code>run_id</code> root §10.4.", "RunSpec"),
+        Section("Arsitektur & protokol Forecaster", "🏛️", "Antarmuka yang iTransformer dan ketiga baseline sama-sama penuhi.", "Architecture"),
+        Section("Helper batch & prediksi", "⚡", "Batch dengan mengiris indeks tensor yang sudah di GPU. Data tidak bergerak setelah muat awal.", "_to_device"),
+        Section("Loop latih", "🔥", "Early stopping patience 5 pada MSE validasi; LR dibelah tiap 4 epoch (<code>D47</code>).", "train_one"),
+        Section("Uji invarian skala", "🔍", "<code>MSE(c·x)/c² == MSE(x)</code> — bentuk yang benar; versi loss-identik tidak mungkin lolos (<code>D03</code>).", "scale_invariance_check"),
+        Section("Provenance kode & input", "🔐", "<code>code_sha256</code> ada karena <code>git_sha</code> berbunyi unknown di Kaggle — persis tempat grid berjalan (<code>D54b</code>).", "_git_sha"),
+        Section("Menulis artefak run", "💾", "Prediksi mentah selalu, bukan cuma metrik. Tanpanya DM, analisis rezim, dan evaluasi ekonomi mustahil.", "write_artifacts"),
+        Section("Idempotensi", "✅", "Run lengkap hanya bila kedua berkas ada <strong>dan</strong> <code>meta.status</code> berbunyi complete.", "is_complete"),
+    ),
+    "keff.py": (
+        Section("Header & konstanta", "📄", "Lantai gerbang PR = 5,0, dipra-registrasi sebelum apa pun berjalan (<code>D02</code>)."),
+        Section("Participation ratio", "📐", "<code>PR = (Σλ)² / Σλ²</code> pada matriks korelasi. Diukur juga pada fitur ternormalisasi-jendela — confound instance-norm <code>D04</code>.", "participation_ratio"),
+        Section("Stable rank & spektrum sadar-lookback", "📊", "Standardisasi dalam jendela lebih dulu; tanpa itu satu baris mendominasi kedua norma dan angkanya jadi artefak satuan (<code>D53a</code>, <code>D53b</code>).", "stable_rank"),
+        Section("Baris K_eff per origin", "🧾", "Regresor RQ1, dihitung <strong>hanya pada sub-blok latih 21 bulan</strong> origin itu (<code>D44</code>).", "KeffRow"),
+        Section("Tabel K_eff & korelasi", "🔗", "<code>corr(K, K_eff) = 0,828</code>, bukan ≈0,97 yang diantisipasi — pacuannya jadi <em>lebih</em> teridentifikasi.", "keff_table"),
+        Section("Gerbang Stage 3b", "🚧", "PR di K=8 terukur 4,393 &lt; 5,0. Aksinya disklosur, bukan re-cut (<code>D48</code>).", "gate_pr"),
+        Section("PR bergulir — deskriptif saja", "🌀", "Jendela 90 hari, 2018–2026. <strong>Tidak boleh menginformasikan satu pun keputusan desain</strong> (root §5.4).", "ROLLING_WINDOW_DAYS"),
+        Section("OLS R² bergulir", "📉", "Premis H2 diuji sebelum satu epoch pun berjalan — Figure 2b.", "rolling_ols_r2"),
+    ),
+    "efficiency.py": (
+        Section("Header & konstanta", "📄", "Lag variance ratio dan ambang minimum Hurst."),
+        Section("Baris hasil", "🧾", "Bentuk keluaran untuk VR dan ADF.", "VarianceRatioRow"),
+        Section("Eksponen Hurst (R/S)", "🌊", "H ≈ 0,5 berarti tanpa memori panjang. Terukur 0,5515 full sample.", "hurst_rs"),
+        Section("Variance ratio Lo–MacKinlay", "📏", "VR ≈ 1 konsisten dengan random walk.", "variance_ratios"),
+        Section("ADF", "🧪", "Log-return stasioner. Terukur −38,43.", "adf"),
+        Section("Tabel efisiensi", "📋", "Full sample <strong>dan</strong> tiap sub-blok latih — klaimnya soal <em>variasi</em>, dan satu baris tidak bisa menunjukkannya.", "_row"),
+    ),
+    "baselines.py": (
+        Section("Header & protokol baseline", "📄", "Setiap baseline membawa K eksplisit (<code>D40</code>), dan yang channel-independent membawa objektif all-channel terbitannya sendiri (<code>D56</code>)."),
+        Section("Ridge — konfigurasi", "📏", "α dipilih pada sub-blok validasi. <strong>Satu-satunya hiperparameter yang dipilih di mana pun dalam studi ini.</strong>", "RIDGE_ALPHAS"),
+        Section("Ridge — forecaster", "➗", "L2 pada fitur K yang sama. Menjawab pertanyaan <code>D17</code>: apakah transformer dibutuhkan sama sekali?", "RidgeForecaster"),
+        Section("DLinear — konfigurasi", "📉", "Dekomposisi tren–musiman plus linear.", "DLinearConfig"),
+        Section("DLinear — dekomposisi & model", "🪚", "Moving average-nya <em>terpusat</em> — dan §8.3 selamat: rata-ratanya dihitung dari 96 bar jendela itu sendiri, seluruhnya mendahului jam ramalan pertama.", "SeriesDecomposition"),
+        Section("PatchTST — konfigurasi", "🧩", "Patch 16, stride 8.", "PatchTSTConfig"),
+        Section("PatchTST — model", "🔷", "Memakai ulang blok encoder dan kapasitas iTransformer <strong>verbatim</strong>, jadi keduanya berbeda hanya pada <em>apa itu token</em>.", "PatchTST"),
+        Section("LSTM — konfigurasi", "🔁", "Dua layer, hidden 128, dropout 0,1 — diadopsi dari root §7, tidak di-tune. <strong>Multivariat</strong>, bukan channel-independent: K=8-nya berarti apa yang ridge dan iTransformer maksud (<code>D64</code>).", "LSTMConfig"),
+        Section("LSTM — forecaster", "🧬", "Hidden state terakhir langsung ke <code>Linear(hidden, H)</code>. Model deep paling sering disitir literatur crypto yang paper ini lawan.", "LSTMForecaster"),
+        Section("Dua komparator naif", "🪶", "<code>persist</code> mengulang return terakhir; <code>seasonal</code> mengulang return satu siklus harian ke belakang. Nol parameter, K=1, dan berbeda dari Naive-RW yang meramalkan <code>y_raw = 0</code> (<code>D31</code>).", "SEASONAL_PERIOD"),
+        Section("Penyelarasan jendela baseline", "🔗", "Timestamp yang dievaluasi diasersi sama sebelum RelMSE dihitung — fatal untuk setiap pasangan selain Naive-RW.", "assert_baseline_alignment"),
+    ),
+    "metrics.py": (
+        Section("Header & konstanta", "📄", "τ headline 5% dan sensitivitasnya, plus <code>B_STAR_SCHEMA</code> — skema dideklarasikan supaya kasus semua-origin-dikecualikan tetap mengembalikan frame berkolom (<code>D55</code>)."),
+        Section("Memuat run", "📥", "Parse <code>run_id</code> dan muat prediksi/meta dari akar mana pun yang ditemukan lewat glob.", "parse_run_id"),
+        Section("Metrik inti", "📐", "MSE, MAE, RelMSE, dan <code>R²_oos = 1 − RelMSE</code> (<code>D20</code>). RMSE mentah dilaporkan berdampingan supaya dua skala dapat direkonsiliasi.", "mse"),
+        Section("Jendela non-overlap & Pesaran–Timmermann", "🎯", "Di H=24 target tumpang-tindih 23 dari 24 jam, jadi PT over-reject parah; versi tumpang-tindih deskriptif saja (<code>D21</code>).", "non_overlapping_mask"),
+        Section("Akurasi arah", "🧭", "DA di h=1, h=24, dan pada return kumulatif 24 jam — tiga rezim pengujian berbeda.", "_hit_rate"),
+        Section("Metrik per blok", "🧱", "Baseline dinilai pada <strong>himpunan jendela yang persis sama</strong> dengan pembandingnya (<code>D45</code>).", "assert_same_windows"),
+        Section("Perakitan grid & rata-rata seed", "🧮", "Rata-rata seed <strong>lebih dulu</strong>, rasio kedua — dibalik keduanya berbeda karena Jensen (<code>D42</code>).", "gather_grid"),
+        Section("Amplifikasi A dan A_attn", "📶", "<code>A</code> variabel terikat RQ2, hanya K=1 lawan K=8. <code>A_attn</code> memisahkan <em>attention</em> dari <em>informasi</em> (<code>D50</code>).", "amplification"),
+        Section("Decay dan b*", "⏳", "<code>D(i,b)</code> di skala skill (<code>D23</code>). Origin ber-<code>R²_oos ≤ 0</code> dikecualikan dengan disebut namanya — dan itu <strong>seluruh</strong> lima belasnya.", "DecayResult"),
+        Section("Kurva survival & kuantil normal", "📈", "<code>b*</code> right-censored di 6 — data survival berinterval, bukan bilangan bulat telanjang (<code>D41</code>).", "SurvivalCurve"),
+        Section("Kaplan–Meier & log-rank", "🩺", "Estimator dan uji H3. Tidak tersedia di sini: tidak satu arm pun punya origin bertahan.", "kaplan_meier"),
+        Section("Varians jangka panjang", "📊", "Estimator <strong>rektangular</strong> terpotong pada lag h−1, bukan bobot Bartlett — Bartlett menyusutkan γ̂₂₂ ~92% dan menghasilkan p terlalu optimistis (<code>D34</code>).", "_rectangular_lrv"),
+        Section("Koreksi Harvey–Leybourne–Newbold", "🔧", "Dirujuk ke Student-t dengan T−1 dof, bukan normal baku. Faktornya diasersi positif sebelum dipakai.", "TestResult"),
+        Section("DM & Clark–West", "⚔️", "Pasangan <strong>bersarang</strong> memakai Clark–West; DM baku undersized justru terhadap alternatif yang studi ini uji (<code>D29</code>).", "hln_test"),
+        Section("Rugi per origin", "🧾", "Rugi per origin per model, masukan matriks pasangan.", "per_origin_loss"),
+        Section("Bobot bootstrap & matriks panel", "🎲", "Rademacher dan Webb 6-titik, keduanya dilaporkan. Panel tak seimbang ditolak keras — reduksi β₁ ke rata-rata within-slope hanya berlaku di panel seimbang.", "Beta1Result"),
+        Section("β₁ dengan bootstrap klaster liar", "🧬", "WCR dengan null dipaksakan, mem-bootstrap <em>t</em> bukan β̂, B = 99.999, satu sisi, klaster = origin. p memakai <code>(1 + count)/(1 + B)</code> (<code>D53d</code>).", "panel_beta1"),
+        Section("TOST & uji-J non-nested", "⚖️", "TOST menguji <em>ekuivalensi</em> rung 8→12; uji-J memacu penjelasan K lawan K_eff (<code>D32</code>, <code>D49</code>).", "EquivalenceResult"),
+        Section("Efek minimum terdeteksi", "🔬", "MDE dipublikasi <strong>sebelum</strong> blok tes dibuka. Tanpa itu null tidak terbedakan dari desain yang memang tak sanggup mendeteksi (root §9.2 syarat 6).", "minimum_detectable_beta1"),
+        Section("Tabel akurasi arah & skala mentah", "📋", "DA per rung dan rekonsiliasi MSE-scaler dengan RMSE mentah.", "directional_accuracy_table"),
+        Section("RelMSE falsifikasi & β₁ dengan cakupan", "🧯", "Arm falsifikasi dilaporkan pada RelMSE, tidak pernah MSE ruang-scaler — 99,7% angka mentahnya adalah drift scaler (<code>D60i</code>, <code>D62e</code>).", "falsification_relmse"),
+    ),
+    "comparisons.py": (
+        Section("Header & konstanta", "📄", "Level MCS 90% dan 75%, dan B bootstrap bawaan."),
+        Section("Nesting & label model", "🪆", "Tangga bersifat kumulatif dan Naive-RW bersarang di setiap model — itu yang menentukan statistik mana yang sah per pasangan.", "nesting_order"),
+        Section("Panel prediksi", "🗂️", "Prediksi seluruh model pada himpunan jendela bersama.", "PredictionPanel"),
+        Section("Membangun panel", "🏗️", "Memuat setiap <code>preds/*.parquet</code> dan menegakkan keselarasan jendela lintas model.", "build_panel"),
+        Section("Diferensial rugi", "➖", "Diferensial per jendela, per (origin, blok) — T ≈ 720, h = 24, lag pemotongan 23.", "_per_window"),
+        Section("Bootstrap klaster & Romano–Wolf", "🪜", "Stepdown mengendalikan FWER lintas <em>seluruh</em> pasangan. Ia menghapus kedelapan penolakan mentah terhadap Naive-RW (<code>D35</code>, <code>D62a</code>).", "_studentised"),
+        Section("Model Confidence Set", "🏅", "Siapa yang tak terbedakan dari yang terbaik. Di 90% maupun 75%: Naive-RW dan keempat rung ridge, tanpa satu pun model deep.", "model_confidence_set"),
+        Section("Diagnostik per sel", "🔎", "T, h, dan apakah fallback Bartlett menyala — dilaporkan per pasangan.", "_cell_diagnostics"),
+        Section("Matriks pasangan", "🧮", "66 pasangan, statistik disebut namanya per pasangan, T dicantumkan di samping tiap p.", "pair_matrix"),
+        Section("Tabel MCS", "📋", "Kolom keanggotaan untuk Tabel 4 dan Tabel 6.", "mcs_table"),
+    ),
+    "economics.py": (
+        Section("Header, biaya, band slippage", "📄", "Fee taker 0,04% per sisi, slippage 0,02/0,05/0,10% — band dipra-registrasi, ketiganya dilaporkan (root §13.5)."),
+        Section("Posisi & return bersih", "📊", "Tanda ramalan kumulatif H-langkah pada return <strong>mentah bebas-drift</strong>, non-overlapping, fase 00:00 UTC.", "StrategyResult"),
+        Section("Max drawdown & bootstrap-nya", "📉", "Dari ~180 observasi MDD tak terinterpretasi tanpa interval; bootstrap stasioner memasoknya.", "max_drawdown"),
+        Section("Ringkasan strategi", "🧾", "Sharpe, Sortino, MDD, turnover — masing-masing dengan interval.", "summarise"),
+        Section("Menjalankan strategi & buy-and-hold", "🏃", "Periode holding yang melintasi break <strong>dilewati</strong>: return lintas-gap tidak terdefinisi (<code>D46</code>).", "run_strategy"),
+        Section("Uji Jobson–Korkie–Memmel", "⚖️", "Selisih Sharpe terhadap strategi naif. p ≈ 0,53 untuk <code>itr-K8</code>.", "jobson_korkie_memmel"),
+        Section("Deflated Sharpe Ratio", "🎈", "Dihitung <strong>per origin</strong> dari Sharpe per-periode, bukan yang disetahunkan — memberi yang disetahunkan menggelembungkannya √(periode per tahun).", "deflated_sharpe"),
+        Section("Run id per origin", "🔖", "Konfigurasi yang bersaing pada rentang uji origin itu — N untuk DSR.", "_origin_run_ids"),
+        Section("Tabel ekonomi", "📋", "Tabel 8, ketiga tingkat slippage. Tiga angka dilaporkan bersama: strategi, buy-and-hold, DSR.", "economics_table"),
+        Section("Kurva ekuitas", "📈", "Figure 7, sebelum dan sesudah biaya.", "equity_curves"),
+    ),
+    "attention.py": (
+        Section("Header & konstanta", "📄", "Tercile dan ukuran batch penangkapan."),
+        Section("Volatilitas lookback & tercile", "🌡️", "Calm dan stress ditentukan <strong>data</strong>, bukan dipilih setelah melihat petanya (<code>D48</code>).", "lookback_volatility"),
+        Section("Penangkap batch", "🎥", "Atribut runtime, <strong>tidak pernah</strong> field config — cabangnya tidak mengonsumsi RNG, jadi run tertangkap identik bit-per-bit (<code>D62d</code>).", "_capture_batch"),
+        Section("Peta attention per tercile", "🗺️", "Masukan Figure 5. Terukur: praktis uniform, dan kontras calm-vs-stress tenggelam di derau seed.", "tercile_maps"),
+    ),
+    "runner.py": (
+        Section("Header, arm, konstanta sesi", "📄", "Sepuluh arm, dan <code>SESSION_BUDGET_H = 11,0</code> dengan cadangan setengah jam."),
+        Section("Sel run", "🔲", "Satu sel grid, dan <code>run_id</code> deterministiknya. Mengubah komponen mana pun <strong>meng-orphan</strong> keluaran lama, bukan diam-diam memakainya ulang.", "RunCell"),
+        Section("Manifes 969 run", "📜", "684 konfirmatori, 210 robustness <code>D62</code>, 75 baseline yang <code>D64</code> bangun. Irisan H=24 sweep dideduplikasi terhadap grid utama (<code>D53e</code>).", "manifest"),
+        Section("Penemuan & resume", "🔍", "Ditemukan lewat glob, <strong>tidak pernah lewat slug Dataset yang dikodekan mati</strong>, jadi nama Dataset Kaggle bebas berubah.", "discover_roots"),
+        Section("Penjaga anggaran sesi", "⏰", "Diperiksa di batas run, bukan batas epoch. <code>SESSION_T0</code> distempel di sel 0 supaya prelude ikut terhitung (<code>D54f</code>).", "BudgetGuard"),
+        Section("Cache tensor per origin", "🗄️", "Tensor origin dimuat sekali dan dipakai ulang lintas rung dan seed.", "_TensorCache"),
+        Section("Ringkasan eksekusi & penyelarasan", "🧾", "Selesai, dilewati, gagal — dan asersi keselarasan sebelum satu pun perbandingan dibentuk.", "ExecutionSummary"),
+        Section("Eksekutor grid", "🚀", "Berurutan pada satu <code>cuda:0</code>. Terukur pada manifes 894-run: 0 gagal, 7,79 jam, rata-rata 31,8 s/run.", "execute"),
+        Section("Dua GPU, tingkat-run", "🖥️", "Satu worker per device dari satu antrean bersama. <strong>Tingkat-run, tidak pernah tingkat-batch</strong> — <code>DataParallel</code> ditolak root §10.3 dengan alasan terukur, dan DDP lebih buruk lagi untuk 969 run ~32 detik. Determinisme dijaga: seed ber-scope device, prolog di bawah satu lock (<code>D68</code>).", "visible_devices"),
+        Section("Grid tuning & pemilih konfigurasi", "🎛️", "Delapan belas konfigurasi, <strong>dideklarasikan sebelum dijalankan</strong>, diranking pada sub-blok <strong>validasi</strong> origin 1 — persis tempat <code>D27</code> menaruh gerbang Stage 5, dan karena alasan yang sama. Menjawab satu-satunya serangan yang §6.2 biarkan terbuka: <em>kalian tidak mencoba</em> (<code>D70</code>).", "TUNING_GRID"),
+        Section("Pilot Stage 5", "🚧", "Berjalan di <strong>validasi</strong>, tidak pernah di uji (<code>D27</code>). Hasilnya <code>S* = +0,8759, p = 0,1906</code> — gerbang <strong>gagal</strong>, dan judul direposisi.", "PilotResult"),
+        Section("Frame fitur", "🧊", "Satu pemanggilan yang notebook pakai untuk membangun frame fitur.", "build_feature_frame"),
+    ),
+    "report.py": (
+        Section("Header & konstanta", "📄", "Nama model, kunci perbandingan, dan tag robustness."),
+        Section("Format angka & LaTeX", "🔤", "Satu jalur format, jadi tiap tabel <code>.tex</code> memakai presisi yang sama.", "fmt"),
+        Section("Helper kecil", "🧰", "Digest, standard error lintas origin, dan penanda signifikansi.", "_sha256"),
+        Section("Input laporan & provenance", "🔐", "<code>paper/paper_numbers.json</code> menyebut berkas grid lewat sha256, jadi keduanya tidak bisa diam-diam berbeda (<code>D60f</code>, <code>D62a</code>).", "ReportInputs"),
+        Section("Bagian dataset & arsitektur", "🧱", "Di sinilah 0 dari 444 run menyentuh cap epoch terlihat (<code>D62c</code>).", "_dataset_section"),
+        Section("Bagian horizon & robustness", "🔭", "Sweep horizon dibatasi ke empat origin bernama di <strong>setiap</strong> horizon supaya kolomnya berbagi sampel.", "_horizon_section"),
+        Section("Memuat peta attention", "🗺️", "Membaca 45 parquet attention arm <code>D62d</code>.", "_load_attention"),
+        Section("build_report", "🏗️", "Pengumpul tunggal. Setiap angka manuskrip lahir di sini, lalu tabel dan figure di-render <em>dari</em> berkas itu — tidak pernah disalin tangan (root §12).", "build_report"),
+        Section("paper_numbers.json", "💾", "Menulis berkas yang seluruh deliverable baca.", "build_paper_numbers"),
+        Section("Tabel 1 & 2", "📋", "Profil dataset dan gap; deskriptif plus ADF, VR, Hurst.", "_table1"),
+        Section("Tabel 2b & 3", "📋", "Eigenspektrum dan PR per rung per origin; hiperparameter dan K seluruh model.", "_table2b"),
+        Section("Tabel 4 & 5", "📋", "Hasil utama dengan SE <strong>lintas origin</strong> (<code>D30</code>); <code>D(i,b)</code> per blok yang membawa kata undefined (<code>D60b</code>).", "_table4"),
+        Section("Tabel 6", "📋", "Matriks DM — statistik disebut namanya per pasangan, T dicantumkan, kolom Romano–Wolf dan MCS.", "_table6"),
+        Section("Tabel 7, 8, dan render", "📋", "Sweep horizon dan ekonomi, lalu seluruhnya ditulis sebagai <code>.tex</code>.", "_table7"),
+        Section("Helper plot", "🎨", "Impor matplotlib ditunda dan penyimpan PDF/PNG.", "_pyplot"),
+        Section("Figure 2b, 3, 4", "📈", "Figure 3 memikul seluruh paper: <strong>satu</strong> seri, lima belas garis per-origin, dengan MDE digambar di samping fit-nya (<code>D36</code>).", "_figure2b"),
+        Section("Figure 5 & 6", "📈", "Peta attention per tercile dan sensitivitas horizon.", "_figure5"),
+        Section("Figure 7 & render", "📈", "Kurva ekuitas di tiga tingkat slippage, lalu seluruhnya ditulis ke disk.", "_figure7"),
+    ),
+}
+
+
+def _module_level_import_lines(source: str) -> set[int]:
+    """1-based lines of every **module-level** import in ``source``.
+
+    Module level only. ``report._pyplot`` imports matplotlib inside the function
+    on purpose — the package must import cleanly without a plotting backend — and
+    a walk over the whole tree would hoist that decision into a cell that runs at
+    session start.
+    """
+    out: set[int] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            out.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    return out
+
+
+def flatten_module_body(name: str) -> str:
+    """The flattened module with its module-level imports removed.
+
+    The third declared subtractive category (`D66`). Every import the package
+    makes is emitted once by :func:`library_cell` at the top of the notebook, so
+    repeating them inside 137 definition cells is noise in the artefact a reader
+    examines. This is what a module's cells must rejoin to, and
+    ``tests/test_notebook_sync.py`` compares against it rather than against
+    :func:`flatten_module_source` — the guarantee is unchanged, its reference
+    moved.
+    """
+    source = flatten_module_source(name)
+    lines = source.splitlines(keepends=True)
+    dropped = _module_level_import_lines(source)
+
+    # The blank lines that *followed* an import block go with it; the ones that
+    # preceded it stay and become the separator. Done positionally rather than by
+    # collapsing blank runs afterwards, because a docstring may legitimately hold
+    # three blank lines in a row and a text-level rule would eat those too.
+    for number in sorted(dropped):
+        after = number + 1
+        while after <= len(lines) and not lines[after - 1].strip():
+            dropped.add(after)
+            after += 1
+
+    return "".join(
+        line
+        for number, line in enumerate(lines, start=1)
+        if number not in dropped
+    )
+
+
+def _named_label(node: ast.stmt) -> str | None:
+    """The module-level name a statement binds, or ``None`` if it binds nothing.
+
+    Only these are eligible as a :class:`Section` anchor. Imports and the module
+    docstring bind nothing a heading could sensibly point at, so they ride along
+    with whichever section is open when they appear.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, ast.Assign):
+        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        return names[0] if len(names) == 1 else None
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id
+    return None
+
+
+def _first_line(node: ast.stmt) -> int:
+    """1-based line the statement starts on, decorators included."""
+    return min([d.lineno for d in getattr(node, "decorator_list", [])] + [node.lineno])
+
+
+def _boundary(lines: list[str], first: int) -> int:
+    """0-based cut point at or above ``first``, moved up past blanks and comments.
+
+    A ``# -- section ---`` divider or a leading explanatory comment belongs to the
+    definition it introduces, and the AST cannot say so. Walking up puts it at the
+    top of the new cell instead of orphaning it at the bottom of the previous one.
+    The cut only ever moves *up*, so the ranges stay contiguous and exhaustive.
+    """
+    index = first - 1
+    while index > 0:
+        previous = lines[index - 1].strip()
+        if previous and not previous.startswith("#"):
+            break
+        index -= 1
+    return index
+
+
+def split_module_cells(name: str) -> list[tuple[Section, str]]:
+    """One ``(section, source)`` pair per cell, covering the module exactly once.
+
+    The pairs partition :func:`flatten_module_source` — every line lands in
+    exactly one cell, in order — so ``"".join(source for _, source in ...)``
+    reproduces the flattened module byte for byte. ``tests/test_notebook_sync.py``
+    asserts that, and it is the whole reason the cells carry their identity in
+    ``cell.metadata`` rather than in a banner comment the join would have to
+    strip (`D63`).
+
+    **Nothing is added.** A cell is a slice and only a slice. The
+    ``from __future__ import annotations`` these modules open with lives in the
+    library cell alone (`D66`, `D67`): IPython accumulates ``__future__`` compiler
+    flags across a session, so the directive reaches every later cell without
+    being repeated in any of them. Measured on IPython 9.13 --- ``compile.flags``
+    goes ``16896 -> 16794112`` after that cell, and a following cell with no
+    future import of its own defines a forward annotation without raising.
+    """
+    sections = SECTION_MAP.get(name)
+    if not sections:
+        raise ValueError(
+            f"{name} has no SECTION_MAP entry, so it would ship as one "
+            f"unsegmented cell while every other module is readable. Add its "
+            f"sections beside its MODULE_ORDER entry."
+        )
+    if sections[0].starts_at is not None:
+        raise ValueError(f"{name}: the first section must start at line one")
+
+    source = flatten_module_body(name)
+    lines = source.splitlines(keepends=True)
+    tree = ast.parse(source)
+    anchors = {
+        label: _first_line(node)
+        for node in tree.body
+        if (label := _named_label(node)) is not None
+    }
+
+    cuts: list[int] = [0]
+    for section in sections[1:]:
+        anchor = section.starts_at
+        if anchor not in anchors:
+            raise ValueError(
+                f"{name}: section {section.title!r} anchors on {anchor!r}, which "
+                f"is not a module-level definition there. A stale anchor would "
+                f"silently merge two sections into one cell."
+            )
+        cut = _boundary(lines, anchors[anchor])
+        if cut <= cuts[-1]:
+            raise ValueError(
+                f"{name}: section {section.title!r} anchors on {anchor!r}, which "
+                f"comes at or before the previous section. SECTION_MAP has to "
+                f"follow the module's own order."
+            )
+        cuts.append(cut)
+    cuts.append(len(lines))
+
+    cells = [
+        (section, "".join(lines[start:end]))
+        for section, start, end in zip(sections, cuts, cuts[1:])
+    ]
+    empty = [s.title for s, body in cells if not body.strip()]
+    if empty:
+        raise ValueError(
+            f"{name}: sections {empty} hold nothing once the imports move to the "
+            f"library cell (`D66`). Merge them into a neighbour rather than shipping a "
+            f"cell whose heading introduces an empty body."
+        )
+    assert "".join(body for _, body in cells) == source, (
+        f"{name}: the cells no longer partition the module. This is the one "
+        f"invariant the notebook's traceability rests on."
+    )
+    return cells
+
+
+def _html_module(name: str) -> str:
+    """The ``##``-level banner opening a module's run of cells."""
+    start, end, accent, head, body = MODULE_THEME[name]
+    return (
+        f'<div style="background: linear-gradient(135deg, {start}, {end}); '
+        f'border-radius: 14px; padding: 26px 32px; margin-bottom: 8px; '
+        f'border: 1px solid {accent}33;">\n'
+        f'  <h2 style="color: {head}; margin: 0 0 8px 0; font-size: 1.6em; '
+        f'font-weight: 700; letter-spacing: 0.5px;">\n'
+        f"    📘 {name}\n"
+        f"  </h2>\n"
+        f'  <p style="color: {body}; margin: 0; font-size: 1.0em;">'
+        f"{MODULE_BLURB[name]}</p>\n"
+        f"</div>"
+    )
+
+
+def _html_section(name: str, section: Section) -> str:
+    """The ``###``-level banner directly above one code cell."""
+    start, end, accent, head, body = MODULE_THEME[name]
+    return (
+        f'<div style="background: linear-gradient(90deg, {start}, {end}); '
+        f"border-left: 4px solid {accent}; border-radius: 8px; "
+        f'padding: 14px 20px;">\n'
+        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.15em;">'
+        f"{section.emoji} {section.title}</h3>\n"
+        f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">'
+        f"{section.blurb}</p>\n"
+        f"</div>"
+    )
+
+
+def _html_step(emoji: str, title: str, blurb: str, theme: str) -> str:
+    """A ``###``-level banner for an orchestration cell, themed like a module."""
+    start, end, accent, head, body = MODULE_THEME[theme]
+    return (
+        f'<div style="background: linear-gradient(90deg, {start}, {end}); '
+        f"border-left: 4px solid {accent}; border-radius: 8px; "
+        f'padding: 14px 20px;">\n'
+        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.15em;">'
+        f"{emoji} {title}</h3>\n"
+        f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">{blurb}</p>\n'
+        f"</div>"
+    )
+
+
+MD_MODULE_NAMES = _html_step(
+    "🧾",
+    "Inventaris modul",
+    "Delapan belas nama yang sel-sel di atas definisikan, dicatat supaya sel "
+    "provenance dapat menyebut apa yang sebenarnya berjalan.",
+    "__init__.py",
+)
+
+MD_PROVENANCE = _html_step(
+    "🔐",
+    "Provenance kode & input",
+    "Root §12 meminta tiap run menyebut kode yang menghasilkannya. "
+    "<code>git_sha</code> berbunyi unknown di Kaggle, jadi <code>code_sha256</code> "
+    "yang memikulnya (<code>D54b</code>).",
+    "train.py",
+)
+
+MD_RQ1 = _html_step(
+    "1️⃣",
+    "RQ1 — K nominal atau K_eff?",
+    "ΔMSE per rung, TOST terhadap margin pra-registrasi, dan uji-J non-nested "
+    "yang memacu kedua penjelasan (<code>D32</code>, <code>D49</code>).",
+    "metrics.py",
+)
+
+MD_RQ2 = _html_step(
+    "2️⃣",
+    "RQ2 — apakah gap menyempit seiring umur model?",
+    "β₁ dengan origin fixed effects, klaster per origin, WCR B = 99.999 — dan "
+    "MDE dicetak di sampingnya, karena null tanpa daya tidak berarti apa-apa "
+    "(root §9.2 syarat 6).",
+    "metrics.py",
+)
+
+MD_RQ3 = _html_step(
+    "3️⃣",
+    "RQ3 — cadence retraining optimal?",
+    "Bercabang ke <strong>undefined</strong>, tidak pernah ke no decay detected: "
+    "frasa kedua adalah bentuk right-censored dan ia menyiratkan edge yang data "
+    "ini tidak punya (<code>D55</code>, <code>D60b</code>).",
+    "metrics.py",
+)
+
+
+MD_LIBRARY = _html_step(
+    "📚",
+    "Library",
+    "Setiap impor yang paket ini pakai, dimuat sekali di satu tempat. Sel-sel "
+    "definisi di bawah <strong>tidak membawa satu impor pun</strong> — termasuk "
+    "<code>from __future__ import annotations</code>, karena IPython mengakumulasi "
+    "flag <code>__future__</code> lintas sel dan direktif di sini berlaku untuk "
+    "seluruh sesi (<code>D67</code>). Satu-satunya sel lain yang mengimpor adalah "
+    "Setup di atas, dan itu tidak bisa dihindari: ia yang <em>memasang</em> paket "
+    "yang sel ini impor, lalu memeriksanya lewat laporan perangkat.",
+    "__init__.py",
+)
+
+
+def library_cell() -> str:
+    """Every module-level import the package makes, deduplicated and grouped.
+
+    Read from the flattened modules rather than typed out, so a dependency that
+    appears in ``src/`` cannot go missing here. Intra-package imports are already
+    gone by the time :func:`flatten_module_source` returns, which is why this can
+    take the whole set without filtering.
+    """
+    # What the evaluation cells need and no module imports. ``gc`` is the grid
+    # cell's, called between runs so a finished model's tensors are freed before
+    # the next one allocates.
+    plain: set[str] = {"import gc"}
+    grouped: dict[str, set[tuple[str, str | None]]] = {}
+    for name in MODULE_ORDER:
+        tree = ast.parse(flatten_module_source(name))
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                plain.add(ast.unparse(node))
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                grouped.setdefault(module, set()).update(
+                    (a.name, a.asname) for a in node.names
+                )
+
+    def render(module: str) -> str:
+        names = ", ".join(
+            f"{n} as {alias}" if alias else n
+            for n, alias in sorted(grouped[module])
+        )
+        return f"from {module} import {names}"
+
+    modules = sorted(m for m in grouped if m != "__future__")
+    lines = (
+        ([render("__future__")] if "__future__" in grouped else [])
+        + sorted(plain)
+        + [render(m) for m in modules]
+    )
+    return "\n".join(lines) + "\n"
+
+
 # -- prose -------------------------------------------------------------------
 
 MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, #1b2a4a); border-radius: 16px; padding: 36px 40px; margin-bottom: 8px;">
@@ -494,6 +1047,35 @@ MD_GATE = """<div style="background: linear-gradient(90deg, #2b0a00, #3d1000); b
     <code>run_id</code>s, so the grid below skips them.</p>
 </div>"""
 
+MD_TUNE = _html_step(
+    "🎛️",
+    "Pemilihan konfigurasi pada validasi",
+    "Delapan belas konfigurasi diranking pada sub-blok validasi origin 1, lalu "
+    "pemenangnya dilatih penuh di lima belas origin sebagai arm <code>itrt</code>. "
+    "Grid-nya dideklarasikan di <code>TUNING_GRID</code> sebelum dijalankan; ruang "
+    "pencarian yang dipilih setelah melihat pemenangnya bukan pencarian. Arm ini "
+    "<strong>eksploratori</strong>, tidak masuk perbandingan tangga RQ1, dan "
+    "jumlah percobaannya masuk hitungan development trial root §13.5 "
+    "(<code>D70</code>).",
+    "model.py",
+)
+
+CODE_TUNE = r'''TUNED_CONFIG, TUNING_TABLE = tune_on_validation(
+    features, origin_index=1, k=8, device=device,
+    log=lambda msg: print(msg, flush=True),
+)
+GRID_CONFIGS = {"tuned": TUNED_CONFIG}
+
+(ARTIFACTS / "meta").mkdir(parents=True, exist_ok=True)
+(ARTIFACTS / "meta" / "tuning_selection.json").write_text(
+    json.dumps({"grid": list(TUNING_GRID), "ranked": TUNING_TABLE,
+                "selected": {"d_model": TUNED_CONFIG.d_model,
+                             "e_layers": TUNED_CONFIG.e_layers}}, indent=1),
+    encoding="utf-8",
+)
+print(f"tuned arm will run {TUNED_CONFIG.d_model=} {TUNED_CONFIG.e_layers=}")
+'''
+
 MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); border-left: 4px solid #4cc9f0; border-radius: 8px; padding: 18px 24px;">
   <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid</h2>
   <p style="color: #b8c7e0; margin: 0;">684 unique runs across seven arms, executed in this kernel. Resume automatic, budget guard at run boundaries.</p>
@@ -570,9 +1152,7 @@ MD_SAVE = """<div style="background: linear-gradient(90deg, #150029, #240046); b
 
 # -- code cells --------------------------------------------------------------
 
-CODE_SETUP = r'''import hashlib
-import json
-import os
+CODE_SETUP = r'''import os
 import subprocess
 import sys
 import time
@@ -862,8 +1442,7 @@ print("\nDisclose the pilot in section 13.2 as a SELECTION EVENT, stated separat
       "paper's conclusion.")
 '''
 
-CODE_GRID = r'''import gc
-
+CODE_GRID = r'''
 # The pre-flight probe and the pilot allocated on this same device, and the grid
 # is about to. Hand the memory back before it starts rather than carrying two
 # dead models through 684 runs.
@@ -901,18 +1480,24 @@ print(f"\nprelude took {elapsed_h * 60:.0f} min -> grid gets {budget_h:.2f} h "
 # worker. The 150 baseline cells (D56) are not measured on a T4; they run last,
 # so an overrun costs the comparators and never RQ1-RQ3's inputs. The second GPU
 # idles; that is the price of the format, and it is stated rather than hidden.
-if torch.cuda.device_count() > 1:
-    print(f"NOTE: {torch.cuda.device_count()} GPUs visible, using {device} only. "
-          f"Threads are not the fix — torch.manual_seed seeds EVERY CUDA device, "
-          f"so two threads would clobber each other's generator mid-run.")
+# Both GPUs, one worker each, off a shared queue (`D68`). The note that used to
+# stand here said threads were not the fix because torch.manual_seed seeds EVERY
+# CUDA device — true of the seeding as it was, and that is what changed:
+# set_seed now takes the device and seeds only that one, and the CPU generator is
+# shared under a single lock across seeding and module construction. Parallelism
+# stays at the RUN level; root §10.3 rejects nn.DataParallel with a measured
+# reason, and DDP pays a process group per ~32 s run.
+DEVICES = visible_devices()
+print(f"devices for the grid: {[str(d) for d in DEVICES]}")
 
 t0 = time.perf_counter()
-summary = execute(
+summary = execute_parallel(
     todo, features,
+    devices=DEVICES,
+    configs=GRID_CONFIGS,
     out_root=ARTIFACTS,
     roots=roots,
     guard=BudgetGuard(budget_h, 0.5),
-    device=device,
     log=lambda msg: print(msg, flush=True),
 )
 print(summary)
@@ -1137,13 +1722,20 @@ else:
           "nan as though it were computed would be the same defect as D55.")
 '''
 
-CODE_SAVE = r'''_digest, _provenance = _input_sha256(PARQUET)
+CODE_SAVE = r'''# ``_digest_source``, never ``_provenance``: in a flattened notebook every module
+# shares one kernel namespace, and ``report._provenance`` is a *function*
+# ``build_report`` calls one cell later. Binding that name to a string here
+# killed the last cell of the 894-run session with ``TypeError: 'str' object is
+# not callable`` --- after the grid had run for 7.8 hours and every artifact was
+# already safe on disk. `D59` from the opposite direction: not an import the
+# flattening dropped, but a package-private name an evaluation cell shadowed (`D65`).
+_digest, _digest_source = _input_sha256(PARQUET)
 
 paper_numbers = {
     "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "input_parquet": str(PARQUET),
     "input_sha256": _digest,
-    "input_sha256_source": _provenance,
+    "input_sha256_source": _digest_source,
     "code_sha256": code_sha256(),
     "runs_complete": len(done),
     "runs_in_manifest": len(ALL),
@@ -1317,27 +1909,22 @@ def _markdown(index: int, text: str) -> dict:
     }
 
 
-def _code(index: int, text: str) -> dict:
+def _code(index: int, text: str, metadata: dict | None = None) -> dict:
+    """A code cell, optionally tagged with the module and section it came from.
+
+    The tag is what ``tests/test_notebook_sync.py`` groups by. Carrying it in
+    ``metadata`` rather than in a banner comment is what keeps the cell source a
+    byte-exact slice of the module, so the concatenation check needs no
+    normalisation step (`D63`).
+    """
     return {
         "id": f"code-{index:02d}",
         "cell_type": "code",
         "execution_count": None,
-        "metadata": {},
+        "metadata": dict(metadata or {}),
         "outputs": [],
         "source": _lines(text),
     }
-
-
-def module_cell_source(name: str) -> str:
-    """Banner comment plus the flattened module.
-
-    ``tests/test_notebook_sync.py`` locates module cells by the banner and
-    compares what follows against :func:`flatten_module_source`, so the two
-    cannot drift without a test failing. The banner also gives a reader scrolling
-    the notebook the module's name, which the ``%%writefile`` line used to supply
-    and nothing else now does.
-    """
-    return f"{MODULE_BANNER.format(name=name)}\n{flatten_module_source(name)}"
 
 
 def build() -> dict:
@@ -1350,20 +1937,28 @@ def build() -> dict:
         cells.append(_markdown(counter, text))
         counter += 1
 
-    def code(text: str) -> None:
+    def code(text: str, metadata: dict | None = None) -> None:
         nonlocal counter
-        cells.append(_code(counter, text))
+        cells.append(_code(counter, text, metadata))
         counter += 1
 
     md(MD_TITLE)
     md(MD_SETUP)
     code(CODE_SETUP)
 
+    md(MD_LIBRARY)
+    code(library_cell(), {"itbtc": {"role": "library"}})
+
     md(MD_DEFINE)
     for name in MODULE_ORDER:
-        code(module_cell_source(name))
+        md(_html_module(name))
+        for section, body in split_module_cells(name):
+            md(_html_section(name, section))
+            code(body, {"itbtc": {"module": name, "section": section.title}})
+    md(MD_MODULE_NAMES)
     code("MODULE_NAMES = [\n" + "".join(
         f"    {name!r},\n" for name in MODULE_ORDER) + "]\n")
+    md(MD_PROVENANCE)
     code(CODE_PROVENANCE.replace("{digest}", package_digest()))
 
     md(MD_DATA)
@@ -1376,11 +1971,17 @@ def build() -> dict:
     code(CODE_INVARIANTS)
     md(MD_GATE)
     code(CODE_PILOT)
+    md(MD_TUNE)
+    code(CODE_TUNE)
+
     md(MD_GRID)
     code(CODE_GRID)
     md(MD_EVAL)
+    md(MD_RQ1)
     code(guarded(CODE_RQ1, "RQ1"))
+    md(MD_RQ2)
     code(guarded(CODE_RQ2, "RQ2"))
+    md(MD_RQ3)
     code(guarded(CODE_RQ3, "RQ3"))
     md(MD_SAVE)
     code(guarded(CODE_SAVE, "paper_numbers.json"))
@@ -1427,6 +2028,14 @@ def main(argv: list[str] | None = None) -> int:
             f"MODULE_ORDER, so the notebook would define an incomplete package "
             f"while code_sha256 still named every file. Add them here, in "
             f"dependency order — which is now execution order and must be right."
+        )
+
+    unsegmented = [n for n in MODULE_ORDER if n not in SECTION_MAP]
+    if unsegmented:
+        raise SystemExit(
+            f"{unsegmented} have MODULE_ORDER entries but no SECTION_MAP ones, "
+            f"so each would ship as one unsegmented cell while every other "
+            f"module is readable. Add their sections here (`D63`)."
         )
 
     notebook = build()

@@ -209,6 +209,7 @@ def build_origin_tensors(
     k: int,
     seq_len: int = SEQ_LEN,
     pred_len: int = PRED_LEN,
+    columns: tuple[str, ...] | None = None,
 ) -> OriginTensors:
     """Build every split for one (origin, K) cell.
 
@@ -221,7 +222,12 @@ def build_origin_tensors(
             window's target reaches at or past ``val_start`` — the purge
             assertion (`D24`), checked here rather than trusted.
     """
-    columns = ladder_columns(k)
+    # Named columns override the rung, so a matched-K arm can hold K fixed and
+    # move only the effective rank (`D70`). ``k`` still has to agree with the set:
+    # it is what the model is built with, and a mismatch would be silent.
+    columns = tuple(columns) if columns else ladder_columns(k)
+    if len(columns) != k:
+        raise ValueError(f"{len(columns)} columns for K={k}")
     ts = features.get_column("ts_ms").to_numpy()
     values = features.select(columns).to_numpy()
     span = seq_len + pred_len

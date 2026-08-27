@@ -20,6 +20,7 @@ import json
 import os
 import random
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -61,17 +62,45 @@ INPUT_PARQUET_ENV: str = "ITBTC_PARQUET"
 CODE_SHA256_OVERRIDE: str | None = None
 
 
-def set_seed(seed: int) -> None:
-    """Seed every source of nondeterminism root §16 names.
+#: Serialises the seeded prologue of a run — seeding, then building the module.
+#:
+#: Only the prologue. Everything after it draws from the **device's own** CUDA
+#: generator, which :func:`set_seed` scopes per device, so two workers pinned to
+#: two GPUs never touch each other's stream. The prologue is milliseconds against
+#: a ~32 s run, so holding a lock across it costs no measurable parallelism and
+#: buys back the one thing run-level parallelism would otherwise destroy: the
+#: bit-exact reproducibility `D62d` demonstrated and root §12 requires (`D68`).
+SEED_LOCK = threading.Lock()
+
+
+def set_seed(seed: int, device: torch.device | None = None) -> None:
+    """Seed every source of nondeterminism root §16 names, scoped to one device.
 
     ``cudnn.deterministic`` costs throughput and is set anyway: a run that
     cannot be reproduced cannot enter the manuscript (root §12).
+
+    **``device`` is what makes two GPUs safe (`D68`).** ``torch.manual_seed``
+    reseeds the CPU generator *and every CUDA device*, so with two workers running
+    concurrently one worker's seeding would reset the other's stream mid-training
+    and neither run would reproduce. Given a device, this seeds the CPU generator
+    and **only that device's** generator, leaving the other worker's untouched.
+
+    Single-device behaviour is unchanged, which is what keeps the 894 completed
+    runs reproducible: with one device in use, seeding it alone and seeding all of
+    them set the same generator to the same value.
     """
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    # ``torch.manual_seed`` would fan out to every CUDA device; the default
+    # generator is the CPU one and nothing else.
+    torch.default_generator.manual_seed(seed)
+    if torch.cuda.is_available():
+        if device is not None and torch.device(device).type == "cuda":
+            with torch.cuda.device(device):
+                torch.cuda.manual_seed(seed)
+        else:
+            torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -301,7 +330,6 @@ def train_one(
     to build, and the width of the target its loss reads.
     """
     device = device or pick_device()
-    set_seed(spec.seed)
 
     # The schedule comes from the config when it declares one, so an arm can widen
     # it without a new trainer (`D62c`). ``hasattr`` rather than a Protocol member:
@@ -317,7 +345,11 @@ def train_one(
         training_schedule.lr_halve_every if lr_halve_every is None else lr_halve_every
     )
 
-    model = cfg.build().to(device)
+    # Seeding and construction together, under one lock: both draw from the CPU
+    # generator, which every worker shares whatever device it owns (`D68`).
+    with SEED_LOCK:
+        set_seed(spec.seed, device)
+        model = cfg.build().to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=lr)
     schedule = torch.optim.lr_scheduler.StepLR(
         optimiser, step_size=lr_halve_every, gamma=0.5

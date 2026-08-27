@@ -25,6 +25,7 @@ installed — from the notebook alone.
 
 from __future__ import annotations
 
+import __future__
 import ast
 import builtins
 import importlib.util
@@ -42,7 +43,13 @@ PACKAGE = ROOT / "src" / "itransformer_btc"
 NOTEBOOK = ROOT / "notebooks" / "iTransformer.ipynb"
 GENERATOR = ROOT / "tools" / "build_notebook.py"
 
-BANNER = re.compile(r"^# ═+ (?P<name>[\w.]+) ═+\n")
+
+
+#: Key under which a code cell records the module and section it came from.
+#: Cells carry their identity here rather than in a banner comment, so a cell
+#: body stays a byte-exact slice of its module and the concatenation check below
+#: needs no normalisation step (`D63`).
+CELL_TAG = "itbtc"
 
 
 def _load_generator():
@@ -50,6 +57,10 @@ def _load_generator():
     spec = importlib.util.spec_from_file_location("build_notebook", GENERATOR)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    # Registered before execution because ``dataclasses`` resolves a frozen
+    # class's annotations through ``sys.modules[cls.__module__]``; an unregistered
+    # module makes that lookup return None and the decorator raises.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -86,14 +97,67 @@ def _code_sources(notebook: dict) -> list[str]:
     ]
 
 
-def _module_cells(notebook: dict) -> dict[str, str]:
-    """Module name to cell body, for every banner-headed cell, in notebook order."""
-    out: dict[str, str] = {}
-    for source in _code_sources(notebook):
-        match = BANNER.match(source)
-        if match:
-            out[match.group("name")] = source[match.end():]
+def _code_cells(notebook: dict) -> list[dict]:
+    return [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+
+
+def _module_of(cell: dict) -> str | None:
+    """The module a code cell was cut from, or ``None`` for a scaffolding cell."""
+    return (cell.get("metadata", {}).get(CELL_TAG) or {}).get("module")
+
+
+def _module_cells(notebook: dict) -> dict[str, list[str]]:
+    """Module name to its ordered cell bodies, in notebook order."""
+    out: dict[str, list[str]] = {}
+    for cell in _code_cells(notebook):
+        name = _module_of(cell)
+        if name:
+            out.setdefault(name, []).append("".join(cell["source"]))
     return out
+
+
+def _library_cell(notebook: dict) -> str:
+    """The one cell that carries every import the package makes (`D66`)."""
+    for cell in _code_cells(notebook):
+        if (cell.get("metadata", {}).get(CELL_TAG) or {}).get("role") == "library":
+            return "".join(cell["source"])
+    raise AssertionError("no library cell; run tools/build_notebook.py")
+
+
+def _inherited_flags(source: str) -> int:
+    """``__future__`` compiler flags a cell leaves behind for the cells after it.
+
+    IPython accumulates these across a session — ``InteractiveShell.compile.flags``
+    is OR-ed with every future import a cell executes, and Kaggle runs the
+    notebook through papermill to ipykernel to ``run_cell``, the same path. That
+    is why the library cell can carry ``from __future__ import annotations`` once
+    for the whole notebook and no definition cell repeats it (`D67`).
+
+    Measured on IPython 9.13: ``compile.flags`` goes ``16896 -> 16794112`` after
+    that cell, and a following cell with no future import of its own defines a
+    forward annotation without raising. Plain :func:`compile` does **not** inherit,
+    so a test that used it would be modelling a different interpreter than the one
+    the notebook runs on.
+    """
+    flags = 0
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            for alias in node.names:
+                flags |= getattr(__future__, alias.name).compiler_flag
+    return flags
+
+
+def _module_source(notebook: dict, generator) -> dict[str, str]:
+    """Module name to its cells rejoined — what the module body must equal.
+
+    Nothing to undo: a cell is a slice of ``flatten_module_body`` and only a
+    slice. The imports, the ``__future__`` directive among them, live in the
+    library cell (`D66`, `D67`).
+    """
+    return {
+        name: "".join(bodies)
+        for name, bodies in _module_cells(notebook).items()
+    }
 
 
 def test_notebook_defines_every_module(notebook: dict, generator) -> None:
@@ -106,19 +170,62 @@ def test_notebook_defines_every_module(notebook: dict, generator) -> None:
     cells = _module_cells(notebook)
     assert set(cells) == {p.name for p in PACKAGE.glob("*.py")}
     assert list(cells) == list(generator.MODULE_ORDER)
+    assert set(cells) == set(generator.SECTION_MAP), (
+        "SECTION_MAP and MODULE_ORDER disagree, so some module ships unsegmented"
+    )
+    for name, bodies in cells.items():
+        assert len(bodies) == len(generator.SECTION_MAP[name]), (
+            f"{name}: {len(bodies)} cells against {len(generator.SECTION_MAP[name])} "
+            f"sections; run tools/build_notebook.py"
+        )
 
 
-def test_module_cell_matches_flattened_source(notebook: dict, generator) -> None:
-    """Each cell body equals the module under the declared transformation.
+def test_module_cells_concatenate_to_flattened_source(notebook, generator) -> None:
+    """A module's cells, rejoined in order, equal the module itself.
 
     Not "equivalent", not "equal after formatting": identical. A single stale line
     here is a run executing code that is not in the repository, and root §12 has
     no way to detect that after the fact.
+
+    Segmentation moved this guarantee from per-cell to per-module (`D63`) and
+    weakened nothing: the cells are contiguous, exhaustive line ranges, so a line
+    that went missing between two of them fails here exactly as a changed line
+    would.
     """
-    for name, body in sorted(_module_cells(notebook).items()):
-        assert body == generator.flatten_module_source(name), (
+    for name, body in sorted(_module_source(notebook, generator).items()):
+        assert body == generator.flatten_module_body(name), (
             f"{name} differs from src/; run tools/build_notebook.py"
         )
+
+
+def test_every_code_cell_has_a_markdown_heading_above_it(notebook: dict) -> None:
+    """No code cell appears without prose introducing it.
+
+    The rule the notebook exists to satisfy now that it is the artefact a
+    reviewer reads rather than a launcher nobody opens (`D63`). A cell that
+    arrives unannounced is one the reader has to reverse-engineer.
+    """
+    cells = notebook["cells"]
+    naked = [
+        i
+        for i, cell in enumerate(cells)
+        if cell["cell_type"] == "code"
+        and (i == 0 or cells[i - 1]["cell_type"] != "markdown")
+    ]
+    assert not naked, f"code cells with no heading above them: {naked}"
+
+
+def test_section_map_covers_every_top_level_statement(generator) -> None:
+    """Splitting loses nothing, and every anchor still names a real definition.
+
+    ``split_module_cells`` asserts the partition itself; this reaches it for every
+    module, so a definition that moves in ``src/`` without its SECTION_MAP entry
+    moving fails here rather than shipping inside the wrong heading.
+    """
+    for name in generator.MODULE_ORDER:
+        cells = generator.split_module_cells(name)
+        assert len(cells) == len(generator.SECTION_MAP[name])
+        assert all(body.strip() for _, body in cells), f"{name}: empty cell"
 
 
 def test_flattening_only_removes_what_it_declares(generator) -> None:
@@ -141,7 +248,7 @@ def test_flattening_only_removes_what_it_declares(generator) -> None:
             )
 
 
-def test_no_executable_package_refs(notebook: dict) -> None:
+def test_no_executable_package_refs(notebook: dict, generator) -> None:
     """No **module** cell executably names ``itransformer_btc``.
 
     Re-derived from the notebook rather than from the generator: the whole point
@@ -159,7 +266,7 @@ def test_no_executable_package_refs(notebook: dict) -> None:
     definitions. Forbidding the name everywhere would forbid the check that
     enforces this very property.
     """
-    for name, body in _module_cells(notebook).items():
+    for name, body in _module_source(notebook, generator).items():
         tree = ast.parse(body)
         for node in ast.walk(tree):
             if isinstance(
@@ -206,7 +313,9 @@ def test_no_writefile_and_no_main_guard(notebook: dict) -> None:
                 root = (node.module or "").split(".")[0]
                 assert root != "itransformer_btc", f"cell imports from {node.module}"
 
-    assert _module_cells(notebook), "no module cells found; the banner format changed"
+    assert _module_cells(notebook), (
+        "no tagged definition cells found; the cell metadata contract changed"
+    )
 
 
 def test_definitions_precede_the_first_call(notebook: dict, generator) -> None:
@@ -216,10 +325,10 @@ def test_definitions_precede_the_first_call(notebook: dict, generator) -> None:
     in cell order — so a call placed above the definitions would fail on Kaggle
     and nowhere else.
     """
-    sources = _code_sources(notebook)
-    last_definition = max(i for i, s in enumerate(sources) if BANNER.match(s))
+    cells = _code_cells(notebook)
+    last_definition = max(i for i, c in enumerate(cells) if _module_of(c))
     first_call = min(
-        i for i, s in enumerate(sources) if "CODE_SHA256_OVERRIDE = " in s
+        i for i, c in enumerate(cells) if "CODE_SHA256_OVERRIDE = " in "".join(c["source"])
     )
     assert last_definition < first_call
 
@@ -256,15 +365,27 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
     torch = pytest.importorskip("torch")
     namespace: dict = {"__name__": "__main__"}
 
-    for name, body in _module_cells(notebook).items():
-        exec(compile(body, f"<cell:{name}>", "exec"), namespace)
+    # The library cell first: the definition cells carry no imports, so this is
+    # what binds ``np``, ``pl``, ``torch`` and the rest (`D66`) — and what leaves
+    # the ``__future__`` flags every later cell compiles under (`D67`).
+    library = _library_cell(notebook)
+    flags = _inherited_flags(library)
+    exec(compile(library, "<cell:library>", "exec"), namespace)
+
+    for index, cell in enumerate(_code_cells(notebook)):
+        name = _module_of(cell)
+        if name:
+            body = "".join(cell["source"])
+            code = compile(body, f"<cell:{index}:{name}>", "exec", flags=flags)
+            exec(code, namespace)
 
     # Committed expected values — CLAUDE.md §6.2 and `D52`.
     model = namespace["ITransformer"](namespace["ITransformerConfig"]())
     assert model.n_parameters() == 280_472
     assert len(namespace["ORIGINS"]) == 15
     assert len(namespace["VARIATE_ORDER"]) == 12
-    assert len(namespace["manifest"]()) == 894  # 684 + `D62`'s 210 exploratory
+    # 684 confirmatory + `D62`'s 210 exploratory + `D64`'s 75 deferred baselines
+    assert len(namespace["manifest"]()) == 1_620
     assert namespace["ladder_columns"](1) == ["r"]
 
     # Every arm must be able to *build and run its model* here, not merely be
@@ -273,10 +394,16 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
     # `baselines.RidgeConfig` would satisfy every parse-level check in this file
     # and then raise NameError hours into a Kaggle session (`D56`, `D58`).
     cells = namespace["manifest"]()
+    # The tuned arm has no default config on purpose (`D70`): it refuses rather
+    # than silently running the untuned one, so it is exercised with the config the
+    # notebook's prelude would hand it.
+    overrides = {"tuned": namespace["ITransformerConfig"](pred_len=24)}
     for arm in namespace["ALL_ARMS"]:
         cell = next(c for c in cells if c.arm == arm)
-        built = cell.model_config().build().eval()
-        out = built.forecast_target(torch.randn(2, 96, max(cell.k, 1)))
+        built = cell.model_config(overrides).build().eval()
+        # ``cell.seq_len``, not 96: `D70`'s lookback arms are the reason this
+        # cannot be a constant any more.
+        out = built.forecast_target(torch.randn(2, cell.seq_len, max(cell.k, 1)))
         assert out.shape == (2, cell.pred_len), f"{arm} built the wrong horizon"
     del torch
 
@@ -443,22 +570,30 @@ def test_every_name_the_notebook_reads_is_defined_somewhere(notebook: dict) -> N
     """
     pytest.importorskip("torch")
     namespace: dict = {"__name__": "__main__"}
-    module_cells = _module_cells(notebook)
-    for name, body in module_cells.items():
-        exec(compile(body, f"<cell:{name}>", "exec"), namespace)
+    library = _library_cell(notebook)
+    flags = _inherited_flags(library)
+    exec(compile(library, "<cell:library>", "exec"), namespace)
+    definition_cells = [
+        (index, _module_of(cell), "".join(cell["source"]))
+        for index, cell in enumerate(_code_cells(notebook))
+        if _module_of(cell)
+    ]
+    for index, name, body in definition_cells:
+        exec(compile(body, f"<cell:{index}:{name}>", "exec", flags=flags), namespace)
 
     defined = set(namespace) | set(dir(builtins))
     offenders: list[tuple[str, str, str]] = []
 
-    for name, body in module_cells.items():
+    for index, name, body in definition_cells:
         for scope, symbol in _unbound_reads(body, f"<cell:{name}>", defined):
             if (name, scope, symbol) not in ALLOWED_UNBOUND:
                 offenders.append((name, scope, symbol))
 
     running = set(defined)
-    for index, source in enumerate(_code_sources(notebook)):
-        if BANNER.match(source):
+    for index, cell in enumerate(_code_cells(notebook)):
+        if _module_of(cell):
             continue
+        source = "".join(cell["source"])
         stripped = _strip_magics(source)
         label = f"cell[{index}]"
         # A cell's own bindings count before it is checked: ``find_parquet``
@@ -499,3 +634,103 @@ def test_notebook_is_not_stale() -> None:
         cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+#: Names a scaffolding cell may rebind even though a definition cell defines them.
+#: Every entry is a value the notebook must resolve for *this* session rather than
+#: the package default, and each is checked by eye rather than assumed.
+ALLOWED_SHADOWS: frozenset[str] = frozenset({
+    # train.py's repo-relative default; the notebook resolves /kaggle/working.
+    "ARTIFACTS",
+    # segments.py and train.py both define it; the notebook finds the real file.
+    "DEFAULT_PARQUET",
+    # The pinned digest. ``code_sha256()`` needs a ``__file__`` no cell has, so
+    # the generator computes it from ``src/`` and the provenance cell binds it
+    # (root §12, §15).
+    "CODE_SHA256_OVERRIDE",
+    # `D54f`: the 12 h wall runs from cell 0, so the grid is handed what is
+    # *left* of the budget after the prelude rather than runner.py's constant.
+    "SESSION_BUDGET_H",
+})
+
+
+def _imported_names(source: str) -> set[str]:
+    """Names a cell binds with ``import``. Excluded from the shadowing check.
+
+    Re-importing ``numpy as np`` binds the same module object the package cell
+    bound, so it is a shadow by name and not by value — there is nothing for a
+    later cell to read differently. What the check is for is an *assignment* that
+    replaces a definition with something of another kind, which is what
+    ``_digest, _provenance = ...`` did to ``report._provenance``.
+    """
+    out: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            out |= {a.asname or a.name.split(".")[0] for a in node.names}
+    return out
+
+
+def test_no_scaffolding_cell_shadows_a_package_name(notebook: dict, generator) -> None:
+    """An evaluation cell may not rebind a name the package defines (`D65`).
+
+    The mirror of :func:`test_flattening_rejects_imports_that_bind_a_module_object`.
+    `D59` was a name the flattening *unbound*; this is a name an evaluation cell
+    *rebinds*, and it cost the same thing: ``_digest, _provenance = ...`` in the
+    save cell shadowed ``report._provenance`` — a function ``build_report`` calls
+    one cell later — with a string, and the last cell of the 894-run session died
+    with ``TypeError: 'str' object is not callable`` after 7.8 hours of grid.
+
+    §15 already noted ``DEFAULT_PARQUET`` and ``HOUR_MS`` collide across modules
+    and called them harmless *because the values are equal in both definitions*.
+    That is a property of those two names, not a property of the format, and
+    nothing was checking which kind any new collision was. This checks.
+    """
+    package_names: set[str] = set()
+    for name in generator.MODULE_ORDER:
+        for _, body in generator.split_module_cells(name):
+            package_names |= _assigned_names(body, f"<cell:{name}>")
+
+    offenders: list[tuple[int, str]] = []
+    for index, cell in enumerate(_code_cells(notebook)):
+        if _module_of(cell):
+            continue
+        source = _strip_magics("".join(cell["source"]))
+        bound = _assigned_names(source, f"cell[{index}]") - _imported_names(source)
+        shadowed = bound & package_names
+        offenders += [(index, n) for n in sorted(shadowed - ALLOWED_SHADOWS)]
+
+    assert not offenders, (
+        "scaffolding cells rebind names the package defines, and in a flattened "
+        f"notebook that is last-write-wins across the whole kernel: {offenders}"
+    )
+
+
+def test_every_cell_parses_under_kaggle_python(notebook: dict) -> None:
+    """Every cell is syntax this notebook's declared interpreter can read.
+
+    The notebook's own ``language_info`` says 3.11 and Kaggle's image supplies it;
+    a developer's machine may be several minors ahead, and nothing else here would
+    notice. Syntax accepted locally and rejected there is a failure that appears
+    only after upload — the same shape as `D59` and the `_provenance` shadow
+    (`D65`), and the same cost: hours of grid time paid before the error shows.
+
+    ``feature_version`` bounds *syntax*, not runtime behaviour. It would not have
+    caught the future-import hazard `D63` fixed, which is a semantic difference
+    between 3.11 and 3.14 rather than a syntactic one. It is a floor, not a
+    guarantee.
+    """
+    declared = notebook["metadata"]["language_info"]["version"]
+    major, minor = (int(part) for part in declared.split(".")[:2])
+
+    offenders: list[tuple[int, str]] = []
+    for index, cell in enumerate(_code_cells(notebook)):
+        source = _strip_magics("".join(cell["source"]))
+        try:
+            ast.parse(source, feature_version=(major, minor))
+        except SyntaxError as exc:
+            offenders.append((index, str(exc)))
+
+    assert not offenders, (
+        f"cells use syntax newer than the declared Python {declared}, so they "
+        f"would fail on Kaggle and nowhere locally: {offenders}"
+    )

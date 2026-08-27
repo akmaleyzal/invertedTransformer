@@ -83,6 +83,7 @@ from itransformer_btc.train import (
     RunSpec,
     TrainOutcome,
     pick_device,
+    SEED_LOCK,
     set_seed,
     train_one,
 )
@@ -175,10 +176,13 @@ class RidgeConfig:
         # A solve consumes no RNG. Seeded anyway, so a ridge run and an
         # iTransformer run of the same cell are reproducible under one rule
         # (root §16) rather than two.
-        set_seed(spec.seed)
         started = time.perf_counter()
 
-        model = self.build().to(device)
+        # Seeding and construction under one lock, as in ``train_one``: both draw
+        # from the CPU generator, which every worker shares (`D68`).
+        with SEED_LOCK:
+            set_seed(spec.seed, device)
+            model = self.build().to(device)
         x_tr = self._design(tensors.train.x, device)
         y_tr = torch.from_numpy(tensors.train.y).to(device).double()
         x_va = self._design(tensors.val.x, device)
@@ -503,6 +507,206 @@ class PatchTST(BaselineModule):
         if self.cfg.revin:
             out = out * std[:, 0, :].unsqueeze(1) + mean[:, 0, :].unsqueeze(1)
         return out
+
+
+# -- LSTM --------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LSTMConfig:
+    """Two layers, hidden 128, dropout 0.1 — root §7, adopted not tuned (`D38`).
+
+    **Multivariate, not channel-independent, and the distinction is the point.**
+    DLinear and PatchTST wear their K=8 label through an all-channel objective
+    with shared weights: they are *trained on* eight channels but predict the
+    target from its own history alone (`D56`). An LSTM reads all K channels of
+    every timestep and emits the target directly, so its K=8 means what ridge's
+    and iTransformer's mean. That makes it the only recurrent point of comparison
+    on the same information set the ladder uses.
+
+    It is here because it is the model the crypto forecasting literature this
+    paper argues against reaches for first. Claiming "no deep model beats
+    Naive-RW" while leaving the most-cited deep model untested is a hole a
+    reviewer finds in one pass.
+    """
+
+    seq_len: int = SEQ_LEN
+    pred_len: int = PRED_LEN
+    k: int = 8
+    hidden: int = 128
+    layers: int = 2
+    dropout: float = 0.1
+    #: Target-channel, like the ladder (`D39`) and unlike the two
+    #: channel-independent baselines. Logged so a reader of Table 3 can see that
+    #: this model's ``best_val_mse`` *is* comparable to the ladder's.
+    loss_channels: str = "target"
+    channel_independent: bool = False
+
+    def build(self) -> "LSTMForecaster":
+        return LSTMForecaster(self)
+
+    def loss_target(self) -> str:
+        return "target"
+
+    def fit(
+        self,
+        tensors: OriginTensors,
+        spec: RunSpec,
+        *,
+        device: torch.device | None = None,
+    ) -> tuple["LSTMForecaster", "LSTMConfig", TrainOutcome]:
+        """Root §6.2's schedule; nothing is selected, so the config returns as given."""
+        model, outcome = train_one(tensors, spec, self, device=device)
+        return model, self, outcome
+
+
+class LSTMForecaster(nn.Module):
+    """``(B, L, K) -> (B, H)`` from the last hidden state.
+
+    No instance normalisation, as is standard for this baseline — root §6.3's
+    outer ``StandardScaler`` is what serves that case, so this model reads the
+    same scaler space as every other and needs nothing of its own.
+    """
+
+    def __init__(self, cfg: LSTMConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.lstm = nn.LSTM(
+            input_size=cfg.k,
+            hidden_size=cfg.hidden,
+            num_layers=cfg.layers,
+            batch_first=True,
+            dropout=cfg.dropout if cfg.layers > 1 else 0.0,
+        )
+        self.head = nn.Linear(cfg.hidden, cfg.pred_len)
+
+    def forward(self, x: Tensor) -> Tensor:
+        out, _ = self.lstm(x)
+        return self.head(out[:, -1, :])
+
+    def forecast_target(self, x: Tensor) -> Tensor:
+        return self(x)
+
+    def n_parameters(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+
+# -- the two naive comparators -----------------------------------------------
+
+
+#: Hours in the seasonal cycle a daily pattern would repeat on.
+SEASONAL_PERIOD: int = 24
+
+
+@dataclass(frozen=True, slots=True)
+class NaiveConfig:
+    """``persist`` and ``seasonal`` — root §7's two secondary naive comparators.
+
+    Neither trains and neither has a parameter, so both cost microseconds and
+    exist purely to close a hole: root §7 listed them and `D56` recorded, in
+    writing, that nobody had built them. Two rows marked *deferred* in a results
+    table read as unfinished work, and these are the cheapest rows in the study.
+
+    Both read the target channel and nothing else, so their honest K is **1**
+    (`D40` requires the label; it does not require the label to be large). They
+    are distinct from Naive-RW, which forecasts ``y_hat_raw = 0`` and needs no run
+    at all (`D31`):
+
+    - ``persist`` repeats the last observed return for all H steps. Root §7 calls
+      it a weaker baseline than Naive-RW and that is the expected result; the
+      point is to show it rather than assert it.
+    - ``seasonal`` repeats the return one daily cycle back, step for step. It is
+      the comparator for any claim that hourly crypto carries a daily pattern.
+    """
+
+    mode: str = "persist"
+    seq_len: int = SEQ_LEN
+    pred_len: int = PRED_LEN
+    k: int = 1
+    loss_channels: str = "target"
+    channel_independent: bool = False
+
+    def build(self) -> "NaiveForecaster":
+        return NaiveForecaster(self)
+
+    def loss_target(self) -> str:
+        return "target"
+
+    def fit(
+        self,
+        tensors: OriginTensors,
+        spec: RunSpec,
+        *,
+        device: torch.device | None = None,
+    ) -> tuple["NaiveForecaster", "NaiveConfig", TrainOutcome]:
+        """No fit. The two split losses are still measured and reported.
+
+        ``epochs_run=0`` is the honest number and it is what tells a reader of
+        Table 3 why these rows have no epochs-to-stop, exactly as for ridge.
+        """
+        device = device or pick_device()
+        # Consumes no RNG. Seeded anyway so every arm is reproducible under one
+        # rule rather than two (root §16).
+        started = time.perf_counter()
+
+        with SEED_LOCK:
+            set_seed(spec.seed, device)
+            model = self.build().to(device)
+
+        def split_mse(split) -> float:
+            x = torch.from_numpy(split.x).to(device)
+            y = torch.from_numpy(split.y).to(device)
+            with torch.no_grad():
+                return float((model.forecast_target(x) - y).pow(2).mean())
+
+        return (
+            model,
+            self,
+            TrainOutcome(
+                run_id=spec.run_id,
+                epochs_run=0,
+                best_val_mse=split_mse(tensors.val),
+                train_loss=split_mse(tensors.train),
+                wall_time_s=time.perf_counter() - started,
+                n_parameters=0,
+                device=str(device),
+            ),
+        )
+
+
+class NaiveForecaster(nn.Module):
+    """``(B, L, K) -> (B, H)`` by copying a past value of the target channel.
+
+    Stateless: no parameters, no buffers, nothing to move to a device beyond the
+    module shell. ``n_parameters`` returns 0 and that is the truthful figure —
+    unlike ridge, where the coefficients are buffers and the usual sum would
+    under-report (root §12).
+    """
+
+    def __init__(self, cfg: NaiveConfig) -> None:
+        super().__init__()
+        if cfg.mode not in ("persist", "seasonal"):
+            raise ValueError(f"unknown naive mode {cfg.mode!r}")
+        self.cfg = cfg
+
+    def forward(self, x: Tensor) -> Tensor:
+        target = x[:, :, TARGET_INDEX]
+        if self.cfg.mode == "persist":
+            return target[:, -1:].expand(-1, self.cfg.pred_len)
+        length = target.shape[1]
+        # Modulo, so a horizon longer than one cycle repeats the cycle instead of
+        # indexing past the lookback. At the H=24 arms it is the identity.
+        index = [
+            length - SEASONAL_PERIOD + (h % SEASONAL_PERIOD)
+            for h in range(self.cfg.pred_len)
+        ]
+        return target[:, index]
+
+    def forecast_target(self, x: Tensor) -> Tensor:
+        return self(x)
+
+    def n_parameters(self) -> int:
+        return 0
 
 
 # -- the `D45` assertion -----------------------------------------------------

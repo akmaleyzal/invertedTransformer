@@ -21,6 +21,8 @@ from torch import nn
 from itransformer_btc.baselines import (
     RIDGE_ALPHAS,
     DLinearConfig,
+    LSTMConfig,
+    NaiveConfig,
     PatchTSTConfig,
     RidgeConfig,
     assert_baseline_alignment,
@@ -537,3 +539,159 @@ def test_ridge_overfits_by_construction() -> None:
         tensors, RunSpec("rdg", 1, 8, PRED_LEN, 42), device=torch.device("cpu")
     )
     assert outcome.train_loss < 1e-12, f"plumbing broken: {outcome.train_loss:.3e}"
+
+
+def test_lstm_is_multivariate_and_target_channel() -> None:
+    """`D64` — LSTM's K=8 means what ridge's does, not what DLinear's does.
+
+    The two channel-independent baselines wear their K label through an
+    all-channel objective with shared weights: *trained on* eight channels,
+    predicting the target from its own history alone (`D56`). An LSTM reads all
+    eight channels of every timestep and emits the target, so perturbing a
+    non-target channel **must** move its forecast. Without this the arm would be
+    K=1 wearing a K=8 label, which is the collapse `D40` exists to prevent.
+    """
+    torch.manual_seed(0)
+    model = LSTMConfig(k=8).build().eval()
+    x = torch.randn(4, SEQ_LEN, 8)
+    other = x.clone()
+    other[:, :, TARGET_INDEX + 1] += 5.0
+
+    with torch.no_grad():
+        base = model.forecast_target(x)
+        moved = model.forecast_target(other)
+
+    assert base.shape == (4, PRED_LEN)
+    assert not torch.allclose(base, moved), (
+        "the LSTM ignored a non-target channel, so its K=8 label is not true"
+    )
+    assert model.cfg.loss_target() == "target"
+    assert model.cfg.channel_independent is False
+
+
+@pytest.mark.parametrize("mode", ["persist", "seasonal"])
+def test_naive_comparators_copy_the_right_past_value(mode: str) -> None:
+    """`D64` — the two secondary baselines root §7 listed and `D56` recorded unbuilt.
+
+    Both are closed forms with no parameter, so the test is the definition: a
+    persistence forecast is the last observed return repeated, and a seasonal one
+    is the return a daily cycle back, step for step. Neither is Naive-RW, which
+    forecasts ``y_hat_raw = 0`` and needs no run at all (`D31`).
+    """
+    cfg = NaiveConfig(mode=mode, k=1)
+    model = cfg.build().eval()
+    x = torch.randn(4, SEQ_LEN, 1)
+
+    with torch.no_grad():
+        out = model.forecast_target(x)
+
+    assert out.shape == (4, PRED_LEN)
+    assert model.n_parameters() == 0
+    target = x[:, :, TARGET_INDEX]
+    if mode == "persist":
+        assert torch.equal(out, target[:, -1:].expand(-1, PRED_LEN))
+    else:
+        assert torch.equal(out, target[:, -PRED_LEN:])
+
+
+def test_seasonal_naive_stays_inside_the_lookback_at_a_long_horizon() -> None:
+    """H=168 asks for seven cycles the 96-bar lookback does not contain.
+
+    The modulo repeats the last daily cycle instead of indexing past the window,
+    which is the only behaviour available: a lookback cannot supply a value it
+    never saw. Only the H=24 arms run in the manifest, so this guards a path the
+    horizon sweep would otherwise reach as an IndexError rather than a number.
+    """
+    model = NaiveConfig(mode="seasonal", k=1, pred_len=168).build().eval()
+    x = torch.randn(2, SEQ_LEN, 1)
+    with torch.no_grad():
+        out = model.forecast_target(x)
+    assert out.shape == (2, 168)
+    assert torch.equal(out[:, :24], out[:, 24:48])
+
+
+def test_single_batch_overfits_for_the_lstm() -> None:
+    """Root §16's plumbing check for the LSTM (`D64`) — its own test, and why.
+
+    It cannot join the parameterised baseline check above: that one supervises
+    ``model(x)`` against an ``(8, H, N)`` target, because DLinear and PatchTST
+    carry their published all-channel objective. The LSTM is multivariate and
+    target-channel, so it returns ``(8, H)`` and needs the matching target.
+
+    Measured here, 8 samples, 200 steps, dropout off, seeds 42-44:
+
+    ========  =====================================  ====================
+    lr        loss after 200 steps                   Verdict
+    ========  =====================================  ====================
+    1e-3      6.8e-09 … 1.5e-08                      §16 as written
+    3e-3      6.5e-10 … 1.6e-09                      best
+    1e-2      2.7e-10 … 3.5e-08                      one seed an order worse
+    3e-2      2.3e-09 … 4.0e-05                      destabilising
+    ========  =====================================  ====================
+
+    So the LSTM is the one baseline that needs **no** learning-rate correction —
+    iTransformer's own 1e-3 drives it to ~1e-8 on every seed. That is worth
+    recording rather than discovering: the test above exists precisely because
+    PatchTST and DLinear need corrections in opposite directions, and a reader
+    would reasonably assume a third correction was hiding here.
+
+    `D52d` holds at this door too: the same run with the configured
+    ``dropout=0.1`` floors at **5.5e-04**, and a reader following §16 literally
+    would call the plumbing broken when it is not.
+    """
+    set_seed(42)
+    model = LSTMConfig(k=8, dropout=0.0).build().train()
+    x = torch.randn(8, SEQ_LEN, 8)
+    y = torch.randn(8, PRED_LEN)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    for _ in range(200):
+        opt.zero_grad(set_to_none=True)
+        loss = nn.functional.mse_loss(model(x), y)
+        loss.backward()
+        opt.step()
+    assert loss.item() < 1e-7, f"plumbing broken: {loss.item():.3e}"
+
+
+@pytest.mark.parametrize(
+    ("arm", "cfg"),
+    [
+        ("lstm", LSTMConfig(k=8)),
+        ("npst", NaiveConfig(mode="persist", k=8)),
+        ("nsea", NaiveConfig(mode="seasonal", k=8)),
+    ],
+)
+def test_new_baselines_reach_write_artifacts(arm: str, cfg, tmp_path) -> None:
+    """`D64`'s three arms go all the way to a complete run on disk.
+
+    The shape tests above prove each model computes the right thing; this proves
+    the path around it exists — ``fit`` returns the protocol's triple, and
+    ``write_artifacts`` accepts it and marks the run complete. Root §10.5 counts
+    a run finished only when both files exist **and** ``meta.status`` says so, so
+    anything less is silently re-run, and a resume that re-runs everything is how
+    a session's budget disappears.
+
+    The naive arms are the interesting case: ``n_parameters`` is genuinely 0 and
+    ``epochs_run`` is genuinely 0, and the writer must record both rather than
+    treat either as a missing value.
+    """
+    tensors = _synthetic_tensors(signal=True)
+    spec = RunSpec(arm, 1, 8, PRED_LEN, 42)
+    model, resolved, outcome = cfg.fit(tensors, spec, device=torch.device("cpu"))
+    preds_path, meta_path = write_artifacts(
+        model, tensors, spec, resolved, outcome, torch.device("cpu"), root=tmp_path
+    )
+
+    meta = json.loads(meta_path.read_text())
+    assert meta["status"] == "complete"
+    assert meta["run_id"] == f"{arm}_o01_K08_H024_s42"
+    assert meta["n_parameters"] == model.n_parameters()
+    assert preds_path.exists()
+
+    frame = pl.read_parquet(preds_path)
+    assert set(frame.columns) >= {"block", "step", "timestamp", "y_true", "y_pred"}
+    assert frame.height > 0
+    assert frame["y_pred"].is_finite().all(), "a forecast came back non-finite"
+
+    if arm != "lstm":
+        assert model.n_parameters() == 0
+        assert outcome.epochs_run == 0

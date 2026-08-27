@@ -751,3 +751,621 @@ Each was verified and each changes one sentence, not a rule:
 Tracked in `.claude/prds/claude-md-rewrite-spot-itransformer.prd.md` under *Open Questions*: the
 Python/torch version pin, RQ3's 30-day answer resolution, and the manuscript's authoritative
 language. None of them changes a rule in `CLAUDE.md`; each changes work that follows from one.
+
+---
+
+# Long-form passes moved from `CLAUDE.md` §14, 2026-08-24
+
+Passes three through eleven (`D51`–`D62`) were written into `CLAUDE.md` §14 and lived there
+alone (`D60f`). They are reproduced below **verbatim**, unedited, so §14 can carry a one-line index
+per ID instead of the full text. §15 already calls this file the long-form evidence; this is that
+claim made true. The sixth pass expands the single `D54` entry above rather than replacing it.
+
+# Third pass — the first defects found by *running* the code
+
+**`D51` is what Stage 2 was for.** It is a single register entry covering four defects that no amount
+of re-reading would have produced, because each is a disagreement between the document set and the
+artifact, found on 2026-08-06 by building `src/itransformer_btc/` and asserting
+`docs/ORIGIN_WINDOW_BUDGET.md` against `BTCUSDT_1h.parquet`. The derived table diverged at **twelve of
+fifteen origins**. This is the pattern §14's preamble predicted: the two unrun audit lenses were
+consistency and execution, and every one of these sits in exactly that gap.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D51a | F | §4.3's closed form `(bars − 119) − [119×breaks + excluded]` is not an identity. A segment of `n < 120` bars contributes zero windows but is charged `n − 119`, and the negative is absorbed silently. Origin 2022-02 holds an 80-bar segment; seven origins are understated by 39 … 137 windows | Count windows **segment-wise**, `Σ max(0, nᵢ − 119)`. Keep the closed form only as an upper bound, asserted as `closed_form ≤ measured` — the other direction would mean counting windows that do not exist |
+| D51b | F | Test-block survival was accounted with **training** semantics, requiring the whole 120-bar window inside the block. That returns 601 of 720 on a *clean* block — a 16.5% phantom loss that §9.2 would absorb into the block-coverage covariate as noise | Test blocks hold **720** forecast origins. §8.3 already licenses the 96-bar lookback crossing backwards; only a break inside the spanned 120 bars disqualifies a start. Measured: 74 of 90 cells clean, worst 439/720 |
+| D51c | C | The `H == L` count was never measured and §4.3 assumed it additive to the zero-volume count | Measured: **3 bars**, and they are the **same 3 bars** as the zero-volume and zero-trade ones — `2019-06-07T21:00`, `2021-02-11T03:00`, `2023-03-24T12:00`. No volume ⇒ no trades ⇒ high and low never separate. Total unusable is 3, not 9 |
+| D51d | I | §8.1's table claims 5-month spacing visits "12 — all of them" calendar months per block. True for `b=1` only: blocks are 30 **days**, not calendar months, so `b=2…6` visit 7 … 11 | State 12/7/11/11/11/11 against 6-month spacing's 2/2/2/3/3/2. `D26`'s conclusion is unaffected and in fact survives measurement; the "12" was an idealisation of its own algebra |
+
+Also corrected: the largest training tensor is **70.12 MB**, not "≤ 70 MB" (`D25` rounded the wrong
+way), and the training-window floor is **13,558**, not 13,558.
+
+# Fourth pass — defects found by building the model, 2026-08-06
+
+`D51` came from asserting the *data* accounting. **`D52` came from building the features and the
+network**, which is a different surface and produced a different class of defect: two claims in this
+document that are provably false about the mathematics, and two magnitudes that were written before
+anything was measured.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D52a | F | §5.1 asserts all three F2 estimators are "strictly positive once `H == L` bars are excluded", so their logs are total. **False for Rogers–Satchell.** `ln(H/C)·ln(H/O) + ln(L/C)·ln(L/O)` vanishes on any bar with no shadows at all — H equal to one of O/C, L equal to the other. Such a bar has `H > L`, carries real information, and passes the segment law: it is a marubozu. Measured: **33 of 75,091 usable bars**, and `log 0 = −∞` propagates into the K=12 rung | The claim holds for Parkinson (∝ `(ln H/L)²`) and Garman–Klass (≥ `0.114 (ln H/L)²`, since `2ln2−1 ≈ 0.386 < 0.5`); restate it for those two only. Rogers–Satchell uses `log(RS + κ)` with **κ = 1e-9 fixed**, chosen so `log κ = −20.7` lands inside the measured support (median −10.91, 0.1st pct −17.57, min −23.5) rather than as 33 out-of-support spikes that would distort the instance normalisation of every window containing one and smuggle a categorical marubozu flag into a continuous variate. Not applied to the other two: their minima are 1.16e-8 and 1.48e-8, where κ would shift the smallest values ~8% for nothing. Disclose in §4.1b |
+| D52b | C | §7 states `μ_g/σ_g ≈ 0.037` on a bull window, "~35% of `R²_oos`", "≈ 0.18σ over 24 steps". Written before measurement | Measured across all 15 origins: **−0.00818 … +0.01733**, so ~2× smaller; square is **7.5%** not 35%; tilt **0.085σ** not 0.18σ. The argument survives and in one respect strengthens — `μ_g/σ_g` **changes sign** across origins, so it is not a constant a reader can subtract. §7 corrected |
+| D52c | U | The training-window count in `ORIGIN_WINDOW_BUDGET.md` is measured on the **raw** usable bars, but windows are cut from the **feature** frame, and §4.3 drops the first bar of each segment because `r` is per-segment. The tensors therefore hold 0 … 13 fewer windows than the table asserts, one per segment | Both numbers are right about different frames. State the assertion target as the **feature frame** — `13,545 … 15,217` — and keep the raw-frame table as the gap-accounting document. The delta is exactly the segment count and is asserted as such |
+| D52d | I | The single-batch overfit check in §16 cannot pass as written: with `dropout=0.1` active the loss floors well above zero, and a reader following it literally concludes the plumbing is broken | Run it with `dropout=0.0`. Measured: **8.26e-10** after 200 steps on 8 samples — pass. With dropout left on, 6.8e-2 |
+
+Confirmed correct by measurement, and worth recording because each was an assumption: parameter
+count is **280,472** and **identical at every rung** (§6.2's claim, exact); `MSE(c·x)/c² == MSE(x)`
+holds to 5e-5 relative (`D03`); `log_mean_trade_size` equals `log_quote_volume − log_trade_count` to
+the last bit, confirming F3's 2-dof claim.
+
+# Fifth pass — defects found by building the experiment plane, 2026-08-06
+
+`D51` came from asserting the data accounting and `D52` from building the features and the network.
+**`D53` came from building the grid, the K_eff measurement and the metrics** — the three modules that
+turn runs into answers — and from running the Stage 3b gate for the first time.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D53a | F | §5.4's "stable rank of the `K × 96` window block" is a **units artefact** as literally specified. Centring alone leaves `log_quote_volume` deviations two orders of magnitude above `r` deviations, so one row dominates both the Frobenius and the spectral norm. Measured at origin 1: **1.00 / 1.00 / 1.16 / 1.65** across the four rungs — "one effective direction" everywhere, which is a statement about units and not about data | Standardise each channel **within its window** first, which is exactly what `use_norm=True` does before the embedding. The statistic then has a closed form: `K / λ₁` of the within-window correlation matrix, bounded in `[1, K]` and commensurable with the contemporaneous PR. Measured: 1.00 / 2.36 / 2.70 / 2.17 |
+| D53b | F | §5.4's "PR of the `K·L × K·L` **covariance** spectrum" is not monotone in K and is uninterpretable. Measured at origin 1: **92.1 / 21.9 / 37.3 / 15.5** — the collapse from K=1 to K=4 is entirely the arrival of `log_quote_volume` and says nothing about dimensionality | Use the **correlation** spectrum, for the same reason `contemporaneous_pr` does. Its ceiling is `K·L`, so it is reported as a fraction of that ceiling and is **not** on the contemporaneous PR's scale. It is nevertheless the only measure here that sees genuine cross-lag structure; the stable rank sees cross-*variate* structure inside a window. Say which is which in §4.1b |
+| D53c | F | Sharding the **pending** list races. Two workers launched together compute their partition at slightly different moments — one finishes a run while the other is still building features — and the partitions stop being complementary: some groups owned by both, some by neither | Shard the **full manifest**, then subtract what is complete. `execute` skips completed cells anyway, so the filter costs nothing and the partition is deterministic |
+| D53d | C | The wild cluster bootstrap returned a literal **p = 0**. `mean(t* ≤ t_obs)` has no floor, and no finite bootstrap can support that as a probability | `(1 + count)/(1 + B)` (Davison & Hinkley 1997) — the observed statistic belongs to its own reference distribution. At B = 99,999 the floor is 1e-5, and at G = 15 Rademacher's own granularity bounds it near 3e-5 regardless |
+| D53e | C | §10.2's total **double-counts 48 runs**. The horizon sweep's H=24 slice at seeds 42–44 carries the *same* `run_id` as the corresponding main-grid cells, and `run_id` is the identity of a run (§10.4), so 582 nominal iTransformer cells are **534 real runs**. Executing a shared cell twice would mean two files racing for one path | Deduplicate in the manifest. The grid total is **789**, not 837: 534 iTransformer + 195 baselines + 60 ridge. The sweep is still "4 × 4 × 4 × 3 = 192 cells" in the paper; 144 of them are new work |
+| D53f | **U** | **The Stage 3b gate does not pass.** Measured PR at K=8 on the pre-first-origin span is **4.393 < 5.0**, and per-origin PR at **K=12 (3.98) is *lower* than at K=8 (4.27)** — §5.2 expected ~6.5 and ~7. `corr(K, K_eff) = 0.828`, not the ≈0.97 §9.1 anticipated | `D48`'s action is **disclosure, not a re-cut**, and it is taken: the grid proceeds unchanged and §4.1b reports the divergence. Two consequences are substantive rather than procedural. First, the K=12 rung is **more** redundant than designed — §5.2's deliberate-redundancy control is stronger evidence than expected, not weaker. Second, at 0.828 the K-versus-K_eff horse race is **more** identifiable than §9.1 feared, so `D32`'s non-nested comparison is worth running rather than a formality. Fix the hypothesis to the measurement, never the reverse (§5.4) |
+
+Also measured, and recorded because it bears on the Stage 5 gate: at origin 1 with a **single** seed,
+validation MSE is 0.469075 at K=1 against 0.467904 at K=8 — K=8 ahead by 0.25%, Clark–West
+`S* = +0.728, p = 0.233`. That is not the gate, which averages three seeds, but it is the first
+evidence about it and it points the same way as §10.3's `R²_oos = −0.0183`. If the real gate fails,
+§8.5's instruction is to reposition the title to the descriptive variant **now, not in week nine**.
+
+# Sixth pass — the Kaggle deployment surface, 2026-08-07
+
+`D51` came from asserting the data accounting, `D52` from building the features and the network,
+`D53` from building the experiment plane. **`D54` came from asking what the notebook actually needs
+in order to run on Kaggle** — the deployment surface, which is precisely what the unrun
+Kaggle/execution lens would have examined, and which no amount of re-reading `src/` would surface,
+because every defect in it is invisible on a machine that happens to have the repository.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| D54a | C | The launcher globbed for `src/itransformer_btc/__init__.py` and pushed the hit onto `sys.path`, so it could not run unless the **repository was also uploaded as a second Kaggle Dataset** and kept in step with the notebook by hand — two artifacts that must agree, with nothing checking that they do | The notebook carries the package in twelve `%%writefile` cells and materialises it before importing, then asserts `itransformer_btc.__file__` lives under its own working directory. Files rather than in-cell definitions because the two GPU workers are **subprocesses** and inherit no namespace. §15 |
+| D54b | C | `_git_sha()` is `"unknown"` on Kaggle — no git repository exists there — so §12's three-part contract lost its **code** half at exactly the place the grid executes, while §12 read as though it had not | `code_sha256`: the hash of the package source, line endings normalised so a CRLF checkout and an LF materialisation of one logic give one digest. Recorded beside `git_sha` in every `meta/*.json` and in `paper_numbers.json`. §12 |
+| D54c | C | `_input_sha256()` read the hard-coded `data/raw/BTCUSDT_1h_report.json`, absent on Kaggle: the artifact arrives under `/kaggle/input/<slug>/` and §10.5 forbids hard-coding that slug. The **input** digest therefore also logged `"unknown"`, and §12's rule that two vintages may not share a table became unenforceable | `ITBTC_PARQUET`, set by the notebook, by `launch_workers` per child, and by the worker CLI from its own `--parquet`. The Stage 1 report beside the artifact is preferred; hashing the parquet is the fallback; `input_sha256_source` records which. §12 |
+| D54d | I | Nothing would police the second copy of ~4,000 lines the fix creates — the drift failure this register exists to prevent | The notebook is **generated** by `tools/build_notebook.py`; `tests/test_notebook_sync.py` asserts it byte-identical to `src/` and `--check` fails the suite on drift. §15, §16 |
+| D54e | F | **The evaluation cells crash on a partial session, which is the normal session.** A grid stopped at run 200 of 534 leaves an unbalanced panel, and §9.1's estimators refuse one *by design* — `amplification` raises rather than compare K=1 at eleven origins against K=8 at ten, and RQ1's `wide[4] - wide[8]` broadcast-errors first. Simulated at the real two-shard stop shape: K=1 complete at 11 origins, K=4/8/12 at 10. The estimators are right; **where the exception lands is not** — it marks the Kaggle version failed at the exact moment its output is the only thing worth keeping | The estimators stay strict and the notebook does not call them until the panel exists: cells RQ1/RQ2/RQ3 and the `paper_numbers.json` write are gated on `GRID_COMPLETE`, print what remains and how to resume, and exit cleanly. A half-panel β₁ is a **different estimand**, not a noisier one, so partial evaluation is never the fallback |
+| D54f | C | **The budget guard bounds the worker, not the session.** `BudgetGuard.deadline` is set from `time.perf_counter()` inside each worker, but Kaggle's 12 h wall runs from cell 0 — so the prelude (data, K_eff, invariants, and the *twelve pilot training runs*, ~20–25 min) sat outside the budget entirely, and the two clocks drifted apart by however long it took | The notebook stamps `SESSION_T0` in cell 0 and passes `budget_h = 11.0 − elapsed` to `launch_workers`, so the guard bounds what §10.1 actually limits. Hitting the wall interactively loses `/kaggle/working` entirely, so this margin is not somewhere to be approximate |
+
+Measured 2026-08-07 with the repository absent from `sys.path`: every §4.1/§5.4/§6.2 figure
+reproduced from the materialised copy — 75,094 bars, 3 unusable, window budget exact at all fifteen
+origins, gate PR **4.393**, `corr(K, K_eff)` **0.828**, **280,472** parameters, `μ_g/σ_g` spanning
+−0.00818 … +0.01733 — and one worker subprocess wrote a `meta` carrying
+`input_sha256 = 8270a84b07c2923b…` from source `"report"`, matching §4.1's pinned digest.
+
+# Seventh pass — defects found by *running the grid to completion*, 2026-08-08
+
+`D51`–`D53` came from building the pipeline and `D54` from asking what Kaggle needs. **`D55`–`D58`
+came from the first full 534-run session** — the only lens that reads the code *after* the answers
+exist rather than before, and it found two defects that are invisible until the results have a
+particular shape.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D55** | F | `DecayResult.b_star()` inferred its schema from its rows, so when `decay`'s `R2_oos > 0` guard excluded **every** origin it returned a frame with no columns and the RQ3 cell's `bs["b_star"]` raised `ColumnNotFoundError` — marking the twelve-hour version failed at the moment its grid output was the only thing worth keeping. The guard firing is the **expected** outcome under non-positive skill, not an edge case: §10.3's first run already returned `R2_oos = -0.0183` and the grid returned it at all fifteen origins. `D54e` gates on grid *completeness*, a different failure | `B_STAR_SCHEMA` declares the four columns. The RQ3 cell branches: an empty table means the estimand is **undefined** — there is no edge to lose a proportion of — which is *not* the right-censored "no decay detected within 180 days" §3 pre-registers, and reporting both in one wording would claim skill the grid never found. Log-rank likewise refuses to print `chi2=nan` where the statistic is 0/0. **Closed 2026-08-08** |
+| **D56** | F | §7 calls DLinear and PatchTST "not optional" and §10.2 budgets 255 baseline runs, but **no baseline model exists in `src/`** and the manifest (534 = `main 300 + uniform 75 + fresh 15 + horizon 144`) never contained one. §10.2's 789 was never executable. `metrics.dm_nonnested()` sits waiting for input that has never existed, so Table 6 has no inputs and the paper's central architectural comparison has no data | `src/itransformer_btc/baselines.py` + manifest keys: **ridge (K=1,4,8,12) 60, DLinear (K=8) 45, PatchTST (K=8) 45**, manifest **534 → 684**, arms ordered so the ladder completes first. `write_artifacts` was **generalised to a protocol, never copied** — §12's schema keeps exactly one definition, and the iTransformer `meta/*.json` was verified byte-identical across the change but for `code_sha256` and `wall_time_s`. `D45` is asserted per baseline run against its main-grid comparator and is **fatal**, not skipped. Three consequences are new and written into §7: the channel-independent baselines' all-channel objective and what their K label therefore means, DLinear's internal centred moving average against §5.3, and PatchTST at ~16× iTransformer's wall time. ARIMA, LSTM, naive-persist and seasonal-naive are **deferred with a written reason**, not silently unbuilt. **Closed 2026-08-10** |
+| **D57** | U | §10.3 estimated 60–100 s per run on a T4 and 10–20 h for the grid. Measured: **~30 s** and **2.31 h** for 534 runs on two T4s. The regime was right; the arithmetic on it was 2–3× pessimistic per run and 4–8× overall, so the weekly quota was never the binding constraint every §10.2 trade-off was made against | §10.3 carries the measured numbers, §10.5's resume argument reads ~30 s. The slack is what makes a second granularity affordable and what made `D58` possible. **Closed 2026-08-08** |
+| **D58** | C | §15 and §10.3 described twelve `%%writefile` cells materialising a package, imported by **two GPU subprocesses**. That form existed for one reason — a subprocess reaches code only from disk — and `D57` dissolved it. Keeping the description would have left the governing document contradicting the artifact, which is worse than the defects it catches | Notebook flattened to **definition cells** in one kernel namespace; grid runs in-kernel and sequential. `D54a`'s *conclusion* (no repository Dataset) stands; its *mechanism* is superseded. `launch_workers` is retained and tested for the checkout path and for a 1-minute grid, where sequential will not fit. `code_sha256` is pinned by the generator, with the honesty cost stated in §12. **Closed 2026-08-08** |
+
+# Eighth pass — the first defect found by *running the flattened notebook*, 2026-08-11
+
+`D54` came from asking what Kaggle needs and `D55`–`D58` from running the grid. **`D59` came from
+running the notebook `D58` produced**, and it is the flattening's own failure mode: a defect that
+every check in this repository answers correctly and that only the interpreter can see.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D59** | F | `stage5_pilot` reached the gate statistic through `from itransformer_btc import metrics` — an import binding a **module object**. Flattening drops intra-package imports (§15) and **no cell defines a module object**, so `metrics.clark_west_test` was a `NameError`. Every existing check passed, because each asks a question this defect answers correctly: the cell parses, it compiles, it equals `src/` byte for byte, it names no surviving `itransformer_btc`, and `test_definition_cells_execute_in_one_namespace` executes the definitions without ever entering that function body. It surfaced at **365 s on Kaggle** — past Stage 2, Stage 3b, Stage 4 and all twelve Stage 5 pilot runs — and marked the version failed. `runner.py` already carried the rule in a comment, for the baseline configs (`D56`); `metrics` was simply missed | Import the **name**: `from itransformer_btc.metrics import clark_west_test`. Three defences, because a comment is not a check. (1) `flatten_module_source` computes the names each dropped import would have bound to a module object and **refuses to emit a cell that still reads one**, carrying the fix in the message. (2) `_intra_package_import` now also matches the **relative** form `from . import x`, which it did not — that form survived flattening and would raise `ImportError` on the first run rather than being quietly equivalent. (3) `tests/test_notebook_sync.py` walks **every** cell with `symtable` against the executed namespace and fails on any global that is read and never bound — a symbol-table question rather than a spelling one, so a local named `metrics` does not cry wolf. It finds exactly one permitted hole, `__file__` inside `code_sha256`, unreachable behind the pinned `CODE_SHA256_OVERRIDE` and listed by name rather than allowed everywhere. **Closed 2026-08-11** |
+
+**What this says about the format, stated because it is the cost side of `D58`'s trade.** Flattening
+is subtractive over two declared categories, and *that is still true*: the defect was not a rewrite
+but a deletion whose consequence lived elsewhere in the file. A module-object import is the one
+construct whose meaning the deletion changes rather than preserves, so `src/` may reach a sibling
+**only by name**. The rule is now enforced at generation instead of remembered.
+
+**The twelve pilot runs may or may not survive, and the difference is Kaggle's, not the code's.**
+They are ordinary main-grid `run_id`s and their artifacts were written before the exception, so
+§10.5's resume finds them complete **if** the failed version published `/kaggle/working` as its
+output. Whether a version that ends in a papermill error publishes anything is not established here
+and must not be assumed; if it did not, the loss is those twelve runs, about six minutes.
+
+# Ninth pass — the defects found by *having the answers*, 2026-08-20
+
+`D51`–`D53` came from building the pipeline, `D54` from asking what Kaggle needs, `D55`–`D58` from
+running the grid and `D59` from running the notebook `D58` produced. **`D60` came from reading the
+grid's output against the document that specified it** — the one lens that cannot run until the
+answers exist. It found no coding defect. Every entry below is the document being wrong about the
+world, or silent where the world had spoken.
+
+**The governing document was seven hours stale and the gap was not visible from inside it.**
+`CLAUDE.md` was last written 2026-08-11 09:43 local (`77cbb5b`, closing `D59`);
+`paper_numbers.json` was written 2026-08-11T09:51:37Z, i.e. 16:51 local. Between those two stamps
+the grid ran to completion and answered all three research questions, and nothing in the repository
+required the document to notice. That is the failure mode this section exists for, and it is why
+`D60a` is fatal rather than clerical: §8.5 pre-registered an action on the Stage 5 result, the
+result arrived, and the action did not happen for nine days.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D60a** | F | **The Stage 5 gate failed and the document did not say so.** Clark–West K=1 vs K=8 on origin 1's validation sub-block returned `S* = +0.8759, p = 0.1906` one-sided, `T = 1845, h = 24` — a failure to reject at α = 0.05. §8.5 pre-registers exactly one action on that outcome: *"reposition the title to the descriptive variant now, not in week nine."* The session log printed that sentence back verbatim. §1 still carried the comparative title, §5.3's K=16 arm still read as live, and §13.2 still listed the pilot as a selection event that might or might not have fired | §1 title repositioned, old title retained with its reason. §8.5 carries a gate-outcome table for all three stages. §5.3 records the K=16 arm as **not run, clause 1 failed**. §13.2 adds the disclosure. **Closed 2026-08-20** |
+| **D60b** | F | **RQ1, RQ2 and RQ3 all have answers and none was in the document.** RQ1: `R²_oos` = −0.0205 / −0.0187 / −0.0180 / −0.0186 at K = 1/4/8/12, ΔMSE 4→8 = +0.000636, 8→12 = **−0.000437**, TOST vs ±0.000159 → **not equivalent** (the 8→12 rung is worse, not flat); the J-test rejects the K explanation (`t = +3.293, p = 0.0011`) and does not reject K_eff (`t = −0.348, p = 0.7281`). RQ2: β₁ = **+0.000256**, wrong sign, WCR p = 0.7381, and **inside** the MDE of −0.000920, which is §9.2 requirement 6's pre-registered trigger. RQ3: `decay_panel` **empty**, all 15 origins excluded on `R²_oos ≤ 0`, `b*` **undefined** at every τ, log-rank unavailable in both arms | §3 carries a measured-answers table beside the hypotheses. §9.1 states that the `R²_oos ≤ 0` guard is the only case, not an edge case, and fixes the RQ3 wording — *"the estimand is undefined under non-positive out-of-sample skill"*, never *"no decay detected within 180 days"*. §9.2 requirement 6 records the MDE beside the estimate. §10.3 records that the first run's −0.0183 was the whole distribution. **Closed 2026-08-20** |
+| **D60c** | C | **The baseline ordering inverts the paper's premise and appeared nowhere.** Mean `R²_oos` over every test block: ridge **−0.000568**, PatchTST −0.016312, iTransformer-K8 −0.017993, DLinear −0.026248. Every model loses to Naive-RW, and the *linear* model loses by ~30× less than any deep one — at ridge's selected α it shrinks close enough to the training mean that it is nearly the baseline itself. `D17` added ridge to ask "is a transformer needed at all?"; the measured answer is **no**, and §7 recorded only a single-cell validation hint pointing that way | §7 states the ordering and the reading. §13.2 makes it a mandatory disclosure. It is the frame every other result must be read inside, so it belongs in Results before RQ1, not in a baseline table at the back |
+| **D60d** | U | **§7's PatchTST projection was falsified and §10.3's per-run figure moved again.** §7 scaled a CPU measurement (1810 s, ~16× iTransformer per run) onto a T4 and predicted ~6 h for the PatchTST arm alone, a 684-run manifest near the 11 h budget, and "two sessions is now the expected case". Measured: PatchTST **95.6 s** mean, **~2.6×** iTransformer, arm **1.19 h**; whole manifest **6.52 h, single `cuda:0`, one session**, mean 35.0 s per run, 684 complete / 0 skipped / 0 failed | §7 and §10.3 carry the measured per-arm means. The transferable rule, which is what was actually wrong: **a throughput ratio measured on one device does not scale to another** — PatchTST's B×N = 256 folding is a penalty a 6-thread CPU pays in full and a T4 largely absorbs |
+| **D60e** | C | **`D59` left open whether a papermill-failed Kaggle version publishes its output, and the answer was already on disk.** §14 hedged that the twelve pilot runs "may or may not survive" | It publishes. The grid session opened `already complete: 12  pending: 672` and skipped them. §10.5 states it and drops the hedge; the loss from `D59` was **zero runs**, not twelve |
+| **D60f** | U | **§12 and §15 point at the wrong directory.** Repo-root `artifacts/` holds **one** run from a 2026-08-06 CPU smoke test. The grid output is at `notebooks/outputs/artifacts/`, committed at `29c0646`. Six panel parquets exist there and are documented nowhere; `logs/`, `tables/` and `figures/` do not exist in either location, though §15's layout implies all three | §15 carries the real inventory and marks repo-root `artifacts/` as stale. §12 names the real `paper_numbers.json`. §15's one-line description of the register is corrected: it holds D01–D50 and D54 only, and **D51–D53 and D55–D60 live in §14 alone** |
+| **D60g** | U | **Table 6, Table 8, Figure 5 and Figure 7 have no inputs and were never run**, while §13.4 promises eight tables and seven figures. The session log contains zero Diebold–Mariano, Romano–Wolf or Model Confidence Set lines; no economic evaluation ran; attention weights were never persisted. `metrics.dm_nonnested()` sits waiting for input a second time — `D56` fixed the missing *models*, not the missing *call* | §13.4 carries a state table naming each deliverable, its state and what is missing. Two are load-bearing: **Table 6** is one aggregation pass from existing, since `preds/` holds the target channel for all 684 runs; **Figure 5** is not, because attention maps were not saved and need a re-run |
+| **D60h** | I | Three unscoped or superseded numbers. (1) §6.2's "parameter count identical across rungs" is true only *within* a horizon — measured 277,505 / 277,763 / **280,472** / 299,048 at H = 1/3/24/168, because the projection is `Linear(d_model → H)`. (2) `D52a` gives Rogers–Satchell "min −23.5, 0.1st pct −17.57"; measured post-κ the min is **−20.723**, which is `log 1e-9`, the floor itself, and q0.1% is **−19.805**. Both are true, of the pre-κ and post-κ frames respectively, and the document says neither. (3) `input_sha256_source` is **`file-digest`** on all 684 runs, not `"report"`, because the Kaggle Dataset carries only the parquet | §6.2 scopes the claim to a fixed horizon. This row records the RS frames. §12 states that the file-digest path is the operative one on Kaggle and that the digest is nonetheless §4.1's pinned vintage, `8270a84b07c2923b…`, under a single `code_sha256 ee63120991695c6c…` across all 684 metas |
+| **D60i** | F | **The falsification arm's headline number is a units artefact.** The notebook reports `mean(aged − fresh) = −0.053341` over 45 (origin, block) cells as raw scaler-space MSE. The two arms are fitted at origins 90 days apart and therefore carry **different `σ_g`** — 0.009151 against 0.007297 at origin 1 — so the comparison is between numbers in different units. The matching naive baselines differ by **−0.053196**, i.e. **~99.7% of the reported gap is scaler drift**, and the sign reads backwards: taken at face value it says the aged model beat the fresh one, which is the opposite of what the scale-free metric says. §9.1 already forbids exactly this by requiring RelMSE "to control for period difficulty"; the falsification arm was simply never brought under that rule | Report the gap on the **scale-free** metric: `mean(aged − fresh) RelMSE = **+0.000828**`, the fresh model better by 0.083% of naive MSE — H2's predicted direction, at a magnitude that **flips sign at 7 of 15 origins**. The honest verdict is that the arm is **uninformative at this effect size**, matching what the MDE says about β₁, which is expected since the arm identifies the same quantity. §9.2 corrected. **The raw-MSE figure must not appear in the manuscript.** Any cross-origin model comparison is on RelMSE or `R²_oos`, never on scaler-space MSE — that is the general rule this defect buys |
+
+**What this pass says about the document, stated because it is the cost side of pre-registration.**
+Nothing here is a bug in `src/`; the code did what §9.1 and §8.5 told it to, printed the gate
+failure in the words §8.5 uses, and named every excluded origin rather than dropping it. Seven of
+the nine entries are the document failing to *absorb* a result it had already commissioned. The one
+substantive analysis error, `D60i`, is a metric computed outside the rule §9.1 states — which is
+the same shape: a rule that exists and was not applied at one site.
+
+# Tenth pass — the defect found by *running the test suite*, 2026-08-20
+
+Found while verifying `D60`, and recorded separately because it has nothing to do with the results
+and everything to do with the artifact that produced them.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D61** | C | **The committed notebook is the Kaggle *export*, not the generator's output, and the suite has been red on `main` since `9926acd` ("Kaggle Notebook \| iTransformer.ipynb \| Version 4").** It carries `papermill` metadata, 26 execution counts and 12 cells of committed output. `tests/test_notebook_sync.py` fails twice: `test_notebook_is_not_stale` (`tools/build_notebook.py --check` reports stale) and `test_notebook_is_valid_nbformat_with_gpu_metadata`, whose assertion reads `cell["outputs"] == [], "committed outputs go stale; strip them"`. §15 says the notebook is **"GENERATED, never hand-edited"** and §16 makes regeneration part of editing `src/`; re-uploading Kaggle's copy over it is the same class of drift, arriving from the other direction. **The code is not affected and this must not be read as a code defect:** `code_sha256()` over the current `src/` returns `ee63120991695c6c…`, byte-equal to the notebook's pinned `CODE_SHA256_OVERRIDE` and to the digest stamped on all 684 metas, and every per-cell byte-equality test still passes. `src/` has not moved since the grid ran | **Regenerate**: `python tools/build_notebook.py`, then commit. The outputs being discarded are not evidence being lost — `notebooks/logs-iTransformer.txt` (committed separately at `8bc0112`) is the same console stream, complete, and is what `D60` was derived from. **Not done in the `D60` pass**, because it deletes committed content and that is the repository owner's call, not a documentation edit's. Until it is done, `python -m pytest tests/ -q` reads **2 failed, 84 passed**, and a suite that is expected to be red is a suite nobody reads |
+
+**Why this is worth an ID rather than a fix-and-forget.** The two artifacts that must agree — `src/`
+and the notebook — *do* agree on every line of code; the generator and its tests proved that. What
+diverged is the notebook's *shape*, and the check that caught it is the same one `D54d` added to
+police exactly this. It worked. What failed is that its failure was left standing for nine days, in
+the same window `D60` documents, for the same reason.
+
+# Eleventh pass — the deliverables the grid never produced, 2026-08-21
+
+`D60` came from reading the grid's output against the document. **`D62` came from generating the
+deliverables that reading said were missing** — and it is the first pass whose entries are mostly
+*absences* rather than contradictions. Nothing here is a defect in the 684 runs; every number they
+produced stands. What was missing was the code that turns them into a paper, and the arms that would
+let the paper's null survive a referee.
+
+| ID | Sev | Defect | Resolution |
+|---|---|---|---|
+| **D62a** | U | **Tables 2, 6, 7, 8 and Figures 2b, 3, 4, 5, 6, 7 were promised by §13.4 and never generated**, four of them with no inputs at all (`D60g`). `metrics.dm_test()` and `directional_accuracy()` existed, were tested, and were **never called on the 684-run panel**; Romano–Wolf and the Model Confidence Set did not exist in code at all; §4.5's efficiency tests had no implementation; `keff` had no rolling variant for Figure 2b | `src/itransformer_btc/report.py` + `tools/build_report.py` assemble **`paper/paper_numbers.json`** — the manuscript's single source — from the grid's immutable output plus every analysis pass it never ran, naming the grid file by sha256 so the two cannot silently diverge. Nine tables and six figures render from that file and nothing else. `keff.rolling_pr` / `rolling_ols_r2` added for Figure 2b, both **descriptive only** (§5.4). **Closed 2026-08-21** |
+| **D62b** | I | §6.2 pre-registers *"one robustness run at K=12 with larger `d_ff`, so a flat 8→12 rung cannot be read as an under-tuning artefact"* and **it was never built** — `ARM_MODEL_TAG` carried seven arms and none of them this one | `capacity` arm, tag `itrc`, `d_ff = 512` at K=12, 15 origins × 5 seeds = **75 runs**. `d_ff` *is* a config field, so the meta records the widening — correctly, since it is the only thing that differs from the rung it is compared against |
+| **D62c** | I | The null's most obvious attack — *"you under-trained"* — had no answer, and the document implied the epoch cap was the constraint. **Measured over all 684 metas it is not: 0 of 444 iTransformer runs reach the 30-epoch cap** (mean 10.49, max 26). The binding constraint is the **LR schedule** — `lr_halve_every = 4` puts the rate at ≈1.6e-6 by epoch 26 — so raising `max_epochs` alone is a provable no-op | `longsched` arm, tag `itrl`, `lr_halve_every = 8`, `max_epochs = 60`, `patience = 10`, K ∈ {1, 8}, 15 origins × 3 seeds = **90 runs**. `TrainSchedule` carries the defaults and reproduces the grid exactly; `LongScheduleConfig` is a plain subclass adding **no field**, so `asdict(cfg)` is unchanged and the schedule is recorded under its own `meta` key. **Exploratory, declared under §13.2's confirmatory/exploratory rule, never mixed into RQ1–RQ3** |
+| **D62d** | U | Attention weights were never persisted — `VariateAttention.forward` computed `softmax(scores)` and discarded it — so Figure 5 had no input and §13.2's interpretability claim rested on `A_attn` alone | Runtime `capture` attribute, a plain `nn.Module` attribute and **never** an `ITransformerConfig` field: `write_artifacts` records `asdict(cfg)`, so a field there would change bytes all 684 metas already carry. The branch consumes no RNG, so a captured run is bit-identical to an uncaptured one — which makes the `attention` arm (tag `itra`, 45 runs) a **reproducibility check of the whole grid** as well as Figure 5's input |
+| **D62e** | F | **`D60i`'s corrected falsification figure existed only in `CLAUDE.md` prose.** No cell computed it, so §12's regenerability contract did not cover the paper's own correction — the one number the document had already caught being wrong | `metrics.falsification_relmse`, carried in `paper_numbers.json`. It reproduces **+0.000828** independently, confirming the correction |
+| **D62f** | C | **`D60i` states the falsification gap "flips sign at 7 of 15 origins". Measured, it is 6.** The mean matches exactly, so the computation is not in dispute; the count is. Two origins sit within 5e-5 of zero — `2022-07` at **+0.000046** and `2024-08` at **−0.000012** — so the count is sensitive to whether RelMSE is built from seed-averaged MSEs or averaged per cell, and either answer is defensible | Report **6 of 15**, and report beside it that two origins are within 5e-5 of zero. The honest statement is that **the sign is not stable**, not that it flips at exactly *k* origins. `D60i`'s substantive verdict — the arm is uninformative at this effect size — is unchanged and slightly strengthened |
+| **D62g** | U | **The grid and the reporting code are now two `code_sha256` vintages** — the 684 runs at `ee63120991695c6c…`, everything written after `D62` at `fec3e8b4af4e453a…`. §12 forbids numbers from different vintages sharing a table, and nothing said what to do when the *analysis* moves while the *runs* do not | State it. The vintage that matters for a number is the vintage of the **runs that produced it**, which is unchanged; the reporting code is a reader of those runs, not a producer of them. The `D62` robustness arms are the exception — they *are* new runs at the new vintage — and that is precisely why they get their own table rather than a column in Table 4 |
+| **D62h** | I | The obvious drift guard for the second generated artifact — exact string equality on `paper_numbers.json` — is **measurably the wrong instrument**. polars aggregates `group_by` in parallel, so summation order varies between runs and a mean over float32 cells lands on a different eighth significant digit. Two consecutive builds in one process differ on **28 of ~8,000 numbers** at a relative ~1e-7, below the precision the underlying float32 columns carry at all | `tools/build_report.py --check` compares **structure exactly and floats within 1e-6**, and reports the *path* of the first real difference rather than a bare "stale". Two NaNs compare equal, because ridge is a solve and its one seed gives an undefined seed std — correctly |
+
+**What generating the deliverables actually surfaced.** Three results that no amount of re-reading
+would have produced, and each sharpens the paper rather than changing it:
+
+- **The Model Confidence Set at both 90% and 75% contains Naive-RW and all four ridge rungs, and no
+  deep model.** Rank order by mean loss: Naive-RW, `rdg-K4`, `rdg-K8`, `rdg-K12`, `rdg-K1`, then
+  every iTransformer arm, PatchTST and DLinear. This is `D60c`'s ordering promoted from a table
+  footnote to a formal statement about which models are indistinguishable from the best.
+- **`D35`'s multiplicity argument is vindicated by its own numbers.** Against Naive-RW, raw
+  Clark–West rejects at α = 0.05 for **8 of 11** models; after Romano–Wolf stepdown across all 66
+  pairs, **none** does — every adjusted p is ≥ 0.336. Across the whole matrix the correction removes
+  26 of 57 rejections. A paper reporting the raw column would have claimed eight results it does not
+  have.
+- **Clark–West is positive where `R²_oos` is negative, and both are true.** `t` is +2.198 for
+  Naive-RW versus `itr-K8` while that arm's `R²_oos` is −0.0180. That is the statistic behaving as
+  designed: it credits the larger model for the estimation noise the null imposes. The honest joint
+  reading is that **any population-level edge the added variates carry is smaller than the estimation
+  error required to exploit it** — a sharper sentence than either number alone.
+
+**And one number that needs its context stated before a reader mis-reads it.** The §13.5 sign
+strategy on `itr-K8` returns **+20.6%** net of the 0.04% fee and 0.02% slippage, mean over fifteen
+origins, at an annualised Sharpe of **+0.377** — and buy-and-hold over the same spans returns
+**+29.0%**. The strategy underperforms holding; its DSR is **0.173**, so the Sharpe is not
+distinguishable from the best of the configurations evaluated on that span; and at the top of the
+pre-registered slippage band it falls to +12.5% and a Sharpe of +0.104. Ridge is worse still, at
+−1.02. **A positive P&L under a negative `R²_oos` is not a contradiction**: MSE and directional P&L
+are different objectives, and a sample dominated by BTC's 2020–2026 rise pays a mostly-long position
+for the drift rather than for the forecast. Report the three numbers together — strategy, hold, DSR —
+or the first alone will be read as skill.
+
+Absorbing a contradiction silently is the exact failure this register exists to prevent.
+
+---
+
+# Twelfth pass — the deliverable changed what the notebook is for (2026-08-27)
+
+The lens: **reading the notebook as an examiner would**, rather than as a machine that executes it.
+Neither earlier lens asks that question. `D58` optimised the notebook for a Kaggle session nobody
+watches, and it was right to; §1's deliverable then made the notebook something a thesis examiner
+opens alongside the manuscript, and the shape that served the first purpose actively defeats the
+second.
+
+| ID | Sev | Defect | Resolution | § |
+|---|---|---|---|---|
+| D63 | I | Eighteen module-sized dump cells — `metrics.py` alone ~1.400 lines in one cell — so the notebook reads as a `.py` file split at module boundaries. §15 optimised it for a launcher nobody opens, while §1's deliverable makes it an artefact an examiner reads | `SECTION_MAP`: 137 cells cut by logical group, each preceded by an HTML markdown heading naming what it does and which rule it enforces. Identity in `cell.metadata`, byte-equality moved from per-cell to per-module | 15, 16 |
+| D64 | I | Three of §7's four deferred baselines cost minutes and were never built, leaving rows that read as unfinished work — and *no deep model beats Naive-RW* asserted without testing the deep model the crypto literature reaches for first | LSTM (`lstm`, 45), naive-persist (`npst`, 15), seasonal-naive (`nsea`, 15). Manifest 894 → **969**. ARIMA stays deferred with a written reason | 7, 10.2 |
+
+## `D63` — what the segmentation contract actually guarantees
+
+Three properties, and the third is the one that made the first two cheap.
+
+**Cells are contiguous, exhaustive line ranges.** `split_module_cells` cuts the flattened module at
+anchors named in `SECTION_MAP`, each anchor a module-level definition. Every line lands in exactly one
+cell, in order. Nothing is dropped, nothing is duplicated, and the function asserts that itself before
+returning.
+
+**Identity lives in `cell.metadata`, not in a banner comment.** The old `# ═══ metrics.py ═══` header
+was a line the cell carried that its module did not, which was harmless while a cell *was* a module
+and would have forced a strip step the moment cells became slices. The metadata tag costs nothing,
+renders nothing, and keeps every cell body a byte-exact slice — so
+`tests/test_notebook_sync.py::test_module_cells_concatenate_to_flattened_source` compares raw
+concatenation against `flatten_module_source` with no normalisation for a reader to distrust.
+
+**Exactly one line is additive, and it is declared.** Every cell after a module's first opens with
+`from __future__ import annotations`. This is not decoration: a `__future__` import is scoped to its
+code unit, and Kaggle runs Python 3.11. Without it `RidgeConfig.build`, whose return annotation names
+a `RidgeForecaster` defined one cell later, raises `NameError` **at class-definition time** — an error
+that would have surfaced in a Kaggle session and nowhere in local testing on 3.14, where PEP 649 makes
+annotations lazy by default. This is the same failure shape as `D59`: a name, unbound by the
+flattening, that no cheap check would have reached. Finding it before shipping is what the property
+above bought.
+
+The guarantee moved from per-cell to per-module and weakened nothing. A line lost between two cells
+fails the concatenation check exactly as a changed line would.
+
+**One defect surfaced while wiring the tests, and it is worth its own paragraph.** `tests/` loads the
+generator with `importlib.util.spec_from_file_location` and never registered it in `sys.modules`.
+Harmless until the generator grew a frozen dataclass: `dataclasses` resolves a field annotation
+through `sys.modules[cls.__module__]`, which was `None`, and the decorator raised
+`AttributeError: 'NoneType' object has no attribute '__dict__'` — from *seven* tests at once, all of
+them by way of a fixture, none of them about dataclasses. Registering the module before
+`exec_module` is one line and is what a loader is supposed to do.
+
+## `D64` — why three deferrals closed and one did not
+
+`D56` recorded, in writing, that ARIMA, LSTM, naive-persist and seasonal-naive did not exist in
+`src/`. That record was the right thing to keep: a deferral nobody states is a deferral nobody
+notices. What it did not carry was a cost estimate, and once measured the estimate is what decides.
+
+**The two naive comparators are closed forms with no parameters.** Persistence repeats the last
+observed return; seasonal-naive repeats the return one daily cycle back, step for step. Both cost
+microseconds and neither consumes RNG, so both take one seed for the same reason ridge does. Leaving
+them deferred put two rows in the results table that read as unfinished work rather than as
+measurements — the cheapest rows in the study, unbuilt.
+
+**LSTM is the weightier one, and it is multivariate.** DLinear and PatchTST wear their K=8 label
+through a published all-channel objective with shared weights: *trained on* eight channels, predicting
+the target from its own history alone (`D56`). An LSTM reads all eight channels of every timestep and
+emits the target, so its K=8 means what ridge's and iTransformer's mean, and `loss_channels` is
+`target` rather than `all` — which makes its `best_val_mse` comparable to the ladder's where the other
+two baselines' are not. `tests/test_model_plane.py` asserts the property directly, by perturbing a
+non-target channel and requiring the forecast to move; without that the arm would be K=1 wearing a
+K=8 label, the exact collapse `D40` exists to prevent.
+
+It matters because the headline claim is *no model beats Naive-RW at any variate count*, and the
+recurrent network is what the crypto forecasting literature this paper argues against reaches for
+first. Leaving the most-cited deep model untested is a hole a reviewer finds in one pass.
+
+**ARIMA stays deferred, with its reason now written down.** On hourly crypto log-returns, AIC order
+selection lands at or near (0,0,0) — which *is* the naive baseline. The result is predictable from the
+ADF and variance-ratio numbers §4.5 already reports, so the row would duplicate one the table has. That
+is a prediction, not a measurement, and it is recorded as such: if it is ever to be relied on rather
+than asserted, run it.
+
+**The seasonal comparator carries one guard worth naming.** At `H = 168` the forecast asks for seven
+daily cycles that a 96-bar lookback does not contain. The index is taken modulo 24, so the last cycle
+repeats rather than the model indexing past the window — the only behaviour available, since a
+lookback cannot supply a value it never saw. Only the H=24 arms are in the manifest, so this guards a
+path the horizon sweep would otherwise reach as an `IndexError` rather than as a number.
+
+---
+
+## `D65` — the name an evaluation cell took from the package
+
+`analysis_result.md` diagnosed this on 2026-08-24 and it was still on `main` three days later, so it
+is recorded here rather than left in a working note.
+
+The save cell opened with `_digest, _provenance = _input_sha256(PARQUET)`. In a flattened notebook
+every module shares one kernel namespace, so that assignment replaced `report._provenance` — a
+**function** `build_report` calls one cell later — with a string. The last cell of the 894-run session
+died with `TypeError: 'str' object is not callable`, at 28,512 s, after the grid had run for 7.8
+hours. Nothing was lost: `paper_numbers.json` and the six panel parquets were written at 28,421 s and
+every `preds/`, `meta/` and `attn/` file was already safe. What was lost was the version's *status* —
+a papermill error marks the run failed at the moment its output is the only thing worth keeping.
+
+**This is `D59` from the opposite direction.** `D59` was a name the flattening *unbound*; this is a
+name an evaluation cell *rebound*. Both are invisible to every parse check, both surface only when the
+interpreter reaches the line, and both cost a session.
+
+§15 already noted that `DEFAULT_PARQUET` and `HOUR_MS` collide across modules and called them harmless
+**because the values are equal in both definitions**. That is a property of those two names, not a
+property of the format, and nothing was checking which kind any new collision was. The generator's own
+collision check compared module against module; it had no opinion about a scaffolding cell.
+
+Resolution: the binding is `_digest_source`, and
+`tests/test_notebook_sync.py::test_no_scaffolding_cell_shadows_a_package_name` refuses any scaffolding
+cell that *assigns* a name a definition cell defines. Imports are excluded — re-importing `numpy as np`
+binds the same module object, so it is a shadow by name and not by value. Four names are allowlisted,
+each with its reason in the code: `ARTIFACTS` and `DEFAULT_PARQUET` (the notebook resolves the real
+paths), `CODE_SHA256_OVERRIDE` (§12's pinned digest) and `SESSION_BUDGET_H` (`D54f`).
+
+## `D66` — one Library cell, and imports out of the definition cells
+
+With `D63`'s segmentation in place, every one of the 137 definition cells still opened with the
+imports of the module it came from — the same twenty-odd lines, over and over, in the artefact a
+reader examines.
+
+Resolution: a single **Library** section at the top of the notebook, immediately after Setup, holding
+every module-level import the package makes. It is **generated from the flattened modules**, not typed
+out, so a dependency that appears in `src/` cannot go missing from it; `from X import a` and
+`from X import b` are merged into one line per module rather than repeated.
+
+Module-level imports then become the **third declared subtractive category**, beside intra-package
+imports and `runner.py`'s `__main__` guard. Two consequences, both deliberate:
+
+- **Function-local imports stay.** `report._pyplot` defers matplotlib on purpose, so the package
+  imports cleanly with no plotting backend installed; hoisting that into a cell that runs at session
+  start would undo the decision. The removal reads `ast.parse(...).body` and nothing deeper.
+- **The reference for the equality check moved.** A module's cells now rejoin to
+  `flatten_module_body(name)` rather than `flatten_module_source(name)`. Byte-exact, still — "not
+  equivalent, not equal after formatting" — the reference moved, the guarantee did not.
+
+Blank lines that *followed* a removed import block go with it; the ones that preceded it stay and
+become the separator. Done positionally rather than by collapsing blank runs in the text afterwards,
+because a docstring may legitimately hold three blank lines in a row and a text-level rule would eat
+those too.
+
+**One consequence worth stating rather than discovering.** `from __future__ import annotations` now
+prefixes **every** definition cell, not only the continuation ones, because it too is a module-level
+import and is removed with the rest. A future import above a module docstring is legal and compiles,
+but it demotes the docstring to a plain expression — so `test_no_executable_package_refs`, which reads
+prose out before looking for executable package references, compares against the rejoined body with
+the prefix stripped rather than against the cells as they stand.
+
+---
+
+## `D67` — the future import belonged in one cell, and the reasoning that put it in 140 was checkable
+
+`D63` prefixed every definition cell with `from __future__ import annotations`, reasoning that a
+`__future__` import is scoped to its code unit and that splitting a module across cells therefore
+loses it. That reasoning is **correct about `compile()` and wrong about the notebook.**
+
+IPython accumulates `__future__` compiler flags across a session: `InteractiveShell.compile.flags` is
+OR-ed with every future import a cell executes, and every later cell is compiled under the
+accumulated set. Kaggle runs the notebook through papermill to ipykernel to `run_cell`, which is that
+same path. One directive in the Library cell therefore reaches all 140 definition cells.
+
+**Measured rather than assumed**, on IPython 9.13:
+
+```
+flags before: 16896
+flags after : 16794112        # 0x1000000, CO_FUTURE_ANNOTATIONS, OR-ed in
+forward-annotation cell succeeded: True
+```
+
+The second cell carried no future import of its own and still defined `def build(self) -> B` for a
+`B` that did not exist. That is the whole claim, tested end to end.
+
+**What this buys.** The last additive transformation is gone. A definition cell is now a contiguous
+slice of `flatten_module_body` and **nothing else** — no prefix for a reader to wonder about, no strip
+step in the equality check, no line in the notebook that is not in `src/`.
+
+**What it costs, stated rather than discovered.** Correctness now depends on IPython's flag
+accumulation instead of on each cell being self-contained. Three consequences a reader is entitled to:
+
+- Running one definition cell *in isolation*, in a fresh kernel, compiles its annotations eagerly.
+  `RidgeConfig.build` names a `RidgeForecaster` defined one cell later and would raise at
+  class-definition time. The notebook's declared execution mode is **Save & Run All** (root §10.1), in
+  which the Library cell always precedes it, so this is a property of misuse rather than of the
+  artefact.
+- Exporting the cells to a `.py` and running that file has the same exposure, and the same answer:
+  `src/` is the file form, and it carries the directive per module.
+- If a future IPython stopped accumulating, the notebook would break everywhere at once. The suite
+  reads the flags off the Library cell and compiles every later cell under them, so that change fails
+  in `test_definition_cells_execute_in_one_namespace` rather than on Kaggle.
+
+**The transferable part is the lens, not the fix.** `D63`'s prefix was defensible reasoning about
+Python semantics that was never checked against the runtime the code actually meets. The check cost
+one `InteractiveShell` and four lines. Every claim in this register about *what the interpreter does*
+is worth the same treatment.
+
+---
+
+## `D68` — half the hardware idled for 7.8 hours, and the note explaining why was out of date
+
+The 894-run session printed, before starting:
+
+```
+NOTE: 2 GPUs visible, using cuda:0 only. Threads are not the fix —
+torch.manual_seed seeds EVERY CUDA device, so two threads would clobber
+each other's generator mid-run.
+```
+
+The observation was correct and the conclusion did not follow. `torch.manual_seed` does fan out to
+every CUDA device — but that is a property of **how the code seeded**, not of threads. Nothing forced
+the seeding to be global.
+
+**What changed.** `set_seed` takes a device. Given one, it seeds the CPU generator and *only that
+device's* CUDA generator, leaving a concurrent worker's stream untouched. The CPU generator is still
+shared, and both seeding and module construction draw from it, so those two steps happen together
+under a single `SEED_LOCK` — **milliseconds against a ~32 s run**, so the lock costs no measurable
+parallelism. Everything after the prologue draws from the device's own generator.
+
+The consequence is the one that matters: **a run produces the same bytes whether it ran alone or beside
+another.** That is the property `D62d` demonstrated for the attention arm — 270/270 cells identical,
+`max|ΔMSE| = 0` — and the property root §12 requires of every number in the manuscript. Run-level
+parallelism that cost it would not be worth having.
+
+**Single-device behaviour is unchanged by construction**, which is what keeps the 894 completed runs
+reproducible: with one device in use, seeding it alone and seeding all of them set the same generator
+to the same value.
+
+### Why threads, and why not DataParallel or DDP
+
+Root §10.3 already rejected `nn.DataParallel` with a measured reason — at batch 32 and ~280k
+parameters the scatter/gather costs more than splitting saves — and that has not changed. **DDP is
+worse here for a sharper reason**: it parallelises one large training job, and this grid is 969 small
+ones. A process group set up and torn down per ~32 s run pays the overhead 969 times to parallelise
+something that is already the unit of work. Neither is a fit for a workload whose natural grain is the
+run.
+
+Threads rather than the subprocesses `launch_workers` spawns, because §15's notebook carries the
+package as definition cells in one kernel namespace: a subprocess inherits none of it and
+`python -m itransformer_btc.runner` has no files to import. `launch_workers` stays for the checkout
+path. The GIL is not the constraint — every run spends its time inside CUDA kernels and tensor ops that
+release it.
+
+Each worker keeps its **own** tensor cache, so two builds never race; the shared cursor and the budget
+guard are touched only under one lock, so two workers cannot both slip past a deadline only one of them
+had room for.
+
+### What is not verified, stated rather than implied
+
+**No machine this suite runs on has a CUDA device**; local torch is a CPU build. The two T4s exist only
+on Kaggle. So there is no throughput measurement for this change, and `D58`'s **2.31 h** remains the
+only run-level figure this project has actually taken. What *is* tested is the part that would corrupt
+a grid on any hardware: that two workers sharing one cursor hand no cell to both and drop none — a
+double-run means two writers on one `preds/` path (root §10.4), and a dropped one means a manifest that
+never completes and a resume that never converges.
+
+The device-scoped branch of `set_seed` is likewise dead code off a GPU. The test that can run checks
+the half that the 894 completed runs depend on: that the same seed still produces the same CPU draws,
+with or without a device argument.
+
+---
+
+## `D69` — two governing documents, and only one of them knew it
+
+`AGENTS.md` was a full copy of `CLAUDE.md`: 2,298 lines, headed `# CLAUDE.md`, opening *"Governing
+document for this repository. Read it before doing anything else"* and declaring itself authoritative
+as of **2026-08-20**. It was taken before the 2026-08-24 compaction, so by 2026-08-27 the two files
+disagreed on §10.3's parallelism rule, on the manifest count, and on the existence of `D63`–`D68` —
+while both claimed to govern.
+
+Nothing in the repository referenced it. An agent reading `AGENTS.md` by convention would have found
+a document that looked authoritative, was internally consistent, and was a week stale — the worst of
+the three possible states, because nothing about it announces itself as a copy.
+
+This is `D54a`'s failure exactly, one level up: **two artifacts required to agree, with nothing
+checking that they did.** There it was the notebook and a code Dataset; here it is two copies of
+project law. The resolution is the same shape as §15's answer for the notebook — stop having two.
+
+`AGENTS.md` is now a pointer: what governs, where the long-form evidence lives, and why the copy was
+removed. Nothing is lost. `CLAUDE.md` is the compacted successor, this register holds the long-form
+§14 text the compaction moved out, and the deleted lines are in git history at `2dc8706`.
+
+**The transferable rule, and §15 already states it for directories:** *one governing document, and a
+second copy of it is a defect rather than a convenience.* §15 deleted three of four subdirectory
+`CLAUDE.md` files for the same reason — 55–65% overlap, with the non-overlapping part being precisely
+what must not fail open. A root-level duplicate under another name is that failure with a wider blast
+radius, because it does not even have a directory scope to limit when it applies.
+
+---
+
+## `D70` — what the second GPU bought, and the one arm that is not robustness
+
+`D68` roughly halved the wall time of a manifest. Spent well, that is not "the same grid, sooner" — it
+is arms the single-device budget could not hold beside the base manifest. Five were added. Four are
+robustness; **one changes the evidence for an RQ**, and it is worth separating from the rest.
+
+### The matched-K pair — RQ1 tested by contrast rather than inferred
+
+RQ1 asks whether the marginal benefit of added variates is governed by nominal count **K** or by
+effective dimensionality **K_eff**. On the ladder the two are confounded by construction: adding
+variates raises both, and the measured `corr(K, K_eff) = 0.828` is what is left of the separation. So
+`D32` answered it with a non-nested J-test on a panel — identified, and fragile, because the K_eff
+axis has four points and its variation across origins is doing the work.
+
+Two eight-variate subsets separate them **directly**. Same K, same target, same seeds, same
+everything, and the participation ratio is the only thing that moves:
+
+| Subset | Composition | PR (feature frame) |
+|---|---|---|
+| `redundant` | F2 whole (all three volatility estimators, ~1 dof between them) and F3 whole (the third is the difference of the first two) | **3.609** |
+| `orthogonal` | one or two per family across F1–F5, never doubling inside a family | **5.011** |
+| ladder K=8, for reference | the pre-registered cut | 4.668 |
+
+The pair **brackets the ladder's own rung**, which is the useful shape: whatever the ladder's K=8
+result is, there is a lower-rank and a higher-rank K=8 either side of it. If accuracy tracks K_eff
+rather than K, these two must differ while K does not; if they do not differ, the K_eff explanation
+loses the one test that could have distinguished it by contrast.
+
+Both subsets lead with `r`, because `TARGET_INDEX` is 0 and every consumer reads the target there.
+`build_origin_tensors` gained a `columns` argument and asserts `len(columns) == k`, so a subset that
+disagreed with its own K would fail loudly rather than train a differently-shaped model.
+
+### The lookback sweep — the hyperparameter §6.2 never varied
+
+`L = 96` was adopted from Liu et al. (2024) and held fixed, like everything else. It is nonetheless a
+**first-order** choice for a transformer, and the horizon sweep varied H four ways while L stayed
+still. L ∈ {48, 192} closes it.
+
+**192 is the ceiling, and the reason is §4.3 rather than time.** Window cost per break is `L + H − 1`,
+so a break costs 359 start positions at L=336 against 119 at L=96. Pooled that approaches root §4.3's
+16% tolerance, and per origin it lands worst on 2018–2021, where 26 of 27 downtime blocks live. The
+sweep would then measure gap density as much as lookback.
+
+L has **no slot in `run_id`** — root §10.4 fixes that format — so the two arms carry their own tags and
+`tensor_key` gained `seq_len`. Without that second half, the cache would hand the L=192 arm the L=96
+windows the ladder built one cell earlier: a wrong answer with no error.
+
+### The tuned arm — answering "you did not try" with a number
+
+§6.2 states that nothing is tuned, and that is a design property: holding capacity fixed is what makes
+the rungs comparable (`D38`). It reads to a referee as an omission. The reply should be a measurement:
+**if the configuration the validation set prefers is still worse than a random walk, the null is not
+an artefact of the defaults.**
+
+Three properties keep it inside the pre-registration:
+
+- **The grid is a module constant** (`TUNING_GRID`, 18 points over `d_model`, `e_layers`, `lr`), so it
+  is in git before the probes run. A space chosen after seeing the winner is not a search. It contains
+  §6.2's adopted configuration, asserted in the suite — a search that cannot return the incumbent
+  cannot show the incumbent was reasonable.
+- **Validation only, one origin.** Exactly where `D27` put the Stage 5 gate and for its reason: §11
+  opens the test blocks once, after the design is frozen.
+- **It sits outside the ladder.** `model_config` **refuses** to build the tuned arm without the
+  selected config rather than falling back to §6.2's — a silent fallback would complete the run, write
+  a plausible meta, and claim a selection that never happened.
+
+`d_ff` is absent from the grid on purpose: `D62b` already swept it and made things worse at 14 of 15
+origins.
+
+### Seeds on the exploratory arms, three to five
+
+The three-seed counts were **budget, not design** — root §10.3 sized the sweep against a single-GPU
+session. The attention arm is where it matters most: §13.2 admits attention maps only when they are
+"validated for stability across seeds", and the measured calm-to-stress shift (**+0.00056**) is smaller
+than the between-seed standard deviation of one weight (**0.00064**). A claim resting on that
+comparison should not rest on three draws.
+
+### What did not move, and why the reasons are not budget
+
+| Fixed | Why |
+|---|---|
+| Ladder seeds at 5 | `D18`, `D49` — the 8→12 rung is the designed contrast and cannot carry the fewest draws |
+| The K rungs | `D01` — exactly one consistent cut exists; a fifth rung is a different experiment |
+| iTransformer hyperparameters **inside** the ladder | `D38` — fixed capacity is what makes rungs comparable. This is why the tuned arm is outside it |
+| Origin spacing at 5 months | §8.1 — effective independence is bounded near 4 *whatever* the spacing, so denser origins inflate G without adding information and worsen the overlap §9.2 must disclose |
+| Model size, batch size | Not a GPU-count question. Run-level parallelism doubles **throughput**, not per-run capacity: a model still has to fit one T4, and at 280,472 parameters against 16 GB the utilisation is under 1%. Memory was never the constraint |
+
+### Accounting
+
+Manifest **969 → 1,620**. **Nothing is orphaned** — five seeds is a superset of three, and the five new
+arms carry tags of their own, so all 894 completed runs are still in the manifest. The suite's old
+"pre-`D62` core totals 684" assertion was a statement about *composition at one moment*; it is replaced
+by the property root §10.4 actually guarantees, that no completed `run_id` falls out of the manifest.
+
+**726 pending ≈ 6.4 GPU-hours ≈ 3.2 h wall on two devices** — which is the point: on one device it
+would be 6.4 h and would not fit beside the base manifest in an 11 h session.
+
+New contradictions found later take IDs **D71+**.

@@ -23,6 +23,17 @@ from itransformer_btc.config import ORIGINS, FalsificationOrigin
 from itransformer_btc.features import build_features
 from itransformer_btc.segments import load_bars, usable_mask
 from itransformer_btc.splits import build_origin_tensors
+import threading
+import time
+from functools import partial
+from types import SimpleNamespace
+
+import torch
+
+from itransformer_btc.train import set_seed
+from itransformer_btc.model import ITransformerConfig
+from itransformer_btc.config import PRED_LEN, SEQ_LEN
+from itransformer_btc.features import VARIATE_ORDER
 
 
 @pytest.fixture(scope="session")
@@ -43,22 +54,32 @@ def test_manifest_is_deduplicated_by_run_id() -> None:
     cells = runner.manifest()
     ids = [c.run_id for c in cells]
     assert len(ids) == len(set(ids))
-    assert len(cells) == 894
+    assert len(cells) == 1_620
 
     counts: dict[str, int] = {}
     for cell in cells:
         counts[cell.arm] = counts.get(cell.arm, 0) + 1
     assert counts == {
-        "main": 300, "uniform": 75, "fresh": 15, "horizon": 144,
-        "ridge": 60, "dlinear": 45, "patchtst": 45,
-        "attention": 45, "longsched": 90, "capacity": 75,
+        "main": 300, "uniform": 75, "fresh": 15, "horizon": 240,
+        "ridge": 60, "dlinear": 75, "patchtst": 75,
+        "lstm": 75, "persist": 15, "seasonal": 15,
+        "orthogonal": 75, "redundant": 75, "look048": 75, "look192": 75,
+        "tuned": 75,
+        "attention": 75, "longsched": 150, "capacity": 75,
     }
     assert 300 + 75 + 15 + 192 - 534 == 48
 
-    # The pre-`D62` grid still totals 684, which is what is on disk and what every
-    # completed run_id resumes against.
-    core = tuple(a for a in runner.ALL_ARMS if a not in runner.ROBUSTNESS_ARMS)
-    assert len(runner.manifest(core)) == 684
+    # The 684 figure this used to assert was the *composition* of the manifest at
+    # one moment, and `D70` moved it: raising the exploratory arms from three seeds
+    # to five adds run_ids to arms that already existed. What must not move is the
+    # property root §10.4 actually guarantees — **no completed run_id is orphaned**
+    # — because an orphan is a finished run the manifest no longer asks for, and a
+    # resume would silently re-run it under a different composition.
+    #
+    # Every 2026-08-11 and 2026-08-21 cell is still here: five seeds is a superset
+    # of three, and the eight new arms carry tags of their own.
+    original = runner.manifest(("main", "uniform", "fresh", "ridge"))
+    assert {c.run_id for c in original} <= {c.run_id for c in cells}
 
 
 def test_robustness_arms_cannot_collide_with_a_completed_run() -> None:
@@ -66,15 +87,20 @@ def test_robustness_arms_cannot_collide_with_a_completed_run() -> None:
     two files racing for one path --- and here it would also mean the 684 runs
     already on disk resuming as complete under an arm that never produced them.
 
-    Three new tags, three new namespaces (`D62`).
+    Three new tags for `D62`, five more for `D70`, eight new namespaces. The
+    894 completed runs resume untouched because none of them can wear one.
     """
     core = tuple(a for a in runner.ALL_ARMS if a not in runner.ROBUSTNESS_ARMS)
     old = {c.run_id for c in runner.manifest(core)}
     robust = runner.manifest(runner.ROBUSTNESS_ARMS)
     new = {c.run_id for c in robust}
-    assert len(new) == 45 + 90 + 75
+    # attention 75 + longsched 150 + capacity 75 + `D70`'s five arms at 75 each.
+    assert len(new) == 75 + 150 + 75 + 5 * 75
     assert not (old & new)
-    assert {c.run_id[:4] for c in robust} == {"itra", "itrl", "itrc"}
+    assert {c.run_id[:4] for c in robust} == {
+        "itra", "itrl", "itrc",           # `D62`
+        "itro", "itrr", "l048", "l192", "itrt",  # `D70`
+    }
 
 
 def test_robustness_arms_run_last() -> None:
@@ -596,3 +622,186 @@ def test_directional_accuracy_table_keeps_both_testing_regimes() -> None:
         table.get_column("n_non_overlapping").to_numpy()
         < table.get_column("n_h1").to_numpy()
     ).all(), "the non-overlapping sample is the smaller one; that is the power loss"
+
+
+def test_parallel_executor_runs_every_cell_exactly_once(tmp_path, monkeypatch) -> None:
+    """`D68` — two workers, one queue, no cell run twice and none dropped.
+
+    Deliberately **not** a dual-GPU test: the two GPUs exist only on Kaggle, and
+    nothing here would exercise them. What is testable off a GPU is the part that
+    would corrupt a grid regardless of hardware — a shared cursor two threads race
+    on. A cell run twice means two writers on one ``preds/`` path (root §10.4); a
+    cell dropped means a manifest that never completes and a resume that never
+    converges.
+
+    ``fit`` and ``write_artifacts`` are stubbed because the property under test is
+    the queue, not the trainer. The trainer has its own tests, and running 40 real
+    cells here would trade minutes for nothing.
+    """
+    seen: list[str] = []
+    seen_lock = threading.Lock()
+
+    def fake_fit(self, tensors, spec, *, device=None):
+        with seen_lock:
+            seen.append(spec.run_id)
+        time.sleep(0.001)
+        return object(), self, SimpleNamespace(
+            run_id=spec.run_id, epochs_run=0, best_val_mse=0.0,
+            train_loss=0.0, wall_time_s=0.0, n_parameters=0, device=str(device),
+        )
+
+    monkeypatch.setattr(runner.RunCell, "model_config",
+                        lambda self, overrides=None: SimpleNamespace(
+                            fit=partial(fake_fit, None)))
+    monkeypatch.setattr(runner, "write_artifacts", lambda *a, **k: (None, None))
+    monkeypatch.setattr(runner, "is_complete", lambda *a, **k: False)
+    monkeypatch.setattr(runner, "completed_run_ids", lambda roots: set())
+    monkeypatch.setattr(runner._TensorCache, "get",
+                        lambda self, cell: SimpleNamespace(train=[0]))
+
+    cells = runner.manifest(("main",))[:40]
+    summary = runner.execute_parallel(
+        cells, pl.DataFrame(),
+        devices=[torch.device("cpu"), torch.device("cpu")],
+        out_root=tmp_path, roots=[tmp_path], log=lambda _msg: None,
+    )
+
+    assert summary.completed == len(cells)
+    assert sorted(seen) == sorted(c.run_id for c in cells)
+    assert len(seen) == len(set(seen)), "a cell was handed to both workers"
+
+
+def test_parallel_executor_falls_back_on_a_single_device(tmp_path, monkeypatch) -> None:
+    """One device means the sequential path, not a one-thread pool (`D68`).
+
+    Kaggle shows two T4s; a laptop shows none. The same notebook cell has to do
+    the right thing on both, and the right thing on one device is
+    :func:`execute` — same code path the 894 completed runs took, so a
+    single-device session cannot drift from the vintage on disk.
+    """
+    called: dict = {}
+    monkeypatch.setattr(
+        runner, "execute",
+        lambda *a, **k: called.setdefault("kwargs", k) or runner.ExecutionSummary(0, 0, 0, 0.0),
+    )
+    runner.execute_parallel(
+        [], pl.DataFrame(), devices=[torch.device("cpu")],
+        out_root=tmp_path, roots=[tmp_path], log=lambda _m: None,
+    )
+    assert called["kwargs"]["device"] == torch.device("cpu")
+
+
+def test_set_seed_scopes_the_cuda_generator_to_one_device() -> None:
+    """`D68`'s load-bearing change, checked where it can be: the CPU path.
+
+    The two-GPU half cannot run here — ``torch.cuda.is_available()`` is False on
+    every machine this suite runs on, and the guard makes the device branch dead
+    code off a GPU. What *is* checkable is that the rewrite did not disturb the
+    single-device behaviour the 894 completed runs depend on: the same seed must
+    still produce the same CPU draws, with or without a device argument.
+    """
+    set_seed(42)
+    first = torch.randn(4)
+    set_seed(42, torch.device("cpu"))
+    assert torch.equal(first, torch.randn(4))
+
+    set_seed(43, torch.device("cpu"))
+    assert not torch.equal(first, torch.randn(4))
+
+
+def test_matched_k_subsets_hold_k_fixed_and_move_effective_rank(feats) -> None:
+    """`D70` — the pair exists to break `corr(K, K_eff) = 0.828`, so PR must differ.
+
+    This is the arm's whole premise, and it is checkable before a single epoch
+    runs. Both subsets are K=8; if their participation ratios came back equal the
+    contrast would be empty and the 150 runs would measure nothing. Asserted with
+    a margin rather than strict inequality, because two numbers that differ in the
+    third decimal are not a contrast either.
+
+    Both must lead with ``r``: :data:`TARGET_INDEX` is 0 and every consumer —
+    ``forecast_target``, the naive comparators, the loss — reads the target there.
+    """
+    from itransformer_btc.features import MATCHED_K_SUBSETS
+    from itransformer_btc.keff import participation_ratio
+
+    redundant = MATCHED_K_SUBSETS["redundant"]
+    orthogonal = MATCHED_K_SUBSETS["orthogonal"]
+    assert len(redundant) == len(orthogonal) == 8
+    assert redundant[0] == orthogonal[0] == "r"
+    assert set(redundant) <= set(VARIATE_ORDER)
+    assert set(orthogonal) <= set(VARIATE_ORDER)
+
+    def pr(columns) -> float:
+        values = feats.select(list(columns)).to_numpy()
+        return participation_ratio(np.linalg.eigvalsh(np.corrcoef(values, rowvar=False)))
+
+    pr_redundant, pr_orthogonal = pr(redundant), pr(orthogonal)
+    assert 1.0 <= pr_redundant <= 8.0 and 1.0 <= pr_orthogonal <= 8.0
+    # Measured on the full feature frame: 3.609 against 5.011, either side of the
+    # ladder's own K=8 rung at 4.668. The margin is deliberately far below that
+    # gap — this guards against the contrast *collapsing*, not against it moving.
+    assert pr_orthogonal > pr_redundant + 1.0, (
+        f"the matched-K contrast is empty: PR {pr_orthogonal:.3f} vs "
+        f"{pr_redundant:.3f} at the same K=8"
+    )
+
+
+def test_lookback_arms_carry_their_own_tensor_key() -> None:
+    """`D70` — L is not in ``run_id``, so it must be in the cache key.
+
+    Root §10.4 fixes the ``run_id`` format and L has no slot in it, which is why
+    the sweep carries its own tags. The cache is the other half: it keys builds by
+    ``tensor_key``, and a key blind to L would hand the L=192 arm the L=96 windows
+    the ladder built one cell earlier — a silent wrong answer rather than a crash.
+    """
+    ladder = runner.RunCell("main", 1, 8, PRED_LEN, 42)
+    short = runner.RunCell("look048", 1, 8, PRED_LEN, 42, seq_len=48)
+    wide = runner.RunCell("look192", 1, 8, PRED_LEN, 42, seq_len=192)
+
+    assert len({ladder.tensor_key, short.tensor_key, wide.tensor_key}) == 3
+    assert short.model_config().seq_len == 48
+    assert wide.model_config().seq_len == 192
+    assert ladder.model_config().seq_len == SEQ_LEN
+
+
+def test_matched_k_arms_carry_their_own_tensor_key() -> None:
+    """`D70` — same K, same H, same origin; only the column set differs."""
+    a = runner.RunCell("orthogonal", 1, 8, PRED_LEN, 42, subset="orthogonal")
+    b = runner.RunCell("redundant", 1, 8, PRED_LEN, 42, subset="redundant")
+    ladder = runner.RunCell("main", 1, 8, PRED_LEN, 42)
+
+    assert len({a.tensor_key, b.tensor_key, ladder.tensor_key}) == 3
+    assert a.columns() != b.columns()
+    assert ladder.columns() is None
+
+
+def test_tuned_arm_refuses_to_run_untuned() -> None:
+    """`D70` — the arm exists to report a *selected* config, so it has no default.
+
+    Falling back to root §6.2's config would answer the referee's question with
+    the wrong number and nothing would say so: the run would complete, the meta
+    would record a config, and the row would claim a selection that never happened.
+    """
+    cell = runner.RunCell("tuned", 1, 8, PRED_LEN, 42)
+    with pytest.raises(ValueError, match="tuned arm needs"):
+        cell.model_config()
+
+    chosen = ITransformerConfig(pred_len=PRED_LEN, d_model=64)
+    assert cell.model_config({"tuned": chosen}) is chosen
+
+
+def test_tuning_grid_is_declared_and_covers_the_adopted_values() -> None:
+    """`D70` — a search space chosen after seeing the winner is not a search.
+
+    The grid is a module constant so it is in git before the probes run. It must
+    also *contain* root §6.2's adopted configuration: a search that cannot return
+    the incumbent cannot show the incumbent was reasonable, which is half of what
+    this arm is for.
+    """
+    assert len(runner.TUNING_GRID) == 18
+    assert len({tuple(sorted(p.items())) for p in runner.TUNING_GRID}) == 18
+    adopted = ITransformerConfig(pred_len=PRED_LEN)
+    assert any(
+        p["d_model"] == adopted.d_model and p["e_layers"] == adopted.e_layers
+        for p in runner.TUNING_GRID
+    ), "the grid cannot return the configuration the study actually ran"

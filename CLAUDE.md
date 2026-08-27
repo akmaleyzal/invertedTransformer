@@ -547,17 +547,44 @@ univariate-versus-multivariate. Report the K of every model in Tables 3 and 4.
 | Baseline | K | Role | Configuration | Built? |
 |---|---|---|---|---|
 | **Naive-RW** | — | mandatory, EMH baseline | **`ŷ_raw = 0`** in raw log-return space (`D31`) — never the last return | needs no run |
-| Naive-persist | — | secondary | ŷ = last observed return | deferred |
-| Seasonal-naive | — | daily pattern | ŷ = return at t−24 | deferred |
+| **Naive-persist** | **1** | secondary | ŷ = last observed return | ✅ 15 runs (`D64`) |
+| **Seasonal-naive** | **1** | daily pattern | ŷ = return at t−24 | ✅ 15 runs (`D64`) |
 | ARIMA | 1 | classical | order by AIC on the training window | deferred |
-| LSTM | **8** | RNN | 2 layers, hidden 128, dropout 0.1 | deferred |
+| **LSTM** | **8** | RNN, **multivariate** | 2 layers, hidden 128, dropout 0.1 | ✅ 45 runs (`D64`) |
 | **DLinear** | **8** | mandatory | trend–seasonal decomposition + linear | ✅ 45 runs |
 | **PatchTST** | **8** | SOTA, channel-independent | patch 16, stride 8 | ✅ 45 runs |
 | **Ridge (multivariate)** | **1, 4, 8, 12** | `D17` | L2 on the same K features, α by validation | ✅ 60 runs |
 
-**ARIMA, LSTM, naive-persist and seasonal-naive are deferred, not cut** — they stay in the table and
-this sentence is the written record that nobody has built them (`D56`). **DLinear and PatchTST are not
-optional**: a missing DLinear is the first thing an LTSF-literate reviewer flags.
+**Three of the four deferrals are closed (`D64`); ARIMA alone remains, and with a reason.** `D56`
+recorded in writing that nobody had built LSTM, naive-persist or seasonal-naive, and the record stood
+for the honest reason that a deferral nobody states is a deferral nobody notices. They are built now:
+the two naive comparators are closed forms costing microseconds, and leaving them *deferred* put two
+rows in the results table that read as unfinished work rather than as measurements. LSTM is the
+weightier of the three — it is the deep model the crypto forecasting literature this paper argues
+against reaches for first, and claiming *no deep model beats Naive-RW* while leaving the most-cited
+one untested is a hole a reviewer finds in a single pass.
+
+**ARIMA stays deferred, and this is its written reason.** On hourly crypto log-returns AIC selection
+lands at or near order (0,0,0), which *is* the naive baseline: the result is predictable from the
+ADF and variance-ratio numbers §4.5 already reports, and running it would add a row that duplicates
+one the table has. If that prediction is ever to be relied on rather than asserted, run it — but do
+not leave the row unexplained.
+
+**LSTM's K=8 does not mean what DLinear's and PatchTST's mean (`D64`).** Those two wear the label
+through their published all-channel objective with shared weights — *trained on* eight channels,
+predicting the target from its own history alone (`D56`). An LSTM reads all eight channels of every
+timestep and emits the target, so its K=8 means what ridge's and iTransformer's mean, and it is
+therefore the recurrent comparator on the ladder's own information set. `loss_channels` is
+`target`, so unlike DLinear and PatchTST its `best_val_mse` **is** comparable to the ladder's. State
+this wherever its numbers appear.
+
+**The two naive comparators are K=1, and are not Naive-RW.** Both read the target channel and nothing
+else, so 1 is their honest label — `D40` requires the label, not that the label be large. Naive-RW
+remains separate and needs no run at all: it forecasts `ŷ_raw = 0`, not the last return (`D31`), and
+naive-persist exists precisely to show that the weaker comparator is weaker rather than to assert it.
+
+**DLinear and PatchTST are not optional**: a missing DLinear is the first thing an LTSF-literate
+reviewer flags.
 
 **Naive-RW uses `ŷ_raw = 0` — in raw log-return space, and the space is not optional (`D31`).** A
 random walk in price implies zero expected return; using the last return gives a weaker baseline and
@@ -1028,7 +1055,7 @@ aggregated estimate. Never a single number.**
 | Idle timeout (interactive) | 20 min | Grid execution uses *Save Version → Save & Run All*, never the editor |
 | `/kaggle/working` | 20 GB, saved as version output | Predictions ≈ 0.5–2 GB — fits with room |
 | `/kaggle/input` | read-only | Resume reads from here; everything is *written* to `/kaggle/working` |
-| GPUs | 2 × T4, sm_75, 16 GB each | One is enough — see §10.3 |
+| GPUs | 2 × T4, sm_75, 16 GB each | **Both are used** — one worker per device (`D68`, §10.3). 16 GB is per device and is nowhere near binding: the largest training tensor is 70.12 MB |
 
 ### 10.2 Run accounting
 
@@ -1045,7 +1072,46 @@ aggregated estimate. Never a single number.**
 | Attention capture | `itra` | 45 | 15 × K=8 × 3 seeds — Figure 5's maps, **and a bit-exact reproducibility check of the main grid** (`D62d`) |
 | Long schedule | `itrl` | 90 | 15 × K ∈ {1, 8} × 3 seeds, `lr_halve_every = 8`, 60 epochs, patience 10 (`D62c`) |
 | Capacity | `itrc` | 75 | 15 × K=12 × 5 seeds at `d_ff = 512` — §6.2's own pre-registered run (`D62b`) |
-| **Total manifest, ran 2026-08-21** | | **894** | |
+| **Subtotal — the manifest that ran 2026-08-21** | | **894** | |
+| LSTM | `lstm` | 45 | 15 × K=8 × 3 seeds — multivariate, target-channel loss (`D64`) |
+| Naive-persist | `npst` | 15 | 15 origins, deterministic, K=1 (`D64`) |
+| Seasonal-naive | `nsea` | 15 | 15 origins, deterministic, K=1 (`D64`) |
+| **Subtotal — after `D64`** | | **969** | |
+| Orthogonal K=8 | `itro` | 75 | 15 × 5 seeds, one or two variates per family — **high** effective rank (`D70`) |
+| Redundant K=8 | `itrr` | 75 | 15 × 5 seeds, F2 and F3 loaded whole — **low** effective rank (`D70`) |
+| Lookback L=48 | `l048` | 75 | 15 × K=8 × 5 seeds (`D70`) |
+| Lookback L=192 | `l192` | 75 | 15 × K=8 × 5 seeds (`D70`) |
+| Tuned | `itrt` | 75 | 15 × K=8 × 5 seeds at the config origin 1's **validation** preferred (`D70`) |
+| **Exploratory arms raised from 3 seeds to 5** | | +186 | horizon 144→240, DLinear/PatchTST/LSTM/attention 45→75 each, longsched 90→150 (`D70`) |
+| **Total manifest** | | **1,620** | 894 on disk, **726 pending ≈ 6.4 GPU-h ≈ 3.2 h wall on two devices** |
+
+**`D70`'s five arms are exploratory, declared before running, and reported whatever they show** —
+§13.2's commitment, which an arm reported only when it agrees with the headline does not meet. None
+enters RQ1's ladder comparison; each gets its own row.
+
+**The matched-K pair is the one that changes an RQ's evidence rather than its robustness.** RQ1 asks
+whether benefit tracks nominal K or K_eff, and the ladder can only answer through a panel, because the
+two move together there — `corr(K, K_eff) = 0.828`, separated by a non-nested J-test rather than by
+contrast. These two rungs separate them **directly**: same K=8, same target, same seeds, and PR is the
+only thing that moves. Measured on the feature frame, **3.609 against 5.011**, either side of the
+ladder's own K=8 rung at 4.668.
+
+**What did not move, and the reasons are not budget.** Seeds on the **ladder** stay at 5 (`D18`,
+`D49` — the 8→12 rung is the designed contrast and cannot carry the fewest); the K rungs stay as cut
+(`D01` — exactly one consistent cut exists); iTransformer's hyperparameters inside the ladder stay
+fixed (`D38` — holding capacity fixed is what makes the rungs comparable, and the tuned arm sits
+*outside* the ladder for exactly that reason); origin spacing stays at 5 months (§8.1 — effective
+independence is bounded near 4 whatever the spacing, so denser origins inflate G without adding
+information).
+
+**The three `D64` arms are ordered last, after the `D62` robustness arms**, on the same reasoning: a
+session cut short loses a comparator rather than an RQ input. Their tags are new, so the 894 completed
+`run_id`s resume untouched — asserted in `tests/test_experiment_plane.py`, which still requires the
+pre-`D62` core to total exactly 684.
+
+**Cost: under an hour.** The two naive arms are closed forms and train nothing; LSTM is 45 runs at
+roughly iTransformer's per-run cost. Nothing here threatens the 11 h session budget or the weekly
+quota, which §10.3 already records was never binding.
 
 The three `D62` arms are ordered **after** the baselines, so a truncated session loses robustness
 rather than an RQ input, and are **exploratory** under §13.2's confirmatory/exploratory rule. Zero
@@ -1073,14 +1139,14 @@ overhead.
 
 | Regime | Per run | Whole grid |
 |---|---|---|
-| **GPU-resident, no DataLoader** | **~30 s** at 534 (`D57`); **35.0 s** over 684 (`D60d`) | **2.31 h** at 534 on two T4s; **6.52 h** at 684 in one kernel, measured |
+| **GPU-resident, no DataLoader** | **~30 s** at 534 (`D57`); **35.0 s** over 684 (`D60d`) | **2.31 h** at 534 on two T4s; **6.52 h** at 684 on one, measured. The 894-run manifest took **7.79 h** on one — the figure `D68` exists to halve |
 | Naive `DataLoader`, 4 workers | ~10× worse | ~45 h — **exceeds the weekly quota outright** |
 
 Both are stated so the regime is understood as load-bearing, not stylistic. The original estimate
 (60–100 s per run, 10–20 wall-hours) was 2–3× pessimistic per run and 4–8× overall (`D57`); the regime
 was right, the arithmetic on it was not.
 
-**Full-grid timing, measured (`D60d`):** 684 runs **sequentially in one kernel on a single `cuda:0`**,
+**Full-grid timing, measured (`D60d`) — and this is the single-device figure, superseded as the *plan* by `D68` but not as the *measurement*:** 684 runs **sequentially in one kernel on a single `cuda:0`**,
 wall **6.52 h**, mean **35.0 s**, 684 complete / 0 skipped / 0 failed. Per arm: iTransformer 36.4 s
 (4.49 h over 444 runs), uniform 24.3 s (0.51 h), fresh 32.5 s (0.14 h), ridge 0.2 s, DLinear 21.9 s
 (0.27 h), PatchTST 95.6 s (1.19 h). The 894-run manifest adds ~3.6 h.
@@ -1094,13 +1160,32 @@ fifteen origins, which is what makes RQ3 undefined rather than large or small.
 
 **Parallelism belongs at the *run* level, never the batch level** — the grid is many small runs, not
 one large one. **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather transfer costs more
-than the split saves. **Run-level parallelism is now optional (`D58`)**: two workers pinned one per
-`cuda:N` off a shared queue produced the 2.31 h measurement and remain the fastest path, but at ~35 s
-per run the sequential path fits an 11 h budget with room. That matters because workers are
-**subprocesses**, a subprocess inherits none of the kernel's namespace, and §15's notebook carries the
-package as definitions in that namespace rather than as files on disk. `launch_workers` stays in
-`runner.py` and stays tested — it is the path to take from a checkout, and what a future 1-minute
-granularity grid will need, because sequential will not fit there.
+than the split saves. **DDP is rejected for the same shape of reason and more sharply**: a process
+group is set up and torn down per run, and a run is ~32 s, so the overhead is paid 969 times to
+parallelise something that is already the unit of work.
+
+**Both GPUs are used, and the mechanism is threads (`D68`).** `execute_parallel` runs one worker per
+visible device off a shared queue; `visible_devices()` reports what the session has and the notebook
+hands it straight to the grid cell. Threads rather than the **subprocesses** `launch_workers` spawns,
+because a subprocess inherits none of the kernel's namespace and §15's notebook carries the package as
+definitions in that namespace rather than as files on disk — `launch_workers` remains the path from a
+checkout. The GIL is not the constraint: every run spends its time inside CUDA kernels and tensor ops
+that release it.
+
+**The 894-run session left half the hardware idle for 7.8 hours**, and the note in the grid cell said
+why: *"threads are not the fix — `torch.manual_seed` seeds EVERY CUDA device."* That was true of the
+seeding as it stood, and it is what changed. `set_seed` now takes a device and seeds the CPU generator
+plus **only that device's**; the CPU generator is shared, so seeding and module construction happen
+together under one `SEED_LOCK` — milliseconds against a ~32 s run. Everything after the prologue draws
+from the device's own generator, so **a run produces the same bytes whether it ran alone or beside
+another**, which is the property `D62d` demonstrated and §12 requires. Single-device behaviour is
+unchanged by construction: seeding one device and seeding all of them set the same generator to the
+same value when only one is in use, so the 894 completed runs stay reproducible.
+
+**Throughput is unverified off Kaggle and stated as such.** The two T4s exist only there; no machine
+this suite runs on has a CUDA device at all. What is tested here is the part that would corrupt a grid
+on any hardware — that two workers sharing one cursor never hand the same cell to both, and never drop
+one. `D58`'s 2.31 h measurement remains the only run-level figure this project has actually taken.
 
 **Precision.** T4 is sm_75. `torch.cuda.is_bf16_supported()` defaults to `including_emulation=True`
 and returns **True** there, selecting *emulated* bf16 slower than fp32. Gate on
@@ -1623,7 +1708,30 @@ the grid's output against the document that specified it (08-20), **D61** runnin
 | D62g | U | Grid and reporting code are now two `code_sha256` vintages, and nothing said what that means | The vintage that matters is the **runs'**, which is unchanged; the `D62` arms are new runs and get their own table | 12 |
 | D62h | I | Exact string equality on `paper_numbers.json` is the wrong drift guard — polars' parallel `group_by` moves the 8th significant digit on 28 of ~8,000 numbers | `--check` compares structure exactly and floats within 1e-6, reporting the **path** of the first real difference | 15 |
 
-**New contradictions found later take IDs D63+. Absorbing one silently is the exact failure this
+### D63–D64 — defects found by *reading the notebook as an examiner would*
+
+The twelfth pass (2026-08-27) has a lens neither earlier one carries: **what a reader sees**. `D58`
+optimised the notebook for a Kaggle session nobody watches and was right to; §1's deliverable then
+made it something an examiner opens beside the manuscript, and the shape that served the first
+purpose defeats the second.
+
+| ID | Sev | Defect | Resolution | § |
+|---|---|---|---|---|
+| D63 | I | Eighteen module-sized dump cells — `metrics.py` alone ~1,400 lines in one — so the notebook reads as a `.py` file split at module boundaries rather than as a notebook | `SECTION_MAP`: **137 cells cut by logical group**, each preceded by an HTML markdown heading naming what it does and which rule it enforces. Identity in `cell.metadata`; byte-equality moved from per-cell to per-module; one declared additive line (`from __future__ import annotations`) on every continuation cell, without which Kaggle's Python 3.11 raises `NameError` at class-definition time | 15, 16 |
+| D64 | I | Three of §7's four deferred baselines cost minutes and were never built, leaving rows that read as unfinished work — and *no deep model beats Naive-RW* asserted without testing the deep model the crypto literature reaches for first | LSTM (`lstm`, 45 runs, **multivariate**, target-channel loss), naive-persist (`npst`, 15), seasonal-naive (`nsea`, 15). Manifest **894 → 969**. ARIMA stays deferred **with a written reason**: AIC lands at ~(0,0,0), which *is* the naive baseline | 7, 10.2 |
+
+| D65 | **F** | An evaluation cell bound `_provenance` — the name of a `report.py` **function** `build_report` calls one cell later — to a string. The last cell of the 894-run session died `TypeError: 'str' object is not callable` at 28,512 s, 7.8 hours in. `D59` from the opposite direction: not a name the flattening unbound, but one a scaffolding cell rebound. Zero data lost; the version's *status* was | Binding renamed `_digest_source`; `test_no_scaffolding_cell_shadows_a_package_name` refuses any scaffolding cell that **assigns** a package name. Imports excluded — same object, not a value collision. Four allowlisted names, each with its reason in code | 15 |
+| D66 | I | All 137 definition cells still opened with their module's imports — the same twenty-odd lines repeated through the artefact a reader examines | One **Library** cell after Setup, **generated from** the flattened modules so nothing can go missing, `from X import` merged per module. Module-level imports become the **third declared subtractive category**; function-local ones stay (`report._pyplot` defers matplotlib on purpose). Equality reference moves to `flatten_module_body` — byte-exact still | 15 |
+
+| D67 | I | `D63` prefixed every definition cell with `from __future__ import annotations`, on the reasoning that a future import is scoped to its code unit. True of `compile()`, **false of the notebook**: IPython accumulates future flags across a session, so 140 cells repeated a line one cell already supplied | The directive lives in the Library cell alone. Definition cells are pure slices — the last additive transformation is gone. Verified empirically, not assumed: `compile.flags` `16896 → 16794112`, and a following cell defines a forward annotation without raising. The suite compiles cells under the accumulated flags, so a change in that behaviour fails here | 15 |
+
+| D68 | I | The 894-run session used **one** of two T4s for 7.8 hours. The grid cell said why — *"threads are not the fix, `torch.manual_seed` seeds EVERY CUDA device"* — a correct observation with a conclusion that did not follow: the seeding was global because nothing had made it otherwise | `set_seed(seed, device)` seeds the CPU generator and **only that device's**; seeding plus module construction under one `SEED_LOCK`, milliseconds against a ~32 s run. `execute_parallel` runs one worker per visible device off a shared queue. Run level, never batch — DP rejected as before, DDP worse again at 969 short runs. **Throughput unverified off Kaggle**; what is tested is that no cell reaches both workers and none is dropped | 10.3 |
+
+| D69 | **C** | `AGENTS.md` was a 2,298-line pre-compaction copy of `CLAUDE.md`, headed `# CLAUDE.md` and declaring itself authoritative — so two files claimed to govern and disagreed on §10.3, the manifest count and the existence of `D63`–`D68`. Nothing referenced it, and nothing announced it as a copy | Replaced with a pointer to `CLAUDE.md`, the register and `USAGE.md`. `D54a` one level up: two artifacts required to agree with nothing checking. **One governing document; a second copy is a defect, not a convenience** | 15 |
+
+| D70 | I | Five arms that `D68`'s second GPU made affordable, and one of them is not robustness: RQ1's K-versus-K_eff contrast existed only inside a panel, because the ladder moves both together (`corr = 0.828`) | **Matched-K rungs** — two K=8 subsets, PR **3.609** vs **5.011**, either side of the ladder's 4.668, so RQ1 is tested by contrast rather than inferred. **Lookback sweep** L ∈ {48, 192}, the one first-order hyperparameter §6.2 never varied. **Tuned arm**, grid declared before running, selected on origin 1's *validation* where `D27` put the Stage 5 gate. **Exploratory seeds 3 → 5**. Manifest **969 → 1,620**, nothing orphaned | 5.1, 10.2 |
+
+**New contradictions found later take IDs D71+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---
@@ -1665,26 +1773,61 @@ notebooks/outputs/artifacts/        paper/
 
 `logs/`, as a directory, does not exist in either location.
 
-**Logic lives in the package. A notebook is a launcher.** If a cell contains a feature definition, a
-window builder, a loss or a metric, it belongs in `src/` where it can be unit-tested on CPU. **Never
-leave a notebook whose outputs are stale relative to `src/`**: outputs are evidence, and stale
-evidence is worse than none.
+**Logic lives in the package, and the notebook is the artefact a reader examines (`D63`).** If a
+cell contains a feature definition, a window builder, a loss or a metric, it belongs in `src/` where
+it can be unit-tested on CPU — that has not changed, and it is what makes the notebook generable and
+testable at all. What changed is the notebook's job: §1's deliverable is a manuscript, and the
+notebook is examined alongside it, so its **shape answers to a reader**, not to the generator's
+convenience. Eighteen module-sized dumps were the shape of a launcher nobody opens. **Never leave a
+notebook whose outputs are stale relative to `src/`**: outputs are evidence, and stale evidence is
+worse than none.
 
 **The launcher is self-contained, and that is not a weakening of the rule (`D54`).**
 `notebooks/iTransformer.ipynb` carries the whole package, so a Kaggle session needs the notebook and
 `BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload, keep in step by hand, and
 silently run stale. No definition moved: the cells *transcribe* `src/` and the generator writes them.
 
-**It carries the package as definition cells, not as files (`D58`).** One cell per module — thirteen
-since `baselines.py` — defining plain `def`, `class` and constant bodies in the kernel namespace.
-Nothing is on `sys.path` and nothing is imported. Four consequences, each load-bearing:
+**It carries the package as definition cells, not as files (`D58`), segmented by logical group
+(`D63`).** Eighteen modules, each opening a `##` section and cut into `###` subsections of functions
+that work together — 137 code cells of 20–120 lines, every one preceded by an HTML markdown heading
+naming what it does and which rule of this document it enforces. `SECTION_MAP` in the generator is
+that cut; `main()` refuses to run when a module is missing from it, for the same reason it refuses on
+a missing `MODULE_ORDER` entry. Cells define plain `def`, `class` and constant bodies in the kernel
+namespace; nothing is on `sys.path` and nothing is imported. Five consequences, each load-bearing:
 
-- **The flattening is subtractive, over exactly two declared categories.** Intra-package imports are
-  removed, by `ast` node span rather than line matching so parenthesised and function-local ones come
-  out right; and `runner.py`'s `if __name__ == "__main__":` guard is removed, because in a cell
-  `__name__` *is* `"__main__"` and the guard would launch the entire grid. Everything else is
-  verbatim, and `tests/test_notebook_sync.py` asserts each cell equals its module under exactly that
-  transformation — not "equivalent", not "equal after formatting".
+- **The flattening is subtractive, over exactly three declared categories.** *Intra-package imports*
+  are removed, by `ast` node span rather than line matching so parenthesised and function-local ones
+  come out right. *`runner.py`'s `if __name__ == "__main__":` guard* is removed, because in a cell
+  `__name__` *is* `"__main__"` and the guard would launch the entire grid. And *module-level imports*
+  are removed (`D66`), because a single **Library** cell at the top of the notebook emits every import
+  the package makes — generated from the modules themselves, so a dependency that appears in `src/`
+  cannot go missing there. Function-local imports **stay**: `report._pyplot` defers matplotlib on
+  purpose, so that the package imports cleanly without a plotting backend, and hoisting that into a
+  cell that runs at session start would undo the decision. Everything else is verbatim.
+- **Cells are contiguous, exhaustive line ranges, and their identity lives in `cell.metadata`.** A
+  banner comment would be a line the cell carries that its module does not, and the check below would
+  have to strip it; the metadata tag costs nothing and keeps every cell body a byte-exact slice.
+  `tests/test_notebook_sync.py` therefore asserts that **a module's cells, rejoined in order, equal
+  `flatten_module_body(name)`** — not "equivalent", not "equal after formatting". Segmentation moved
+  that guarantee from per-cell to per-module and the Library cell moved its *reference* from
+  `flatten_module_source` to `flatten_module_body`; neither weakened it. A line lost between two cells
+  fails there exactly as a changed line would.
+- **Nothing is additive. A cell is a slice and only a slice (`D67`).** `from __future__ import
+  annotations` appears **once**, in the Library cell, and in no definition cell — because IPython
+  accumulates `__future__` compiler flags across a session, and Kaggle runs the notebook through
+  papermill to ipykernel to `run_cell`, the same path. Measured on IPython 9.13: `compile.flags` goes
+  `16896 → 16794112` after that cell, and a following cell carrying no future import of its own
+  defines a forward annotation without raising. Plain `compile()` does *not* inherit, so
+  `tests/test_notebook_sync.py` reads the flags off the Library cell and compiles every later cell
+  under them — modelling the interpreter the notebook actually runs on rather than the one the test
+  process happens to be. **This is the property the whole contract rests on**: if a future release of
+  IPython stopped accumulating, every definition cell would compile its annotations eagerly and
+  `RidgeConfig.build` — whose annotation names a `RidgeForecaster` defined one cell later — would
+  raise at class-definition time. The test is the detector.
+- **The declared interpreter is one field, and the suite follows it.** `language_info.version` in the
+  notebook is what `tests/test_notebook_sync.py` parses every cell against, so raising the floor is a
+  one-field change rather than a code change. It bounds *syntax*, not runtime behaviour — it would not
+  have caught the future-import hazard above — so it is a floor, not a guarantee.
 - **A module therefore reaches a sibling by name, never by module object** (`D59`).
   `from itransformer_btc.metrics import clark_west_test` binds a function another cell defines;
   `from itransformer_btc import metrics` binds a *module* no cell defines, leaving every `metrics.x`
@@ -1752,7 +1895,8 @@ every Kaggle session (§12).
 **Regenerating the notebook is part of editing `src/`.** After any change under
 `src/itransformer_btc/`, run `python tools/build_notebook.py` and commit the notebook with the same
 change; skipping it fails the suite rather than shipping a launcher that runs last week's code.
-Adding a module means adding it to `MODULE_ORDER` in the generator — the generator refuses to run
+Adding a module means adding it to `MODULE_ORDER` **and** giving it a `SECTION_MAP` entry — the
+generator refuses to run
 otherwise, because a silently omitted module leaves a name undefined deep in a twelve-hour session.
 **Never commit the Kaggle export over the generated notebook** (`D61`): it carries papermill metadata,
 execution counts and committed outputs, and turns the suite red.

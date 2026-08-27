@@ -88,6 +88,49 @@ _GK_C: Final = 2.0 * math.log(2.0) - 1.0
 _RS_STABILISER: Final = 1e-9
 
 
+#: Two eight-variate subsets, built to differ in **effective** rank while holding
+#: nominal K fixed at 8 (`D70`).
+#:
+#: RQ1 asks whether the marginal benefit of added variates is governed by nominal
+#: count or by effective dimensionality, and the ladder answers it only through a
+#: panel: K and K_eff move together there, ``corr(K, K_eff) = 0.828``, so the two
+#: explanations are separated by a non-nested test rather than by contrast. These
+#: two rungs separate them **directly** — same K, same target, same everything
+#: else, and PR is the only thing that moves.
+#:
+#: - ``redundant`` loads F2 whole. All three volatility estimators carry about one
+#:   independent degree of freedom between them (root §5.1), and all three of F3
+#:   are present where the third is the difference of the first two. Low PR by
+#:   construction.
+#: - ``orthogonal`` takes one or two from each of F1-F5 and never doubles up
+#:   inside a family. High PR by construction.
+#:
+#: ``r`` leads both, because :data:`TARGET_INDEX` is 0 and every consumer reads
+#: the target there.
+MATCHED_K_SUBSETS: dict[str, tuple[str, ...]] = {
+    "redundant": (
+        "r",
+        "log_parkinson",
+        "log_garman_klass",
+        "log_rogers_satchell",
+        "log_quote_volume",
+        "log_trade_count",
+        "log_mean_trade_size",
+        "taker_buy_ratio",
+    ),
+    "orthogonal": (
+        "r",
+        "upper_shadow",
+        "lower_shadow",
+        "log_parkinson",
+        "log_quote_volume",
+        "log_trade_count",
+        "taker_buy_ratio",
+        "vwap_location",
+    ),
+}
+
+
 def ladder_columns(k: int) -> list[str]:
     """The variate names at rung ``k``.
 

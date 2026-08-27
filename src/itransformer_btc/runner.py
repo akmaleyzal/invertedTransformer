@@ -31,18 +31,21 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+import torch
 
 from itransformer_btc.config import (
     HORIZONS,
     K_LADDER,
     ORIGINS,
     PRED_LEN,
+    SEQ_LEN,
     SEEDS,
     SWEEP_ORIGIN_INDICES,
     FalsificationOrigin,
@@ -54,10 +57,13 @@ from itransformer_btc.config import (
 # while passing every parse-level check here (root §15, `D58`).
 from itransformer_btc.baselines import (
     DLinearConfig,
+    LSTMConfig,
+    NaiveConfig,
     PatchTSTConfig,
     RidgeConfig,
     assert_baseline_alignment,
 )
+from itransformer_btc.features import MATCHED_K_SUBSETS
 from itransformer_btc.attention import tercile_maps
 from itransformer_btc.model import ITransformerConfig, LongScheduleConfig
 from itransformer_btc.splits import OriginTensors, build_origin_tensors
@@ -84,6 +90,17 @@ ARM_MODEL_TAG: dict[str, str] = {
     "ridge": "rdg",      # `D17` — is a transformer needed at all? K = 1,4,8,12
     "dlinear": "dlin",   # root §7 — "not optional", K=8
     "patchtst": "ptst",  # root §7 — SOTA channel-independent, K=8
+    "lstm": "lstm",      # root §7 — the RNN the crypto literature reaches for, K=8
+    "persist": "npst",   # root §7 — y_hat = last observed return, K=1
+    "seasonal": "nsea",  # root §7 — y_hat = return at t-24, K=1
+    # `D70`'s four arms. All exploratory, all declared before running, all
+    # reported whatever they show — root §13.2's commitment, which an arm
+    # reported only when it agrees with the headline does not meet.
+    "orthogonal": "itro",  # K=8, one or two per family — high effective rank
+    "redundant": "itrr",   # K=8, F2 and F3 loaded whole — low effective rank
+    "look048": "l048",     # L=48 at K=8 — half the pre-registered lookback
+    "look192": "l192",     # L=192 at K=8 — double it
+    "tuned": "itrt",       # K=8 at the config origin 1's validation preferred
     # `D62`'s three exploratory arms. Distinct tags, so none can collide with a
     # completed run_id and all 684 stay complete under resume.
     "attention": "itra",  # `D62d` — Figure 5's attention maps, K=8
@@ -95,7 +112,9 @@ ARM_MODEL_TAG: dict[str, str] = {
 #: these arms being a *different model* rather than a different configuration of
 #: the same one: the `D45` window-alignment assertion runs for them, and their
 #: ``run_id`` prefix keeps them apart in every table.
-BASELINE_ARMS: tuple[str, ...] = ("ridge", "dlinear", "patchtst")
+BASELINE_ARMS: tuple[str, ...] = (
+    "ridge", "dlinear", "patchtst", "lstm", "persist", "seasonal",
+)
 
 #: Every arm, in execution order. iTransformer first, so that a session cut short
 #: leaves the ladder — which RQ1, RQ2 and RQ3 all read — complete before the
@@ -104,7 +123,12 @@ BASELINE_ARMS: tuple[str, ...] = ("ridge", "dlinear", "patchtst")
 #: `D62`'s exploratory arms. Ordered **last** so a session cut short loses
 #: robustness rather than anything RQ1-RQ3 reads, on the same reasoning that put
 #: the baselines after the ladder.
-ROBUSTNESS_ARMS: tuple[str, ...] = ("attention", "longsched", "capacity")
+ROBUSTNESS_ARMS: tuple[str, ...] = (
+    "attention", "longsched", "capacity",
+    # `D70`. Ordered with the rest of the robustness block, after the baselines,
+    # so a session cut short loses a robustness arm rather than an RQ input.
+    "orthogonal", "redundant", "look048", "look192", "tuned",
+)
 
 ALL_ARMS: tuple[str, ...] = (
     "main", "uniform", "fresh", "horizon", *BASELINE_ARMS, *ROBUSTNESS_ARMS,
@@ -113,14 +137,25 @@ ALL_ARMS: tuple[str, ...] = (
 #: Seeds for the horizon sweep. Three, not five: root §10.2 budgets 192 runs for
 #: it, and root §10.3 says to cut the sweep before cutting seed counts if the
 #: grid ever stops fitting, because `D30` and `D49` depend on the seed counts.
-SWEEP_SEEDS: tuple[int, ...] = SEEDS[:3]
+SWEEP_SEEDS: tuple[int, ...] = SEEDS
+#: Was ``SEEDS[:3]``, and the reason was budget rather than design (`D70`): root
+#: §10.3 sized the sweep against a single-GPU session. With both devices working
+#: the third and fourth seed cost wall-clock the session has, and `D30`'s rule
+#: cuts the other way once they are affordable — a number aggregated across
+#: origins carries an SE across origins, and seed dispersion is the Monte-Carlo
+#: diagnostic beside it. Three seeds is a thin diagnostic.
 
 #: Seeds for the stochastic baselines. Three, matching root §10.2's baseline
 #: budget of "3 stochastic x 3 seeds". `D49`'s five-seed rule is about the
 #: **rungs of the ladder**, where the 8->12 contrast cannot be the one carrying
 #: the fewest; a baseline is a single cell rather than a rung, and a fourth and
 #: fifth seed there would buy precision on a number no hypothesis is stated about.
-BASELINE_SEEDS: tuple[int, ...] = SEEDS[:3]
+BASELINE_SEEDS: tuple[int, ...] = SEEDS
+#: Also raised from three (`D70`), and the attention arm is why it matters most:
+#: root §13.2 admits attention maps only when they are "validated for stability
+#: across seeds", and the measured calm-to-stress shift (**+0.00056**) is smaller
+#: than the between-seed standard deviation of a single weight (**0.00064**). A
+#: claim that rests on that comparison should not rest on three draws.
 
 #: Root §10.5. Checked at **run boundaries**, not epoch boundaries: runs are
 #: short, epochs are shorter, and the checkpoint granularity is the run.
@@ -137,6 +172,12 @@ class RunCell:
     k: int
     pred_len: int
     seed: int
+    #: Lookback. Only the `D70` sweep moves it; every other arm takes root §6.2's
+    #: 96. It is **not** in ``run_id`` — root §10.4 fixes that format — so the two
+    #: sweep arms carry their own tags and cannot collide with the ladder.
+    seq_len: int = SEQ_LEN
+    #: Name in :data:`MATCHED_K_SUBSETS`, or "" for the rung's own columns.
+    subset: str = ""
 
     @property
     def model_tag(self) -> str:
@@ -172,13 +213,27 @@ class RunCell:
         150 redundant builds across the baseline arms. Sharding still keys on
         :attr:`group`, because that partition must be a function of the arm.
         """
-        return (self.arm == "fresh", self.origin_index, self.k, self.pred_len)
+        return (
+            self.arm == "fresh",
+            self.origin_index,
+            self.k,
+            self.pred_len,
+            # `D70`: a lookback and a column set change the tensors, so two cells
+            # that differ in either must not share a cached build. Left out, the
+            # L=192 arm would silently train on L=96 windows.
+            self.seq_len,
+            self.subset,
+        )
+
+    def columns(self) -> tuple[str, ...] | None:
+        """The named column set this cell trains on, or ``None`` for its rung."""
+        return MATCHED_K_SUBSETS[self.subset] if self.subset else None
 
     def origin(self) -> OriginLike:
         base = ORIGINS[self.origin_index - 1]
         return FalsificationOrigin(base) if self.arm == "fresh" else base
 
-    def model_config(self) -> Architecture:
+    def model_config(self, overrides: dict[str, Architecture] | None = None) -> Architecture:
         """The arm's configuration — hyperparameters fixed a priori in every case.
 
         **No per-rung tuning** (`D38`): holding capacity fixed is what makes the
@@ -197,6 +252,25 @@ class RunCell:
             return DLinearConfig(pred_len=self.pred_len)
         if self.arm == "patchtst":
             return PatchTSTConfig(pred_len=self.pred_len)
+        if self.arm == "lstm":
+            return LSTMConfig(pred_len=self.pred_len, k=self.k)
+        if self.arm in ("persist", "seasonal"):
+            return NaiveConfig(mode=self.arm, pred_len=self.pred_len, k=self.k)
+        if self.arm == "tuned":
+            # Selected once, on origin 1's validation, exactly where `D27` put the
+            # Stage 5 gate and for the same reason: a selection that reads a test
+            # block cannot coexist with root §11's "test blocks are opened once".
+            # The notebook computes it in the prelude and hands it in; there is no
+            # default, because a tuned arm silently running the untuned config
+            # would answer the referee's question with the wrong number.
+            if not overrides or "tuned" not in overrides:
+                raise ValueError(
+                    "the tuned arm needs its selected config passed in "
+                    "(`configs={'tuned': ...}`); run tune_on_validation first"
+                )
+            return overrides["tuned"]
+        if self.arm in ("look048", "look192", "orthogonal", "redundant"):
+            return ITransformerConfig(seq_len=self.seq_len, pred_len=self.pred_len)
         if self.arm == "longsched":
             # `D62c`. The only thing that moves is the schedule, which is a
             # method, so meta['config'] is byte-identical to the main arm's and
@@ -243,6 +317,9 @@ def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
     ridge          60  15 x 4 K, deterministic (`D17`)
     dlinear        45  15 x K=8 x 3 seeds (root §7)
     patchtst       45  15 x K=8 x 3 seeds (root §7)
+    lstm           45  15 x K=8 x 3 seeds (root §7, `D64`)
+    persist        15  15 origins, deterministic (root §7, `D64`)
+    seasonal       15  15 origins, deterministic (root §7, `D64`)
     ==========  =====  =========================================================
 
     **48 of those cells are literally the same run.** The sweep's ``H=24`` slice
@@ -306,6 +383,46 @@ def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
         cells += [
             RunCell("patchtst", o.index, 8, PRED_LEN, s)
             for o in ORIGINS for s in BASELINE_SEEDS
+        ]
+    if "lstm" in arms:
+        cells += [
+            RunCell("lstm", o.index, 8, PRED_LEN, s)
+            for o in ORIGINS for s in BASELINE_SEEDS
+        ]
+    for naive in ("persist", "seasonal"):
+        # One seed each. Neither has a parameter and neither consumes RNG, so a
+        # second seed would reproduce the first to the last bit — the same
+        # reasoning that gives ridge one seed.
+        if naive in arms:
+            cells += [
+                RunCell(naive, o.index, 1, PRED_LEN, SEEDS[0]) for o in ORIGINS
+            ]
+    for arm, subset in (("orthogonal", "orthogonal"), ("redundant", "redundant")):
+        # Same K, same seeds, same everything but the column set (`D70`). Five
+        # seeds because this is RQ1's direct contrast and `D49`'s reasoning about
+        # the ladder applies to it: the rung carrying the comparison cannot be the
+        # one carrying the fewest draws.
+        if arm in arms:
+            cells += [
+                RunCell(arm, o.index, 8, PRED_LEN, s, subset=subset)
+                for o in ORIGINS for s in SEEDS
+            ]
+    for arm, seq_len in (("look048", 48), ("look192", 192)):
+        # L is the one first-order hyperparameter root §6.2 never varied. 192 is
+        # the ceiling: window cost per break is ``L + H - 1``, so at 336 the
+        # pooled loss approaches root §4.3's tolerance and the early origins,
+        # where every outage lives, would carry it worst.
+        if arm in arms:
+            cells += [
+                RunCell(arm, o.index, 8, PRED_LEN, s, seq_len=seq_len)
+                for o in ORIGINS for s in SWEEP_SEEDS
+            ]
+    if "tuned" in arms:
+        # The config is selected once on origin 1's validation and handed to
+        # ``execute``; these cells only carry it across the panel.
+        cells += [
+            RunCell("tuned", o.index, 8, PRED_LEN, s)
+            for o in ORIGINS for s in SEEDS
         ]
     if "attention" in arms:
         # Three seeds, because root §13.2 admits attention maps only when they are
@@ -456,7 +573,12 @@ class _TensorCache:
             self._store.move_to_end(key)
             return self._store[key]
         tensors = build_origin_tensors(
-            self.features, cell.origin(), cell.k, pred_len=cell.pred_len
+            self.features,
+            cell.origin(),
+            cell.k,
+            seq_len=cell.seq_len,
+            pred_len=cell.pred_len,
+            columns=cell.columns(),
         )
         self._store[key] = tensors
         while len(self._store) > self.size:
@@ -530,6 +652,7 @@ def execute(
     roots: list[Path] | None = None,
     guard: BudgetGuard | None = None,
     device=None,
+    configs: dict[str, Architecture] | None = None,
     log=print,
 ) -> ExecutionSummary:
     """Run a shard to completion or to the budget, whichever comes first.
@@ -568,7 +691,7 @@ def execute(
             # iTransformer arm (`D38` — nothing is tuned), and carrying the
             # chosen alpha for ridge, which is the one selection root §11 admits.
             # Writing the config that went in would lose it.
-            model, cfg, outcome = cell.model_config().fit(
+            model, cfg, outcome = cell.model_config(configs).fit(
                 tensors, cell.spec, device=device
             )
             # Figure 5's maps, and only for the arm that exists to produce them
@@ -611,6 +734,249 @@ def execute(
         remaining=len(pending(queue, discover_roots(out_root))),
         wall_time_s=time.perf_counter() - started,
         mean_run_s=guard.mean_run_s,
+    )
+
+
+
+def visible_devices() -> list[torch.device]:
+    """Every CUDA device the session can see, or ``[cpu]`` when there is none.
+
+    Root §10.1 lists 2 x T4 and root §10.3 says one is enough — which was true of
+    a 969-run manifest that fits an 11 h session. It stops being true the moment
+    the grid grows, and the 894-run session left **half the hardware idle for 7.8
+    hours** because nothing asked this question (`D68`).
+    """
+    if not torch.cuda.is_available():
+        return [torch.device("cpu")]
+    return [torch.device("cuda", i) for i in range(torch.cuda.device_count())]
+
+
+def execute_parallel(
+    cells: list[RunCell],
+    features: pl.DataFrame,
+    *,
+    devices: list[torch.device] | None = None,
+    out_root: Path = ARTIFACTS,
+    roots: list[Path] | None = None,
+    guard: BudgetGuard | None = None,
+    configs: dict[str, Architecture] | None = None,
+    log=print,
+) -> ExecutionSummary:
+    """:func:`execute`, one worker thread per device, off a shared queue.
+
+    **Run level, never batch level** (root §10.3). ``nn.DataParallel`` is rejected
+    there with a measured reason that has not changed: at batch 32 and ~280k
+    parameters the scatter/gather costs more than splitting saves, and DDP is
+    worse again for 969 runs of ~32 s each, where the process group is paid per
+    run. What parallelises cleanly is the *grid*, because a run is already the
+    unit of work and nothing crosses between two of them.
+
+    Threads rather than processes, because §15's notebook carries the package as
+    definition cells in one kernel namespace: a subprocess inherits none of it and
+    ``python -m itransformer_btc.runner`` has no files to import. ``launch_workers``
+    remains the path from a checkout. Threads are the path from the notebook, and
+    the GIL is not the constraint here — every run spends its time inside CUDA
+    kernels and tensor ops that release it.
+
+    **Determinism is the property this must not cost**, and the whole design is
+    that one guarantee (`D68`):
+
+    - each worker owns one device and never touches another's;
+    - :func:`set_seed` is device-scoped, so seeding ``cuda:0`` leaves ``cuda:1``'s
+      generator alone;
+    - the CPU generator is shared, so seeding and module construction happen under
+      :data:`itransformer_btc.train.SEED_LOCK` — milliseconds against a ~32 s run;
+    - each worker keeps its **own** tensor cache, so no build races another.
+
+    Everything after the prologue draws from the device's own CUDA generator. A
+    run therefore produces the same bytes whether it ran alone or beside another,
+    which is what `D62d` demonstrated for the attention arm and what root §12
+    requires of every number in the manuscript.
+
+    The budget guard is shared and its methods are called under a lock, so two
+    workers cannot both slip past a deadline that only one of them had room for.
+    """
+    devices = devices or visible_devices()
+    if len(devices) < 2:
+        return execute(
+            cells, features,
+            out_root=out_root, roots=roots, guard=guard,
+            device=devices[0] if devices else None, configs=configs, log=log,
+        )
+
+    guard = guard or BudgetGuard()
+    roots = roots or discover_roots(out_root)
+    done = completed_run_ids(roots)
+
+    queue = list(cells)
+    cursor = 0
+    completed = skipped = failed = 0
+    state = threading.Lock()
+    started = time.perf_counter()
+    log(f"run-level parallelism across {[str(d) for d in devices]} (`D68`)")
+
+    def take() -> tuple[int, RunCell] | None:
+        nonlocal cursor
+        with state:
+            if cursor >= len(queue) or not guard.may_start():
+                return None
+            cursor += 1
+            return cursor, queue[cursor - 1]
+
+    def worker(device: torch.device) -> None:
+        nonlocal completed, skipped, failed
+        cache = _TensorCache(features, size=2)
+        while (item := take()) is not None:
+            position, cell = item
+            if cell.run_id in done or is_complete(cell.run_id, out_root):
+                with state:
+                    skipped += 1
+                continue
+
+            began = time.perf_counter()
+            try:
+                tensors = cache.get(cell)
+                model, cfg, outcome = cell.model_config(configs).fit(
+                    tensors, cell.spec, device=device
+                )
+                maps = (
+                    tercile_maps(model, tensors, device)
+                    if cell.arm == "attention"
+                    else None
+                )
+                write_artifacts(
+                    model, tensors, cell.spec, cfg, outcome, device,
+                    root=out_root, attention=maps,
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad cell must not end the shard
+                with state:
+                    failed += 1
+                log(f"[{position}/{len(queue)}] {device} {cell.run_id} FAILED: {exc!r}")
+                continue
+
+            if cell.arm in BASELINE_ARMS:
+                _assert_alignment(cell, roots, log)
+
+            elapsed = time.perf_counter() - began
+            with state:
+                guard.record(elapsed)
+                completed += 1
+            log(
+                f"[{position}/{len(queue)}] {device} {cell.run_id}  "
+                f"epochs={outcome.epochs_run}  val={outcome.best_val_mse:.6f}  "
+                f"{elapsed:.1f}s  n_train={len(tensors.train)}"
+            )
+
+    threads = [
+        threading.Thread(target=worker, args=(d,), name=f"grid-{d}", daemon=True)
+        for d in devices
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    if cursor < len(queue):
+        log(
+            f"budget guard: stopped with {len(queue) - cursor} cells unstarted — "
+            f"resume picks them up next session (root §10.5)"
+        )
+
+    return ExecutionSummary(
+        completed=completed,
+        skipped=skipped,
+        failed=failed,
+        remaining=len(pending(queue, discover_roots(out_root))),
+        wall_time_s=time.perf_counter() - started,
+        mean_run_s=guard.mean_run_s,
+    )
+
+
+
+#: The grid the tuned arm searches. Declared here, before it runs, because a
+#: search space chosen after seeing which config won is not a search (`D70`).
+#:
+#: Three knobs root §6.2 adopted from Liu et al. (2024) and never varied, each at
+#: the published value and one step either side. ``d_ff`` is absent on purpose:
+#: `D62b`'s capacity arm already swept it and made things worse at 14 of 15
+#: origins, and repeating it here would spend the budget re-answering a question
+#: that has an answer.
+TUNING_GRID: tuple[dict[str, object], ...] = tuple(
+    {"d_model": d, "e_layers": e, "lr": lr}
+    for d in (64, 128, 256)
+    for e in (2, 3)
+    for lr in (1e-4, 3e-4, 1e-3)
+)
+
+#: Epochs each probe is given. Short on purpose: this ranks configurations, it
+#: does not train them. The winner is then trained under root §6.2's full
+#: schedule like every other arm.
+TUNING_EPOCHS: int = 6
+
+
+def tune_on_validation(
+    features: pl.DataFrame,
+    *,
+    origin_index: int = 1,
+    k: int = 8,
+    device=None,
+    log=print,
+) -> tuple[ITransformerConfig, list[dict]]:
+    """Pick one iTransformer config on one origin's **validation** sub-block.
+
+    This exists to answer the one attack on the null that root §6.2 leaves open.
+    Nothing in this study is tuned — every hyperparameter is adopted from
+    Liu et al. (2024) and held identical at every rung, which is what makes the
+    rungs comparable (`D38`). A referee reads that as *"you did not try"*, and the
+    honest reply is a number rather than a paragraph: **if the configuration the
+    validation set prefers is still worse than a random walk, the null is not an
+    artefact of the defaults.**
+
+    Three properties keep it inside the pre-registration:
+
+    - **Validation only, one origin.** Exactly where `D27` put the Stage 5 gate,
+      and for its reason: root §11 opens the test blocks once, after the design is
+      frozen, so a selection that reads one cannot coexist with it.
+    - **The grid is declared before it runs** (:data:`TUNING_GRID`). A space
+      chosen after seeing the winner is not a search.
+    - **The arm is exploratory and reported whatever it shows** (root §13.2). It
+      does not enter RQ1's ladder comparison, and it gets its own row.
+
+    The probes are deterministic given the data, so a resumed session recomputes
+    the same winner rather than needing it persisted. Its trial count enters
+    root §13.5's development trial total, which is stated rather than concealed.
+
+    Returns:
+        The winning config under root §6.2's full schedule, and the ranked table.
+    """
+    device = device or pick_device()
+    origin = ORIGINS[origin_index - 1]
+    tensors = build_origin_tensors(features, origin, k, pred_len=PRED_LEN)
+
+    rows: list[dict] = []
+    for index, point in enumerate(TUNING_GRID):
+        cfg = ITransformerConfig(
+            pred_len=PRED_LEN,
+            d_model=int(point["d_model"]), e_layers=int(point["e_layers"]),
+        )
+        spec = RunSpec("tuned", origin_index, k, PRED_LEN, SEEDS[0])
+        _, outcome = train_one(
+            tensors, spec, cfg, device=device,
+            max_epochs=TUNING_EPOCHS, patience=TUNING_EPOCHS,
+            lr=float(point["lr"]),
+        )
+        rows.append({**point, "val_mse": outcome.best_val_mse})
+        log(f"  probe {index + 1}/{len(TUNING_GRID)} {point} -> {outcome.best_val_mse:.6f}")
+
+    rows.sort(key=lambda r: r["val_mse"])
+    best = rows[0]
+    log(f"tuned config selected on origin {origin_index} validation: {best}")
+    return (
+        ITransformerConfig(
+            pred_len=PRED_LEN,
+            d_model=int(best["d_model"]), e_layers=int(best["e_layers"]),
+        ),
+        rows,
     )
 
 

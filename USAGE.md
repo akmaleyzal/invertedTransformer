@@ -104,7 +104,7 @@ Hand-editing a package cell in the notebook is a defect; the next generator run 
 | `keff.py` | §5.4's pre-model measurement; the Stage 3b gate | Every K_eff is computed on a **training-only** span (`D44`) |
 | `metrics.py` | §9 — every metric, test and RQ estimator | Ratio metrics come from seed-averaged MSEs, never averaged ratios (`D42`) |
 | `baselines.py` | §7's comparators: ridge, DLinear, PatchTST (`D56`) | Writes through `train.write_artifacts`, never its own schema; `D45` window alignment is asserted, not assumed |
-| `runner.py` | The 684-run manifest; resume; budget guard; the 2-GPU launcher | Shards the **full** manifest, then subtracts what is done (`D53c`) |
+| `runner.py` | The **969**-run manifest; resume; budget guard; `execute_parallel` across every visible GPU (`D68`); the subprocess launcher | Shards the **full** manifest, then subtracts what is done (`D53c`) |
 
 `tools/build_notebook.py` sits outside the package on purpose: it is build tooling, not study logic,
 and nothing under `src/` may import it.
@@ -319,21 +319,29 @@ CUDA_VISIBLE_DEVICES=1 python -m itransformer_btc.runner --shard 1 --shards 2
 | `--out` | `artifacts` | Where the two files per run go |
 | `--budget-h` / `--reserve-h` | 11.0 / 0.5 | Session budget, checked at **run boundaries** |
 
-**Two GPUs are two independent run *processes*, not two threads.** `torch.manual_seed` seeds *every*
-CUDA device, so two threads seeding concurrently would clobber each other's generator mid-run and
-§12's reproducibility contract would be unenforceable. One process per GPU with
-`CUDA_VISIBLE_DEVICES` pinned gives each worker its own global RNG, its own interpreter lock and
-crash isolation.
+**Two GPUs are two workers, and in the notebook they are two *threads* (`D68`).** The paragraph
+that stood here said threads were impossible because `torch.manual_seed` seeds *every* CUDA device,
+so two threads seeding concurrently would clobber each other's generator mid-run. The observation was
+right; the conclusion was not. `set_seed(seed, device)` now seeds the CPU generator and **only that
+device's**, and seeding plus module construction happen under one `SEED_LOCK` — milliseconds against
+a ~32 s run. Everything after that prologue draws from the device's own generator, so a run produces
+the same bytes whether it ran alone or beside another, and §12's contract is enforceable either way.
 
-**This CLI path is for a checkout, not for the notebook (`D58`).** Subprocesses import
-`itransformer_btc`, and the notebook has no package to import — its modules are definitions in one
-kernel namespace, so it runs the grid **in-kernel and sequentially** via `execute()`. That costs
-roughly 4.5 h against 2.31 h and was accepted because `D57` showed both fit an 11 h session.
-`launch_workers` remains here, tested, and is the path to use from a checkout — and the one a
-1-minute grid will need, where sequential does not fit.
+- **From the notebook:** `execute_parallel(cells, features, devices=visible_devices())`. Threads,
+  because a subprocess inherits none of the kernel namespace and there is no `itransformer_btc` on
+  disk to import (`D58`). One device makes it fall through to `execute()` — the same path the 894
+  completed runs took, so a single-device session cannot drift from the vintage on disk.
+- **From a checkout:** `launch_workers` with `CUDA_VISIBLE_DEVICES` pinned per process. Still here,
+  still tested, and it buys crash isolation a thread pool does not.
 
 **`nn.DataParallel` is rejected**: at batch 32 the scatter/gather costs more than the split saves.
-Parallelism belongs at the *run* level — the grid is many small runs, not one large one.
+**DDP is rejected more sharply**: it parallelises one large training job, and this grid is 969 small
+ones, so a process group would be set up and torn down per ~32 s run. Parallelism belongs at the
+*run* level — the grid is many small runs, not one large one.
+
+**Throughput is unverified off Kaggle.** No machine the suite runs on has a CUDA device;
+`D58`'s 2.31 h remains the only run-level figure this project has taken. What is tested is that two
+workers sharing one cursor hand no cell to both and drop none.
 
 **No `Dataset`, no `DataLoader`, no workers.** At ~280k parameters the run is dominated by data
 movement and Python overhead, which a per-item loader maximises — roughly 10× worse, which puts the
@@ -410,8 +418,8 @@ bookkeeping: a run is complete only when **both** artifacts exist and `meta.stat
 
 Written when the grid was estimated at ~10–20 wall hours against an 11 h budget, which made two
 sessions the plan rather than the accident. **Measured, the 534-run grid took 2.31 h** on two T4s and
-~4.5 h in one kernel (`D57`), so one session is now the expected case and this section is the
-contingency it was built to be. It still holds verbatim, and a 1-minute grid will need it. Nothing
+~4.5 h in one kernel (`D57`); the 894-run manifest took **7.79 h** on one device, and `D68` puts both
+to work. One session is the expected case and this section is the contingency it was built to be. It still holds verbatim, and a 1-minute grid will need it. Nothing
 restarts from zero:
 
 | | |
