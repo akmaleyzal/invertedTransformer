@@ -1207,8 +1207,16 @@ def find_parquet() -> Path:
     """Locate BTCUSDT_1h.parquet by globbing — never by Kaggle dataset slug.
 
     Root section 10.5: discovery is by glob so the Dataset can be renamed without
-    editing anything. Both upload shapes are covered — the four Stage 1 files
-    uploaded flat, and the whole repository uploaded with data/raw/ inside it.
+    editing anything. The shallow patterns come first because they express a
+    *preference* -- data/raw/ over a flat upload -- and because they are cheap.
+
+    The recursive pass exists because a fixed depth is a hard-coded assumption
+    wearing a glob. Kaggle mounts a dataset at /kaggle/input/<slug>/, but the
+    path a user copies out of the web UI can carry the owner and the datasets/
+    segment too, and a repository uploaded whole nests data/raw/ one level
+    deeper again. Any of those is three or four levels down, and the previous
+    patterns stopped at two -- so the file was there and discovery said it was
+    not. Depth is not a thing to enumerate.
     """
     patterns = (
         "data/raw/BTCUSDT_1h.parquet",
@@ -1224,6 +1232,19 @@ def find_parquet() -> Path:
         for pattern in patterns:
             for hit in sorted(root.glob(pattern)):
                 return hit.resolve()
+    # Depth-independent fallback. Preferring data/raw/ still, then anything.
+    for root in roots:
+        if not root.exists():
+            continue
+        hits = sorted(root.rglob("BTCUSDT_1h.parquet"))
+        if hits:
+            preferred = [h for h in hits if h.parent.name == "raw"]
+            chosen = (preferred or hits)[0]
+            if len(hits) > 1:
+                print(f"note: {len(hits)} copies of BTCUSDT_1h.parquet under "
+                      f"{root}; using {chosen}. Section 12 forbids two vintages "
+                      f"in one table -- check they are the same file.")
+            return chosen.resolve()
     raise FileNotFoundError(
         "BTCUSDT_1h.parquet not found under "
         f"{[str(r) for r in roots]}. Attach data/raw/ as a Kaggle Dataset. "

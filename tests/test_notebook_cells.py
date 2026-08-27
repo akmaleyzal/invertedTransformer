@@ -201,3 +201,99 @@ def test_estimator_cells_skip_cleanly_on_a_partial_grid(cells, marker) -> None:
     out, _ = run_cell(cell_containing(cells, marker), GRID_COMPLETE=False)
     assert "SKIPPED" in out
     assert "Resume in the next session" in out
+
+
+def _find_parquet_from_the_notebook(input_root: Path, work: Path):
+    """``find_parquet`` as the notebook actually defines it, pointed at a fixture.
+
+    Read out of the committed notebook rather than the generator, for `D55`'s
+    reason: testing the generator's constant would pass while a stale notebook
+    still shipped the old patterns.
+    """
+    import ast
+
+    notebook = json.loads(
+        (Path(__file__).resolve().parent.parent / "notebooks" / "iTransformer.ipynb")
+        .read_text(encoding="utf-8")
+    )
+    setup = next(
+        "".join(c["source"])
+        for c in notebook["cells"]
+        if c["cell_type"] == "code" and "def find_parquet(" in "".join(c["source"])
+    )
+    source = ast.get_source_segment(
+        setup,
+        next(n for n in ast.parse(setup).body if getattr(n, "name", "") == "find_parquet"),
+    )
+    namespace: dict = {
+        "Path": Path,
+        "WORK": work,
+        "ON_KAGGLE": True,
+        "print": lambda *a, **k: None,
+    }
+    exec(source.replace('Path("/kaggle/input")', f"Path(r'{input_root}')"), namespace)
+    return namespace["find_parquet"]
+
+
+@pytest.mark.parametrize(
+    "layout",
+    [
+        # What Kaggle actually mounts.
+        "btc1h-raw/BTCUSDT_1h.parquet",
+        # What the web UI's path looks like, owner and all — three levels down,
+        # which the fixed patterns stopped one short of (`D71`).
+        "datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
+        # The whole repository uploaded as a Dataset.
+        "btc1h-raw/data/raw/BTCUSDT_1h.parquet",
+        # Deeper than anyone would nest it on purpose.
+        "a/b/c/d/e/BTCUSDT_1h.parquet",
+    ],
+)
+def test_find_parquet_is_depth_independent(layout: str, tmp_path) -> None:
+    """Discovery finds the artifact wherever the Dataset put it (`D71`).
+
+    Root §10.5 requires discovery by glob rather than by Dataset slug, so the
+    Dataset can be renamed without editing anything. A **fixed depth** is that
+    same hard-coded assumption wearing a glob: the file is present, discovery
+    says it is not, and the session dies in the setup cell.
+    """
+    root = tmp_path / "input"
+    target = root / layout
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"parquet")
+    work = tmp_path / "working"
+    work.mkdir()
+
+    found = _find_parquet_from_the_notebook(root, work)()
+    assert found == target.resolve()
+
+
+def test_find_parquet_prefers_data_raw_when_a_dataset_holds_both(tmp_path) -> None:
+    """Two copies, one preference, and a warning either way (`D71`).
+
+    A repository uploaded whole can carry the artifact twice. Root §12 forbids
+    numbers from two vintages sharing a table, so silently taking whichever the
+    filesystem lists first is the wrong failure: it is invisible. The rule is
+    ``data/raw/`` wins, and the count is printed.
+    """
+    root = tmp_path / "input"
+    canonical = root / "repo" / "data" / "raw" / "BTCUSDT_1h.parquet"
+    stray = root / "repo" / "scratch" / "copies" / "BTCUSDT_1h.parquet"
+    for path in (canonical, stray):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"parquet")
+    work = tmp_path / "working"
+    work.mkdir()
+
+    assert _find_parquet_from_the_notebook(root, work)() == canonical.resolve()
+
+
+def test_find_parquet_still_says_what_to_do_when_nothing_is_there(tmp_path) -> None:
+    """The error names the fix, and says why the file is not re-downloaded."""
+    root = tmp_path / "input"
+    root.mkdir()
+    work = tmp_path / "working"
+    work.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Attach data/raw/"):
+        _find_parquet_from_the_notebook(root, work)()

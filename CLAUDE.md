@@ -1731,7 +1731,9 @@ purpose defeats the second.
 
 | D70 | I | Five arms that `D68`'s second GPU made affordable, and one of them is not robustness: RQ1's K-versus-K_eff contrast existed only inside a panel, because the ladder moves both together (`corr = 0.828`) | **Matched-K rungs** — two K=8 subsets, PR **3.609** vs **5.011**, either side of the ladder's 4.668, so RQ1 is tested by contrast rather than inferred. **Lookback sweep** L ∈ {48, 192}, the one first-order hyperparameter §6.2 never varied. **Tuned arm**, grid declared before running, selected on origin 1's *validation* where `D27` put the Stage 5 gate. **Exploratory seeds 3 → 5**. Manifest **969 → 1,620**, nothing orphaned | 5.1, 10.2 |
 
-**New contradictions found later take IDs D71+. Absorbing one silently is the exact failure this
+| D71 | **F** | `find_parquet` globbed five fixed patterns, deepest `*/*/BTCUSDT_1h.parquet`. The path Kaggle's web UI hands a user — `/kaggle/input/datasets/<owner>/<slug>/BTCUSDT_1h.parquet` — is **three** levels, one past the deepest. The file is attached, visible, and the session dies in the setup cell | `rglob` fallback after the ordered patterns; `data/raw/` still preferred, multiple copies reported rather than silently chosen (§12). Tested against four layouts, extracted **from the committed notebook** (`D55`). §10.5's slug-independence and depth-independence are one requirement | 10.5 |
+
+**New contradictions found later take IDs D72+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---

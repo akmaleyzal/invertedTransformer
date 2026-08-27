@@ -1368,4 +1368,35 @@ by the property root §10.4 actually guarantees, that no completed `run_id` fall
 **726 pending ≈ 6.4 GPU-hours ≈ 3.2 h wall on two devices** — which is the point: on one device it
 would be 6.4 h and would not fit beside the base manifest in an 11 h session.
 
-New contradictions found later take IDs **D71+**.
+---
+
+## `D71` — a fixed depth is a hard-coded assumption wearing a glob
+
+Root §10.5 requires discovery **by glob, never by Kaggle Dataset slug**, so the Dataset can be renamed
+without editing anything. `find_parquet` honoured the letter of that and not its point: it enumerated
+five patterns, the deepest reaching `*/*/BTCUSDT_1h.parquet` — two levels under `/kaggle/input`.
+
+The path a user copies out of Kaggle's web UI carries the `datasets/` segment and the owner:
+
+```
+/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet
+```
+
+That is **three** levels, and the patterns stopped one short. The failure is the bad kind: the file is
+attached, it is right there, and the session dies in the setup cell with *"BTCUSDT_1h.parquet not
+found"*. A reader checks the Dataset, sees the file, and has no reason to suspect the depth.
+
+Slug-independence and depth-independence are the same requirement. Enumerating depths is the same
+mistake as enumerating slugs, one level of abstraction along.
+
+**Resolution.** The five ordered patterns stay — they are cheap and they express a *preference* for
+`data/raw/` over a flat upload — and a `rglob` fallback runs when none matches. Where the recursive
+pass finds more than one copy it prefers `data/raw/` and **prints the count**: a repository uploaded
+whole can carry the artifact twice, and §12 forbids numbers from two vintages sharing a table, so
+silently taking whichever the filesystem listed first is the invisible failure rather than the loud one.
+
+`tests/test_notebook_cells.py` extracts `find_parquet` **from the committed notebook** rather than from
+the generator's constant — `D55`'s reason: testing the constant would pass while a stale notebook still
+shipped the old patterns — and runs it against four layouts, including the exact path above.
+
+New contradictions found later take IDs **D72+**.
