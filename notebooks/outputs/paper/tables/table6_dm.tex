@@ -1,0 +1,119 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Pairwise forecast comparison with family-wise error control.}
+\label{tab:dm}
+\begin{tabular}{llcrrrlrr}
+\toprule
+Left & Right & Stat. & $t$ & $p_{raw}$ & $p_{RW}$ & Family & $p_{RW}^{fam}$ & $T_{min}$ \\
+\midrule
+itr-K1 & itr-K4 & CW & 7.261 & 0.0001 & 0.1129 & ladder & 0.0372 & 437 \\
+itr-K1 & itr-K8 & CW & 7.165 & 0.0001 & 0.1153 & ladder & 0.0372 & 437 \\
+itr-K1 & itr-K12 & CW & 6.924 & 0.0001 & 0.1226 & ladder & 0.0372 & 437 \\
+itr-K1 & itru-K8 & DM & 6.326 & 0.0001 & 0.1425 & other & 0.0086 & 437 \\
+itr-K1 & rdg-K1 & DM & 7.537 & 0.0001 & 0.1072 & architecture & 0.0036 & 437 \\
+itr-K1 & rdg-K4 & DM & 7.308 & 0.0001 & 0.1116 & other & 0.0052 & 437 \\
+itr-K1 & rdg-K8 & DM & 7.368 & 0.0001 & 0.1099 & other & 0.0050 & 437 \\
+itr-K1 & rdg-K12 & DM & 7.715 & 0.0001 & 0.1020 & other & 0.0044 & 437 \\
+itr-K1 & dlin-K8 & DM & -4.847 & 0.0007 & 0.1918 & other & 0.0135 & 437 \\
+itr-K1 & ptst-K8 & DM & 0.442 & 0.6593 & 0.9975 & other & 0.9388 & 437 \\
+itr-K1 & lstm-K8 & DM & 6.817 & 0.0001 & 0.1250 & other & 0.0065 & 437 \\
+itr-K1 & npst-K1 & DM & -8.529 & 0.0001 & 0.0852 & architecture & 0.0035 & 437 \\
+itr-K1 & nsea-K1 & DM & -8.203 & 0.0001 & 0.0916 & architecture & 0.0035 & 437 \\
+Naive-RW & itr-K1 & CW & 2.621 & 0.0074 & 0.4211 & vs-naive & 0.3249 & 437 \\
+itr-K4 & itr-K8 & CW & 4.741 & 0.0001 & 0.1948 & ladder & 0.0469 & 437 \\
+itr-K4 & itr-K12 & CW & 3.106 & 0.0008 & 0.3314 & ladder & 0.1235 & 437 \\
+itr-K4 & itru-K8 & DM & 3.085 & 0.0182 & 0.3317 & other & 0.0672 & 437 \\
+itr-K4 & rdg-K1 & DM & 7.420 & 0.0001 & 0.1093 & other & 0.0050 & 437 \\
+itr-K4 & rdg-K4 & DM & 7.311 & 0.0001 & 0.1115 & architecture & 0.0036 & 437 \\
+itr-K4 & rdg-K8 & DM & 7.376 & 0.0001 & 0.1097 & other & 0.0050 & 437 \\
+itr-K4 & rdg-K12 & DM & 7.852 & 0.0001 & 0.0991 & other & 0.0039 & 437 \\
+itr-K4 & dlin-K8 & DM & -6.006 & 0.0004 & 0.1553 & other & 0.0093 & 437 \\
+itr-K4 & ptst-K8 & DM & -3.039 & 0.0117 & 0.3377 & other & 0.0672 & 437 \\
+itr-K4 & lstm-K8 & DM & 6.657 & 0.0001 & 0.1296 & other & 0.0073 & 437 \\
+itr-K4 & npst-K1 & DM & -8.533 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+itr-K4 & nsea-K1 & DM & -8.208 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & itr-K4 & CW & 2.295 & 0.0234 & 0.5253 & vs-naive & 0.3837 & 437 \\
+itr-K8 & itr-K12 & CW & -0.121 & 0.5584 & 0.9975 & ladder & 0.9563 & 437 \\
+itr-K8 & itru-K8 & DM & 0.345 & 0.7376 & 0.9975 & architecture & 0.7376 & 437 \\
+itr-K8 & rdg-K1 & DM & 7.525 & 0.0001 & 0.1072 & other & 0.0048 & 437 \\
+itr-K8 & rdg-K4 & DM & 7.442 & 0.0001 & 0.1089 & other & 0.0050 & 437 \\
+itr-K8 & rdg-K8 & DM & 7.507 & 0.0001 & 0.1076 & architecture & 0.0036 & 437 \\
+itr-K8 & rdg-K12 & DM & 8.035 & 0.0001 & 0.0942 & other & 0.0033 & 437 \\
+itr-K8 & dlin-K8 & DM & -6.026 & 0.0005 & 0.1545 & architecture & 0.0038 & 437 \\
+itr-K8 & ptst-K8 & DM & -3.414 & 0.0064 & 0.2893 & architecture & 0.0303 & 437 \\
+itr-K8 & lstm-K8 & DM & 6.698 & 0.0001 & 0.1286 & architecture & 0.0036 & 437 \\
+itr-K8 & npst-K1 & DM & -8.529 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+itr-K8 & nsea-K1 & DM & -8.205 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & itr-K8 & CW & 2.198 & 0.0264 & 0.5574 & vs-naive & 0.4086 & 437 \\
+itr-K12 & itru-K8 & DM & 2.690 & 0.0200 & 0.4051 & other & 0.0775 & 437 \\
+itr-K12 & rdg-K1 & DM & 7.399 & 0.0002 & 0.1095 & other & 0.0050 & 437 \\
+itr-K12 & rdg-K4 & DM & 7.436 & 0.0001 & 0.1089 & other & 0.0050 & 437 \\
+itr-K12 & rdg-K8 & DM & 7.486 & 0.0001 & 0.1083 & other & 0.0050 & 437 \\
+itr-K12 & rdg-K12 & DM & 8.013 & 0.0001 & 0.0950 & architecture & 0.0035 & 437 \\
+itr-K12 & dlin-K8 & DM & -5.975 & 0.0004 & 0.1567 & other & 0.0094 & 437 \\
+itr-K12 & ptst-K8 & DM & -3.035 & 0.0128 & 0.3377 & other & 0.0672 & 437 \\
+itr-K12 & lstm-K8 & DM & 6.723 & 0.0001 & 0.1275 & other & 0.0069 & 437 \\
+itr-K12 & npst-K1 & DM & -8.530 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+itr-K12 & nsea-K1 & DM & -8.206 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & itr-K12 & CW & 2.098 & 0.0313 & 0.5959 & vs-naive & 0.4378 & 437 \\
+itru-K8 & rdg-K1 & DM & 7.483 & 0.0001 & 0.1083 & other & 0.0050 & 437 \\
+itru-K8 & rdg-K4 & DM & 7.401 & 0.0001 & 0.1095 & other & 0.0050 & 437 \\
+itru-K8 & rdg-K8 & DM & 7.468 & 0.0001 & 0.1085 & architecture & 0.0036 & 437 \\
+itru-K8 & rdg-K12 & DM & 8.019 & 0.0001 & 0.0947 & other & 0.0034 & 437 \\
+itru-K8 & dlin-K8 & DM & -6.047 & 0.0006 & 0.1534 & architecture & 0.0038 & 437 \\
+itru-K8 & ptst-K8 & DM & -3.404 & 0.0078 & 0.2901 & architecture & 0.0303 & 437 \\
+itru-K8 & lstm-K8 & DM & 6.685 & 0.0001 & 0.1290 & architecture & 0.0036 & 437 \\
+itru-K8 & npst-K1 & DM & -8.528 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+itru-K8 & nsea-K1 & DM & -8.205 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & itru-K8 & CW & 2.188 & 0.0263 & 0.5611 & vs-naive & 0.4111 & 437 \\
+rdg-K1 & rdg-K4 & CW & 1.548 & 0.0271 & 0.8117 & ladder & 0.4869 & 437 \\
+rdg-K1 & rdg-K8 & CW & 1.681 & 0.0185 & 0.7605 & ladder & 0.4293 & 437 \\
+rdg-K1 & rdg-K12 & CW & 1.710 & 0.0185 & 0.7529 & ladder & 0.4181 & 437 \\
+rdg-K1 & dlin-K8 & DM & -7.166 & 0.0003 & 0.1152 & other & 0.0057 & 437 \\
+rdg-K1 & ptst-K8 & DM & -7.139 & 0.0005 & 0.1156 & other & 0.0058 & 437 \\
+rdg-K1 & lstm-K8 & DM & 0.213 & 0.8317 & 0.9975 & other & 0.9609 & 437 \\
+rdg-K1 & npst-K1 & DM & -8.529 & 0.0001 & 0.0852 & architecture & 0.0035 & 437 \\
+rdg-K1 & nsea-K1 & DM & -8.210 & 0.0001 & 0.0916 & architecture & 0.0035 & 437 \\
+Naive-RW & rdg-K1 & CW & 1.691 & 0.0127 & 0.7605 & vs-naive & 0.5537 & 437 \\
+rdg-K4 & rdg-K8 & CW & 0.483 & 0.2915 & 0.9974 & ladder & 0.9563 & 437 \\
+rdg-K4 & rdg-K12 & CW & 0.406 & 0.3526 & 0.9975 & ladder & 0.9563 & 437 \\
+rdg-K4 & dlin-K8 & DM & -7.212 & 0.0005 & 0.1142 & other & 0.0055 & 437 \\
+rdg-K4 & ptst-K8 & DM & -7.036 & 0.0007 & 0.1189 & other & 0.0058 & 437 \\
+rdg-K4 & lstm-K8 & DM & -0.799 & 0.4677 & 0.9757 & other & 0.8228 & 437 \\
+rdg-K4 & npst-K1 & DM & -8.529 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+rdg-K4 & nsea-K1 & DM & -8.210 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & rdg-K4 & CW & 0.886 & 0.1476 & 0.9757 & vs-naive & 0.6105 & 437 \\
+rdg-K8 & rdg-K12 & CW & 0.456 & 0.3141 & 0.9975 & ladder & 0.9563 & 437 \\
+rdg-K8 & dlin-K8 & DM & -7.236 & 0.0004 & 0.1133 & architecture & 0.0036 & 437 \\
+rdg-K8 & ptst-K8 & DM & -7.100 & 0.0006 & 0.1171 & architecture & 0.0036 & 437 \\
+rdg-K8 & lstm-K8 & DM & -0.748 & 0.4777 & 0.9767 & architecture & 0.7212 & 437 \\
+rdg-K8 & npst-K1 & DM & -8.529 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+rdg-K8 & nsea-K1 & DM & -8.210 & 0.0001 & 0.0916 & other & 0.0030 & 437 \\
+Naive-RW & rdg-K8 & CW & 1.452 & 0.0456 & 0.8333 & vs-naive & 0.5745 & 437 \\
+rdg-K12 & dlin-K8 & DM & -7.406 & 0.0003 & 0.1093 & other & 0.0050 & 437 \\
+rdg-K12 & ptst-K8 & DM & -7.376 & 0.0004 & 0.1097 & other & 0.0050 & 437 \\
+rdg-K12 & lstm-K8 & DM & -0.014 & 0.9877 & 0.9975 & other & 0.9877 & 437 \\
+rdg-K12 & npst-K1 & DM & -8.533 & 0.0001 & 0.0852 & other & 0.0025 & 437 \\
+rdg-K12 & nsea-K1 & DM & -8.214 & 0.0001 & 0.0915 & other & 0.0030 & 437 \\
+Naive-RW & rdg-K12 & CW & 1.480 & 0.0412 & 0.8333 & vs-naive & 0.5745 & 437 \\
+dlin-K8 & ptst-K8 & DM & 6.787 & 0.0002 & 0.1258 & architecture & 0.0036 & 437 \\
+dlin-K8 & lstm-K8 & DM & 7.107 & 0.0003 & 0.1170 & architecture & 0.0036 & 437 \\
+dlin-K8 & npst-K1 & DM & -8.548 & 0.0001 & 0.0848 & other & 0.0025 & 437 \\
+dlin-K8 & nsea-K1 & DM & -8.215 & 0.0001 & 0.0915 & other & 0.0030 & 437 \\
+Naive-RW & dlin-K8 & CW & -1.921 & 0.9840 & 0.6665 & vs-naive & 0.4832 & 437 \\
+ptst-K8 & lstm-K8 & DM & 6.857 & 0.0005 & 0.1242 & architecture & 0.0036 & 437 \\
+ptst-K8 & npst-K1 & DM & -8.544 & 0.0001 & 0.0849 & other & 0.0025 & 437 \\
+ptst-K8 & nsea-K1 & DM & -8.217 & 0.0001 & 0.0915 & other & 0.0030 & 437 \\
+Naive-RW & ptst-K8 & CW & -0.861 & 0.8023 & 0.9757 & vs-naive & 0.6105 & 437 \\
+lstm-K8 & npst-K1 & DM & -8.520 & 0.0001 & 0.0854 & other & 0.0025 & 437 \\
+lstm-K8 & nsea-K1 & DM & -8.201 & 0.0001 & 0.0918 & other & 0.0030 & 437 \\
+Naive-RW & lstm-K8 & CW & 1.297 & 0.0412 & 0.8834 & vs-naive & 0.5745 & 437 \\
+npst-K1 & nsea-K1 & DM & -2.915 & 0.0155 & 0.3567 & architecture & 0.0446 & 437 \\
+Naive-RW & npst-K1 & CW & -2.423 & 0.9925 & 0.4866 & vs-naive & 0.3614 & 437 \\
+Naive-RW & nsea-K1 & CW & -3.125 & 0.9973 & 0.3290 & vs-naive & 0.2646 & 437 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize \textbf{CW} is Clark--West (2007), used on every \emph{nested} pair --- the ladder is cumulative and Naive-RW is nested inside every model, and there standard DM is not asymptotically $N(0,1)$ and is systematically undersized against the alternative this study exists to establish (`D29'). \textbf{DM} is Diebold--Mariano with the Harvey--Leybourne--Newbold correction, referred to $t(T-1)$, on a rectangular long-run variance with lag $h-1 = 23$ --- never Bartlett, which would shrink $\hat\gamma_{23}$ by about 92\% and understate the variance (`D34'). $t$ is clustered on the origin, $G = 15$. $p_{RW}$ is the Romano--Wolf (2005) stepdown across all 105 pairs, $B = 9,999$, floor $0.000100$ (`D53d'). White's Reality Check and Hansen's SPA are \emph{not} used here: they test a one-against-many null and say nothing about an all-pairs matrix (`D35'). $T$ is the smallest per-cell sample; $h = 24$. The post-hoc family column is $p_{RW}^{fam}$ and it is NOT the headline (`D79'). It is the same stepdown run inside one claim family --- pairs against Naive-RW, rungs of one model, or one $K$ across architectures --- rather than across the Cartesian product. It exists because widening the model list from twelve to fifteen took the matrix from 66 pairs to 105 and the adjusted rejections from 31 to zero while no effect moved: the two naive comparators carry the largest $|t|$ in the table, and the shared bootstrap draw puts them into the max-$|t|$ null every other pair is judged against. The families were declared AFTER that was seen, so $p_{RW}$ over all pairs remains the pre-registered and reported result and this column is disclosed beside it rather than in place of it.
+\end{table}

@@ -1,0 +1,32 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Economic evaluation across the pre-registered slippage band.}
+\label{tab:economics}
+\begin{tabular}{llrrrrrrr}
+\toprule
+Model & Slip. & Sharpe (ann.) & Sortino & MDD & MDD CI & Turnover & Net return & DSR \\
+\midrule
+dlin-K8 & 0.02\% & -0.582 $\pm$ 0.295 & -0.817 & 0.400 & 0.200--0.645 & 0.440 & -0.1232 & 0.0414 \\
+dlin-K8 & 0.05\% & -0.757 $\pm$ 0.295 & -1.096 & 0.413 & 0.208--0.660 & 0.440 & -0.1615 & 0.0334 \\
+dlin-K8 & 0.10\% & -1.047 $\pm$ 0.298 & -1.560 & 0.437 & 0.223--0.684 & 0.440 & -0.2216 & 0.0231 \\
+itr-K1 & 0.02\% & 0.414 $\pm$ 0.296 & 0.737 & 0.320 & 0.154--0.553 & 0.251 & 0.2061 & 0.0909 \\
+itr-K1 & 0.05\% & 0.312 $\pm$ 0.300 & 0.576 & 0.329 & 0.157--0.563 & 0.251 & 0.1766 & 0.0818 \\
+itr-K1 & 0.10\% & 0.143 $\pm$ 0.307 & 0.307 & 0.344 & 0.163--0.579 & 0.251 & 0.1291 & 0.0688 \\
+itr-K8 & 0.02\% & 0.377 $\pm$ 0.340 & 0.642 & 0.324 & 0.158--0.553 & 0.255 & 0.2056 & 0.1002 \\
+itr-K8 & 0.05\% & 0.274 $\pm$ 0.343 & 0.480 & 0.332 & 0.162--0.563 & 0.255 & 0.1748 & 0.0908 \\
+itr-K8 & 0.10\% & 0.104 $\pm$ 0.348 & 0.209 & 0.345 & 0.168--0.579 & 0.255 & 0.1253 & 0.0769 \\
+lstm-K8 & 0.02\% & -1.065 $\pm$ 0.405 & -1.351 & 0.420 & 0.210--0.662 & 0.223 & -0.1777 & 0.0736 \\
+lstm-K8 & 0.05\% & -1.152 $\pm$ 0.408 & -1.470 & 0.428 & 0.214--0.667 & 0.223 & -0.1952 & 0.0687 \\
+lstm-K8 & 0.10\% & -1.297 $\pm$ 0.413 & -1.669 & 0.441 & 0.223--0.676 & 0.223 & -0.2231 & 0.0615 \\
+ptst-K8 & 0.02\% & 0.093 $\pm$ 0.351 & 0.298 & 0.362 & 0.172--0.581 & 0.320 & 0.0734 & 0.1072 \\
+ptst-K8 & 0.05\% & -0.035 $\pm$ 0.352 & 0.088 & 0.371 & 0.178--0.592 & 0.320 & 0.0391 & 0.0953 \\
+ptst-K8 & 0.10\% & -0.249 $\pm$ 0.354 & -0.263 & 0.387 & 0.188--0.612 & 0.320 & -0.0155 & 0.0776 \\
+rdg-K8 & 0.02\% & -1.024 $\pm$ 0.499 & -1.251 & 0.405 & 0.208--0.647 & 0.145 & -0.1157 & 0.0990 \\
+rdg-K8 & 0.05\% & -1.084 $\pm$ 0.507 & -1.335 & 0.411 & 0.212--0.651 & 0.145 & -0.1264 & 0.0967 \\
+rdg-K8 & 0.10\% & -1.184 $\pm$ 0.522 & -1.473 & 0.421 & 0.218--0.658 & 0.145 & -0.1438 & 0.0931 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Position from the sign of the cumulative 24-step forecast on \emph{raw, drift-free} log-returns, opened at \textbf{00:00 UTC} and held 24 hours, non-overlapping --- the phase is fixed in advance because there are 24 admissible alignments and each gives a different Sharpe (`D46'). Taker fee 0.04\% per side, plus the slippage shown. Sharpe and Sortino are annualised at 365 periods; the DSR is computed per origin from the \emph{per-period} Sharpe, with $N$ the configurations evaluated on that origin's own test span --- not the 837-run development total, which is reported separately in Limitations and is a different quantity (`D46'). $\pm$ is the standard error across origins; the MDD interval is a stationary bootstrap. The strategy is flat wherever no valid window survives, and outages cluster on stress, so the reported drawdown is optimistic by an amount the flat-day count bounds (`D45').
+\end{table}

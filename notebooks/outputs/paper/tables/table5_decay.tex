@@ -1,0 +1,18 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{RQ3: retraining cadence at each pre-registered threshold.}
+\label{tab:decay}
+\begin{tabular}{llrrrrr}
+\toprule
+$\tau$ & Status & Median $b^{*}$ & CI & Events & Censored & Origins \\
+\midrule
+2.5\% & UNDEFINED & --- & -------- & 0 & 0 & 0 \\
+5.0\% (headline) & UNDEFINED & --- & -------- & 0 & 0 & 0 \\
+10.0\% & UNDEFINED & --- & -------- & 0 & 0 & 0 \\
+50.0\% & UNDEFINED & --- & -------- & 0 & 0 & 0 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize $b^{*}(i) = \min\{b : D(i,b) > \tau\}$, right-censored at six blocks. \textbf{The decay estimand is undefined under non-positive out-of-sample skill}: $D(i,b)$ is a proportion of skill lost and there is no skill to lose a proportion of. This is \emph{not} the right-censored result ``no decay detected within 180 days'', which would assert an edge the data does not contain (`D60b'). All fifteen origins are excluded on mean $R^2_{oos} \leq 0$ and are named rather than dropped: 2020-01, 2020-06, 2020-11, 2021-04, 2021-09, 2022-02, 2022-07, 2022-12, 2023-05, 2023-10, 2024-03, 2024-08, 2025-01, 2025-06, 2025-11. The log-rank test of H3 is unavailable because neither arm has a surviving origin, so H3 is \textbf{untestable}, not rejected.
+\end{table}
