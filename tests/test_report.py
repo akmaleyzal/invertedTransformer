@@ -167,7 +167,9 @@ def test_absent_robustness_arms_report_a_status_rather_than_raising(inputs):
 @requires_grid
 def test_every_table_is_balanced_latex_with_no_non_values(inputs, tmp_path):
     paths = render_tables(inputs.numbers, tmp_path)
-    assert len(paths) == 9
+    # Nine of root §13.4, plus Table 9 --- the exploratory arms in their own table,
+    # which §13.2 requires and which nothing rendered before (`D64`, `D70`).
+    assert len(paths) == 10
     for path in paths:
         text = path.read_text(encoding="utf-8")
         assert text.count(r"\begin{tabular}") == text.count(r"\end{tabular}") == 1

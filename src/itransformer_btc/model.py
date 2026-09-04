@@ -17,6 +17,35 @@ softmax over a single token returns weight 1, so attention reduces to
 it is not a bare identity. Parameter count is identical at every rung, because K
 changes the token count and not a single weight shape. Say so in the
 methodology: unexplained, an examiner reads it as an implementation error.
+
+Upstream
+--------
+**Reimplemented, not vendored.** No file here is a copy of an upstream file:
+the architecture is written from the published description against this study's
+own tensor contract. That is a narrower claim than a fork and a stronger one to
+defend, because an examiner can check it by reading both sides.
+
+- Y. Liu, T. Hu, H. Zhang, H. Wu, S. Wang, L. Ma, and M. Long, "iTransformer:
+  Inverted transformers are effective for time series forecasting," in *Proc.
+  12th Int. Conf. Learn. Represent. (ICLR)*, 2024. arXiv:2310.06625. Official
+  code: https://github.com/thuml/iTransformer (THUML, Tsinghua University;
+  MIT; accessed 2026-09-03).
+- T. Kim, J. Kim, Y. Tae, C. Park, J.-H. Choi, and J. Choo, "Reversible
+  instance normalization for accurate time-series forecasting against
+  distribution shift," in *Proc. 10th Int. Conf. Learn. Represent. (ICLR)*,
+  2022 — the operation ``use_norm=True`` performs. Official code:
+  https://github.com/ts-kim/RevIN (MIT; accessed 2026-09-03). The upstream
+  README dates the paper 2021; dblp records ``conf/iclr/KimKTPCC22``, and 2022
+  is used here.
+
+Deliberate departures, each with the ID that forced it: ``d_model`` 512 -> 128
+(`D25`); target-channel loss against the reference's all-channel default
+(`D39`); ``lr`` halved every four epochs rather than every epoch (`D47`); and a
+runtime ``capture`` attribute for the attention maps that consumes no RNG, so a
+captured run stays bit-identical (`D62d`). Everything else is adopted unchanged
+and never tuned (`D38`).
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries this row and the
+fifteen others in the same form.
 """
 
 from __future__ import annotations
@@ -136,6 +165,39 @@ class LongScheduleConfig(ITransformerConfig):
         from itransformer_btc.train import TrainSchedule
 
         return TrainSchedule(max_epochs=60, patience=10, lr_halve_every=8)
+
+
+@dataclass(frozen=True, slots=True)
+class TunedConfig(ITransformerConfig):
+    """`D70`'s tuned arm --- the winning configuration, **learning rate included**.
+
+    `D76`: the arm shipped without this class, and that was the defect. The search
+    space is ``d_model x e_layers x lr`` and
+    :func:`~itransformer_btc.runner.tune_on_validation` ranked all eighteen points
+    on origin 1's validation --- but it returned a bare
+    :class:`ITransformerConfig`, which carries no learning rate. The winner's
+    ``lr = 1e-3`` was therefore *selected and then discarded*, and the arm ran the
+    winner's architecture under the default ``1e-4``: a point the search had also
+    evaluated and had **not** ranked first. Root §12 requires a number to resolve
+    to the decision that produced it, the documented decision and the executed run
+    disagreed, and the arm did not answer the referee's question it exists for.
+
+    ``lr`` is a **field**, unlike every other member of the Architecture protocol,
+    and the exception is deliberate. ``write_artifacts`` records ``asdict(cfg)``,
+    so a field on :class:`ITransformerConfig` would enter every iTransformer
+    ``meta/*.json``; a field on a subclass one arm uses enters only that arm's,
+    where recording the rate that ran is exactly what §12 asks for. It reaches the
+    trainer through :meth:`schedule`, the same route `D62c`'s ``itrl`` takes.
+    """
+
+    #: The learning rate the validation search selected. The default is root
+    #: §6.2's, so an un-tuned construction of this class is the main arm.
+    lr: float = 1e-4
+
+    def schedule(self) -> "TrainSchedule":
+        from itransformer_btc.train import TrainSchedule
+
+        return TrainSchedule(lr=self.lr)
 
 
 class InvertedEmbedding(nn.Module):

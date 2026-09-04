@@ -1,0 +1,13 @@
+[mcp_servers.jupyter]
+command = "uvx"
+args = [
+    "jupyter-mcp-server@latest",
+    "start",
+]
+
+[mcp_servers.jupyter.env]
+DOCUMENT_URL = "http://localhost:8888"
+DOCUMENT_TOKEN = "f069889e22f70375d6bda6a4462003de389f60c16c15aa6c"
+DOCUMENT_ID = "notebooks/iTransformer.ipynb"
+CODE_SANDBOX_URL = "http://localhost:8888"
+CODE_SANDBOX_TOKEN = "f069889e22f70375d6bda6a4462003de389f60c16c15aa6c"

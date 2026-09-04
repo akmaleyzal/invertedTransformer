@@ -1,0 +1,106 @@
+# Structured companion to topic_dossier.md
+# Machine ids (G1/G2/G3) live ONLY here; the dossier prose never uses them.
+schema: gap-to-topic/1
+dossier: topic_dossier.md
+date: 2026-08-26
+project: invertedTransformer
+repo_head: dac969c
+recall_confidence: low-medium
+screening_grade: true
+systematic_review: false
+
+candidates:
+  - id: G1
+    name: "Walk-forward iTransformer evaluation on hourly BTC with explicit decay measurement"
+    opening_type: B            # unoccupied-application
+    source: "CLAUDE.md §3 contribution (1) + (3)"
+    gates:
+      open:        {score: 2, verdict: mostly_closed}
+      contribution:{score: 2, verdict: weak}
+      feasible:    {score: 5, verdict: already_done}
+    verdict: do_not_lead_with
+    closest_prior_art: arXiv:2606.00060
+    kill_reason: >
+      The only qualifier keeping this open at Gate 1 is the decay measurement,
+      and the decay estimand returned UNDEFINED at 15 of 15 origins. The gap's
+      differentiator is the thing the study could not deliver.
+
+  - id: G2
+    name: "Nominal variate count K versus effective dimensionality K_eff"
+    opening_type: A            # method-limitation
+    source: "CLAUDE.md §3 contribution (2)"
+    gates:
+      open:        {score: 4, verdict: open}
+      contribution:{score: 3, verdict: real_but_degraded}
+      feasible:    {score: 5, verdict: already_done}
+    verdict: conditional
+    closest_prior_art: arXiv:2401.00230
+    evidence:
+      corr_k_keff: 0.828
+      j_test_k_augmented_by_keff:    {t:  3.293, p: 0.0011}
+      j_test_keff_augmented_by_k:    {t: -0.348, p: 0.7281}
+      gate_pr_k8: 4.393          # stage 3b floor was 5.0 -> gate did not pass
+      pr_k12_below_pr_k8: true
+    upgrade_test: >
+      Report contemporaneous PR and lookback-aware PR side by side in Table 2b
+      with corr(K, K_eff) beside them; state that K=12 is MORE redundant than
+      designed, which strengthens the control rather than weakening it.
+
+  - id: G3
+    name: "No model beats Naive-RW at any variate count"
+    opening_type: A            # method-limitation
+    source: "emergent; became the title at D60a, 2026-08-20"
+    gates:
+      open:        {score: 4, verdict: open}
+      contribution:{score: 4, verdict: problem_solving}
+      feasible:    {score: 5, verdict: already_done}
+    verdict: lead_with_this
+    contribution_type: problem-solving
+    evidence:
+      r2_oos:
+        itr_K1:  -0.020455
+        itr_K4:  -0.018682
+        itr_K8:  -0.017993
+        itr_K12: -0.018570
+        itru_K8: -0.017722
+        rdg_best: -0.000568
+        ptst_K8: -0.016312
+        dlin_K8: -0.026248
+      mcs_90_members: [Naive-RW, rdg-K1, rdg-K4, rdg-K8, rdg-K12]
+      deep_models_in_mcs: 0
+      romano_wolf_rejections_vs_naive_rw: 0
+      romano_wolf_min_adjusted_p_vs_naive_rw: 0.336
+      robustness_arms_that_made_it_worse: [longsched, capacity]
+
+pre_registered_outcomes:
+  rq1: {delta_4_to_8: 0.000636, delta_8_to_12: -0.000437, tost: not_equivalent}
+  rq2: {beta1: 0.000256, mde: -0.000920, p_wcr: 0.7381, G: 15, N: 90, status: descriptive}
+  rq3: {b_star: undefined, origins_excluded: 15, decay_panel_rows: 0, status: untestable}
+
+open_questions:
+  - id: Q1
+    blocking: true
+    owner: advisor
+    question: >
+      bimbingan-skripsi.pdf scopes S1 theses to knowledge graphs, GNN, graph
+      databases, GraphRAG, NER/IE, storage architecture, Spark/Kafka,
+      benchmarking and BI, with mandatory IEEE Level-1 keywords all
+      graph/KG/LLM/NoSQL. This project matches none. Is the topic already
+      approved outside that list, or must it map onto a stream?
+    salvage_path: >
+      The instrument (walk-forward protocol, clustered inference, traceability
+      contract, divergence register) ports to secondary stream #4,
+      spatio-temporal GNN forecasting on geospatial time series. Only the
+      dataset is lost.
+  - id: Q2
+    blocking: false
+    question: >
+      Re-run Gate 1 adversarially (research-hub CLI absent this session) before
+      submission. Three manual queries is not a recall guarantee.
+
+completion_status:
+  experiment: complete           # 894 runs, 0 failed, all stage gates run
+  deliverables: stale            # paper/ built from the 684-run vintage
+  manuscript: absent             # paper/ holds zero lines of prose
+  tests: {passed: 161, failed: 2}
+  own_next_steps_from_2026_08_24: {total: 6, done: 0}

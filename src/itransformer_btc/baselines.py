@@ -61,6 +61,41 @@ seasonal-naive are deferred from this minimal set. Naive-RW needs no run at all 
 exactly the rows the model was scored on. If the other four are eventually cut,
 root §7 must be edited with a written reason rather than left standing over
 models nobody built.
+
+Upstream
+--------
+**Two of these are reimplemented from published architectures; three have no
+upstream code at all.** That distinction is the answer to "where did this come
+from", so it is drawn per model rather than left to a blanket acknowledgement.
+
+- **DLinear**, ``SeriesDecomposition`` — A. Zeng, M. Chen, L. Zhang, and Q. Xu,
+  "Are transformers effective for time series forecasting?," in *Proc. 37th
+  AAAI Conf. Artif. Intell.*, 2023, pp. 11121-11128. arXiv:2205.13504.
+  Official code: https://github.com/cure-lab/LTSF-Linear (Apache-2.0; accessed
+  2026-09-03). Reimplemented; the published all-channel objective, shared
+  weights and centred moving average are kept as published (`D40`, `D56`).
+- **PatchTST** — Y. Nie, N. H. Nguyen, P. Sinthong, and J. Kalagnanam, "A time
+  series is worth 64 words: Long-term forecasting with transformers," in *Proc.
+  11th Int. Conf. Learn. Represent. (ICLR)*, 2023. arXiv:2211.14730. Official
+  code: https://github.com/yuqinie98/PatchTST (Apache-2.0; accessed
+  2026-09-03). Reimplemented on this study's own
+  :class:`itransformer_btc.model.EncoderLayer`, so it differs from iTransformer
+  in what a token is and in nothing else. Patch 16 / stride 8 as published.
+- **LSTMForecaster** — ``torch.nn.LSTM``
+  (https://docs.pytorch.org/docs/stable/generated/torch.nn.LSTM.html,
+  BSD-3-Clause; accessed 2026-09-03) is called directly and only the forecasting
+  head is written here. S. Hochreiter and J. Schmidhuber, "Long short-term
+  memory," *Neural Computation*, vol. 9, no. 8, pp. 1735-1780, 1997.
+- **RidgeForecaster** — **not scikit-learn.** The normal equations are solved
+  here in ``float64``. A. E. Hoerl and R. W. Kennard, "Ridge regression: Biased
+  estimation for nonorthogonal problems," *Technometrics*, vol. 12, no. 1,
+  pp. 55-67, 1970.
+- **NaiveForecaster**, Naive-RW — closed forms, no upstream code.
+  R. J. Hyndman and G. Athanasopoulos, *Forecasting: Principles and Practice*,
+  3rd ed. OTexts, 2021.
+
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries every row in the same
+form, with the licence and the full list of departures.
 """
 
 from __future__ import annotations

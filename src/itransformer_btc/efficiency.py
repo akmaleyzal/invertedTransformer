@@ -15,6 +15,28 @@ be indefensible when avoiding it costs one filter.
 
 ``arch`` and ``statsmodels`` accept numpy arrays, so this module crosses root
 §16's stats boundary without pandas ever entering the process.
+
+Upstream
+--------
+**This is the only module in the package that calls a third-party statistics
+implementation, and it does so at root §16's named boundary -- imported inside
+the function that needs it, never at module level.**
+
+- Variance ratio -- ``arch.unitroot.VarianceRatio``
+  (https://github.com/bashtage/arch, NCSA; accessed 2026-09-03), implementing
+  A. W. Lo and A. C. MacKinlay, "Stock market prices do not follow random
+  walks: Evidence from a simple specification test," *Rev. Financial Stud.*,
+  vol. 1, no. 1, pp. 41-66, 1988.
+- ADF -- ``statsmodels.tsa.stattools.adfuller`` (BSD-3-Clause), implementing
+  D. A. Dickey and W. A. Fuller, *J. Amer. Statist. Assoc.*, vol. 74, no. 366,
+  pp. 427-431, 1979.
+- ``hurst_rs`` -- **written here.** H. E. Hurst, "Long-term storage capacity of
+  reservoirs," *Trans. Amer. Soc. Civil Eng.*, vol. 116, no. 1, pp. 770-799,
+  1951. No package provides a rescaled-range estimator under a licence and an
+  API this project already depends on, so taking a dependency to import a
+  single function was the worse trade.
+
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries these rows in full.
 """
 
 from __future__ import annotations

@@ -31,7 +31,29 @@ design left open:
   as well as raw, both reported, and the confound disclosed in Limitations
   whatever RQ1 returns.
 
-Provenance for the statistic itself: Laloux et al. (1999), Plerou et al. (2002).
+Upstream
+--------
+**Written here on numpy; the participation ratio has no reference
+implementation to vendor.** It is a random-matrix statistic, not a library
+function, and it enters this study as RQ1's independent variable rather than as
+a diagnostic -- which is why its span and its matrix are pinned rather than
+left to a default.
+
+- L. Laloux, P. Cizeau, J.-P. Bouchaud, and M. Potters, "Noise dressing of
+  financial correlation matrices," *Phys. Rev. Lett.*, vol. 83, no. 7,
+  pp. 1467-1470, 1999.
+- V. Plerou, P. Gopikrishnan, B. Rosenow, L. A. N. Amaral, T. Guhr, and
+  H. E. Stanley, "Random matrix approach to cross correlations in financial
+  data," *Phys. Rev. E*, vol. 65, no. 6, 066126, 2002.
+
+Two departures from the naive reading, both load-bearing. PR is taken on the
+**correlation** matrix and never the covariance one: the covariance spectrum is
+not monotone in K, and its ordering is a statement about units, since
+``log_quote_volume``'s deviations sit two orders of magnitude above ``r``'s
+(`D53a`, `D53b`, `D81`). And every reported ``K_eff`` -- the RQ1 regressor
+included -- is measured on a **training-only** span, per origin, so the
+regressor never reads the test period (`D02`, `D44`).
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries this row in full.
 """
 
 from __future__ import annotations
@@ -173,7 +195,7 @@ def lookback_stable_rank(windows: np.ndarray, sample: int = LOOKBACK_SAMPLE) -> 
     return float(np.mean([stable_rank(b) for b in blocks]))
 
 
-def lookback_covariance_pr(windows: np.ndarray) -> float:
+def lookback_correlation_pr(windows: np.ndarray) -> float:
     """PR of the ``K*L x K*L`` **correlation** spectrum — §5.4's first alternative.
 
     The correlation matrix, not the covariance §5.4 names literally. On the raw
@@ -190,6 +212,19 @@ def lookback_covariance_pr(windows: np.ndarray) -> float:
     is ``K*L``, so it is **not** on the contemporaneous PR's scale; report it as
     a fraction of that ceiling (:attr:`KeffRow.pr_lookback_ratio`) when comparing
     rungs.
+
+    **The name was wrong until `D81`, and the correction is not only cosmetic.**
+    This function has computed the correlation spectrum since `D53b`, but it,
+    its field and its parquet column were all called ``...covariance...``, so a
+    reader checking whether `D53b`'s fix had landed found the word it replaced.
+    Worse, `D53b` justified the fix by monotonicity in K and the correlation
+    spectrum **is not monotone in K either** --- measured 92.1 / 21.9 / 37.3 /
+    15.5 across the rungs, against the covariance's 92.1 / 3.0 / 44.0 / 8.8. What
+    the change actually buys is scale-freeness, which is a real reason and the
+    only one that survives; the ratio to the ``K*L`` ceiling then falls
+    0.980 / 0.078 / 0.047 / 0.020, i.e. **anti**-monotone in K while the
+    contemporaneous PR rises. The two K_eff constructs are ordinally opposed and
+    root §4.1b has to say so (`D44`).
     """
     x = np.asarray(windows, dtype=np.float64)
     flat = x.reshape(len(x), -1)
@@ -212,16 +247,16 @@ class KeffRow:
     pr_raw: float
     pr_window_norm: float
     stable_rank_lookback: float
-    pr_lookback_cov: float
+    pr_lookback_corr: float
 
     @property
     def pr_lookback_ratio(self) -> float:
-        """``pr_lookback_cov / (K * L)`` — the cross-lag PR as a share of its ceiling.
+        """``pr_lookback_corr / (K * L)`` — the cross-lag PR as a share of its ceiling.
 
         The raw value lives in ``[1, K*L]`` and so cannot be compared rung to
         rung; this can.
         """
-        return self.pr_lookback_cov / (self.k * SEQ_LEN)
+        return self.pr_lookback_corr / (self.k * SEQ_LEN)
 
     @property
     def divergence(self) -> float:
@@ -275,7 +310,7 @@ def keff_row(features: pl.DataFrame, origin: OriginLike, k: int) -> KeffRow:
         pr_raw=contemporaneous_pr(rows),
         pr_window_norm=window_normalised_pr(windows),
         stable_rank_lookback=lookback_stable_rank(windows),
-        pr_lookback_cov=lookback_covariance_pr(windows),
+        pr_lookback_corr=lookback_correlation_pr(windows),
     )
 
 
@@ -306,7 +341,7 @@ def keff_table(
                 "pr_raw": row.pr_raw,
                 "pr_window_norm": row.pr_window_norm,
                 "stable_rank_lookback": row.stable_rank_lookback,
-                "pr_lookback_cov": row.pr_lookback_cov,
+                "pr_lookback_corr": row.pr_lookback_corr,
                 "pr_lookback_ratio": row.pr_lookback_ratio,
                 "divergence": row.divergence,
             }

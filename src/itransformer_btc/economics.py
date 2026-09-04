@@ -40,6 +40,22 @@ conservative, it is meaningless.
 mean hourly return, so a sign rule read there is a sign rule on a constant-drift
 model -- and ``mu_g/sigma_g`` **changes sign across origins**, so it is not a
 tilt a reader could mentally subtract.
+
+Upstream
+--------
+**Written here on numpy; no backtesting package is a dependency.**
+
+``deflated_sharpe`` -- D. H. Bailey and M. Lopez de Prado, "The deflated Sharpe
+ratio: Correcting for selection bias, backtest overfitting, and non-normality,"
+*J. Portfolio Manage.*, vol. 40, no. 5, pp. 94-107, 2014. The published
+definition is followed, but the *arguments* are this study's and `D46` explains
+why: DSR counts candidates whose Sharpe was computed on the **same** return
+series, so it is computed **per origin** from that origin's non-overlapping
+24-hour strategy returns and their **per-period** Sharpe -- never the annualised
+one, which would inflate it by ``sqrt(periods per year)``. ``N`` is the number
+of configurations evaluated on that origin's own test span, not the 1,620-run
+total; the total is reported separately as the development trial count.
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries this row in full.
 """
 
 from __future__ import annotations
@@ -522,6 +538,12 @@ def economics_table(
     return pl.DataFrame(rows)
 
 
+#: Buy-and-hold's name in :func:`equity_curves`. Not a model tag: it runs no
+#: model. Root §13.2 requires the economic result be reported beside it, and
+#: :func:`economics_table` already carries it as the ``hold_*`` columns.
+HOLD_LABEL: Final = "Buy & hold"
+
+
 def equity_curves(
     roots: list[Path],
     keys: list[tuple[str, int]],
@@ -549,6 +571,27 @@ def equity_curves(
             realised = frame.get_column("realised_raw").to_numpy().astype(np.float64)
             for slippage in (0.0, *slippages):
                 net = net_returns(position, realised, slippage)
+                if (model, k) == keys[0]:
+                    # Once per (origin, slippage), not once per model. Root §13.2
+                    # states the economic result AGAINST buy-and-hold -- +20.6%
+                    # net against +29.0% -- so a figure without it lets the
+                    # strategy's own curve read as skill. Same `hold_position`
+                    # :func:`economics_table` uses for its ``hold_*`` columns, so
+                    # the figure and the table cannot disagree.
+                    hold = net_returns(np.ones(len(position)), realised, slippage)
+                    rows.append(
+                        pl.DataFrame(
+                            {
+                                "model": [HOLD_LABEL] * len(hold),
+                                "origin": [str(meta["origin"])] * len(hold),
+                                "origin_index": [origin_index] * len(hold),
+                                "slippage_per_side": [slippage] * len(hold),
+                                "period": np.arange(1, len(hold) + 1, dtype=np.int32),
+                                "timestamp": frame.get_column("timestamp").to_numpy(),
+                                "equity": np.exp(np.cumsum(hold)),
+                            }
+                        )
+                    )
                 rows.append(
                     pl.DataFrame(
                         {

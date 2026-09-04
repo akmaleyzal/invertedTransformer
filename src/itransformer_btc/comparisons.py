@@ -45,6 +45,25 @@ changes at each origin and the DM null has no interpretation across that
 boundary. Stated, then: the per-origin mean differential is the unit, the
 cluster bootstrap over the 15 of them is the inference, and the per-(origin,
 block) HLN statistic travels beside it as a diagnostic with its ``T`` and ``h``.
+
+Upstream
+--------
+**Both procedures are written here on numpy. Neither existed in this package
+until `D62a`, and no package supplying them is a dependency.**
+
+- ``romano_wolf`` — J. P. Romano and M. Wolf, "Stepwise multiple testing as
+  formalized data snooping," *Econometrica*, vol. 73, no. 4, pp. 1237-1282,
+  2005. It controls FWER across the all-pairs matrix, which is what White's
+  Reality Check (2000) and Hansen's SPA (2005) cannot do: those test a
+  one-against-many null and say nothing about a pairwise family (`D35`).
+- ``model_confidence_set``, ``mcs_table`` — P. R. Hansen, A. Lunde, and
+  J. M. Nason, "The model confidence set," *Econometrica*, vol. 79, no. 2,
+  pp. 453-497, 2011. Reported at 90% and 75% as a membership column in Table 6.
+
+Romano-Wolf is reported in two columns after `D79` — the all-pairs family and
+the declared claim family — because widening the model set from 12 to 15 took
+it from 31 of 66 rejections to 0 of 105 while no effect moved.
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries these rows in full.
 """
 
 from __future__ import annotations
@@ -87,6 +106,60 @@ DEFAULT_B: Final = 9_999
 
 #: Model Confidence Set levels root §9.2 asks for, as a membership column.
 MCS_LEVELS: Final[tuple[float, ...]] = (0.10, 0.25)
+
+#: The claim families the stepdown is *also* reported within (`D79`), in the
+#: order Table 6 groups them.
+#:
+#: **Why a second column exists at all.** Romano-Wolf controls FWER over the
+#: family it is given, and this table gives it the Cartesian product. Widening
+#: the model list from twelve to fifteen took the matrix from 66 pairs to 105 and
+#: the surviving rejections from 31 to **zero** -- not because any effect moved,
+#: but because the two naive comparators generate the largest ``|t|`` in the
+#: table (up to 8.5) and the shared bootstrap draw puts them into the max-``|t|``
+#: null that every other hypothesis is judged against. Two closed-form baselines
+#: that no claim in the paper rests on cost the paper every adjusted rejection it
+#: had. That is a property of the declared family, not of the data.
+#:
+#: **What this column is and is not.** ``p_romano_wolf`` over all pairs stays the
+#: headline: it is what root §9.2 says in as many words, and it is the
+#: conservative number. ``p_romano_wolf_family`` steps down within one claim
+#: family instead, which is the standard construction when the families are
+#: declared in advance -- and this one was **not**, so it is reported as
+#: *post-hoc* and labelled that way wherever it appears. Reporting both is the
+#: only honest option left once the all-pairs column has been seen: suppressing
+#: the narrower one hides how much of the collapse is the family's doing, and
+#: promoting it to headline would be choosing the correction after seeing which
+#: correction rejects.
+FAMILY_ORDER: Final[tuple[str, ...]] = (
+    "vs-naive", "ladder", "architecture", "other",
+)
+
+
+def pair_family(left: ModelKey, right: ModelKey) -> str:
+    """Which claim of the paper a pair speaks to (`D79`).
+
+    Four families, mutually exclusive and exhaustive by construction, each
+    matching a sentence the manuscript actually makes:
+
+    * ``vs-naive`` --- every pair containing Naive-RW. Root §13.2's headline
+      disclosure, *no model beats Naive-RW*, is exactly this family.
+    * ``ladder`` --- both sides the same model tag, so only K moves. RQ1's rungs
+      and ridge's own rungs.
+    * ``architecture`` --- both sides the same K, different tags. The
+      channel-independence comparison root §13.1 makes a Related Work pillar.
+    * ``other`` --- the remainder, which no claim rests on: a rung of one model
+      against a different rung of another.
+
+    Declared as a function of the *keys* alone, so no p-value can enter the
+    definition.
+    """
+    if NAIVE in (left, right):
+        return "vs-naive"
+    if left[0] == right[0]:
+        return "ladder"
+    if left[1] == right[1]:
+        return "architecture"
+    return "other"
 
 
 def nesting_order(left: ModelKey, right: ModelKey) -> tuple[ModelKey, ModelKey] | None:
@@ -177,6 +250,41 @@ def _run_ids(
         for path in (root / "preds").glob(f"{stem}*.parquet"):
             found.add(path.stem)
     return sorted(found, key=lambda run_id: int(parse_run_id(run_id)["seed"]))
+
+
+def available_keys(
+    keys: list[ModelKey],
+    roots: list[Path],
+    pred_len: int = PRED_LEN,
+    origin_indices: tuple[int, ...] | None = None,
+) -> tuple[list[ModelKey], list[ModelKey]]:
+    """Split ``keys`` into those with a run at **every** origin, and the rest.
+
+    Returns:
+        ``(present, absent)``, both in the order given.
+
+    :func:`build_panel` raises on a key missing at any origin, and that raise is
+    right: a matrix short one origin for one model compares models over
+    different origin sets, which is `D45` one level up. But an arm that has not
+    run *anywhere* is a different situation --- the report should name it, the
+    way an absent robustness arm is named, rather than refuse to generate until
+    a GPU session finishes.
+
+    Partial coverage is deliberately **not** rescued here. A key present at some
+    origins and absent at others still reaches :func:`build_panel` and still
+    raises: that is the defect, and quietly dropping it would hide it.
+    """
+    indices = origin_indices or tuple(o.index for o in ORIGINS)
+    present: list[ModelKey] = []
+    absent: list[ModelKey] = []
+    for key in keys:
+        if key == NAIVE or any(
+            _run_ids(key, index, roots, pred_len) for index in indices
+        ):
+            present.append(key)
+        else:
+            absent.append(key)
+    return present, absent
 
 
 def build_panel(
@@ -498,12 +606,20 @@ def pair_matrix(
 
     Returns:
         One row per pair: ``left, right, nested, statistic_name, t_cluster,
-        p_raw, p_romano_wolf, s_star_median, n_cells, n_cells_reject, T_min, h,
-        fallback_fired, G``, plus MCS membership for both models of the row.
+        p_raw, p_romano_wolf, family, p_romano_wolf_family, s_star_median,
+        n_cells, n_cells_reject, T_min, h, fallback_fired, G``, plus MCS
+        membership for both models of the row.
 
     ``p_raw`` is one-sided for a nested pair, where root §9.2's alternative is
     directional, and two-sided otherwise. ``p_romano_wolf`` is always two-sided
     --- see :func:`romano_wolf`.
+
+    **Two adjusted columns, and which is the headline is not a free choice**
+    (`D79`). ``p_romano_wolf`` controls FWER across all pairs, which is what root
+    §9.2 pre-registers, and it stays the headline. ``p_romano_wolf_family`` steps
+    down inside the claim family :func:`pair_family` assigns; the families were
+    declared after the all-pairs column had been read, so that column is
+    **post-hoc** and every rendering of it says so.
     """
     keys = list(panel.keys)
     # Oriented, not merely enumerated: a nested pair is emitted restricted-model
@@ -520,6 +636,18 @@ def pair_matrix(
     )
     t_obs, t_boot = cluster_bootstrap_t(per_origin, B=B, seed=seed)
     p_adjusted = romano_wolf(per_origin, B=B, seed=seed)
+
+    # `D79`. The same stepdown, run again inside each claim family. Same draw
+    # seed, so the two columns differ in the family and in nothing else --- which
+    # is what makes the difference between them readable as the cost of the
+    # Cartesian product rather than as bootstrap noise.
+    families = [pair_family(a, b) for a, b in pairs]
+    p_family = np.ones(len(pairs))
+    for name in FAMILY_ORDER:
+        members = [i for i, f in enumerate(families) if f == name]
+        if not members:
+            continue
+        p_family[members] = romano_wolf(per_origin[:, members], B=B, seed=seed)
 
     losses = np.column_stack([per_origin_loss(panel, k) for k in keys])
     members = {
@@ -546,6 +674,8 @@ def pair_matrix(
                 "t_cluster": t,
                 "p_raw": (1 + count) / (1 + B),
                 "p_romano_wolf": float(p_adjusted[position]),
+                "family": families[position],
+                "p_romano_wolf_family": float(p_family[position]),
                 **_cell_diagnostics(panel, left, right, nested),
                 "h": panel.pred_len,
                 "G": int(per_origin.shape[0]),

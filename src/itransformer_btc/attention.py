@@ -111,7 +111,11 @@ def tercile_maps(
         batch: Inference batch size.
 
     Returns:
-        ``tercile, layer, i, j, weight, n_windows, vol_low, vol_high`` --- one row
+        ``tercile, layer, i, j, weight, n_windows, vol_low, vol_high``. The last
+        two are the **two shared tercile edges**, repeated on every row rather
+        than being that row's own bounds: there is one pair per origin by
+        construction, and reading them as per-tercile limits makes three
+        identical values look like a split that did not happen. One row
         per (tercile, layer, variate pair). At K=8 with two layers that is 384
         rows, so persisting it costs nothing beside ``preds/``.
 

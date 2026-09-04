@@ -84,22 +84,36 @@ PKG_NAME = "itransformer_btc"
 #: dropped so every module inside ``code_sha256`` also appears in the notebook: a
 #: digest naming a file the reader cannot see is worse than a redundant cell.
 MODULE_ORDER: tuple[str, ...] = (
+    # Pipeline order, and a topological order of the intra-package import graph
+    # at the same time. The two agree because the pipeline *is* the dependency
+    # chain: nothing can be split before it is featurised, and nothing can be
+    # featurised before the segment law has said which bars exist.
+    #
+    # ``package_digest`` hashes ``sorted(PACKAGE.glob("*.py"))``, so this order
+    # does not enter ``code_sha256`` and re-cutting it orphans no completed run.
     "config.py",
     "__init__.py",
+    # -- muat data: the segment law, then windows, then the per-origin budget
     "segments.py",
     "windows.py",
     "budget.py",
+    # -- pra-proses: the twelve variates, off the usable-bar frame
     "features.py",
-    "splits.py",
-    "model.py",
-    "train.py",
-    "keff.py",
     # Consumes the feature frame and root §4.5's stats boundary; nothing in the
     # package consumes it, so its position only has to follow `config`.
     "efficiency.py",
+    # -- split: purge at both boundaries, scaler on the 21-month sub-block
+    "splits.py",
+    # After `splits`, whose `window_starts` it reads, and before anything trains:
+    # K_eff is RQ1's regressor and root §5.4 measures it BEFORE a single epoch.
+    "keff.py",
+    # -- algoritma, then the loop that fits it
+    "model.py",
+    "train.py",
+    # -- how a forecast is scored, then what it is scored against
     "metrics.py",
     # After `metrics`, which it imports `assert_same_windows` from, and before
-    # `runner`, which imports its three configs by name (`D56`).
+    # `runner`, which imports its four configs by name (`D56`, `D64`).
     "baselines.py",
     # After `metrics`, whose hln_test, load_predictions and parse_run_id it
     # imports by name. Nothing in the package imports it back.
@@ -110,6 +124,7 @@ MODULE_ORDER: tuple[str, ...] = (
     # and before `runner`, which imports tercile_maps by name for the attention
     # arm (`D62d`).
     "attention.py",
+    # -- the manifest and the executor that walks it
     "runner.py",
     # Last, and it has to be: it reads `completed_run_ids` from `runner` and a
     # driver from every analysis module above it. Nothing imports it back, so no
@@ -420,6 +435,7 @@ SECTION_MAP: dict[str, tuple[Section, ...]] = {
         Section("Origin", "📍", "Satu titik latih-ulang: batas latih, validasi, uji, seluruhnya epoch-based UTC.", "Origin"),
         Section("Origin falsifikasi", "🧪", "Model fresh di <code>o + 90 hari</code>, dievaluasi pada blok kalender yang sama (root §8.1).", "FalsificationOrigin"),
         Section("Grid lima belas origin", "🧭", "2020-01 hingga 2025-11. Spasi lima bulan koprima terhadap 12, jadi indeks blok tidak kolinear dengan bulan kalender.", "OriginLike"),
+        Section("Provenance source code", "📚", "Enam belas algoritma, masing-masing dengan repo resmi, lisensi, tanggal akses, dan <strong>daftar penyimpangannya</strong>. Author-year tidak menjawab pertanyaan <em>kodenya dari mana</em> (<code>D16</code>).", "Upstream"),
     ),
     "__init__.py": (
         Section("Permukaan paket", "📦", "Di checkout ia mengekspor nama; di notebook impornya dibuang dan <code>__all__</code> tinggal dokumentasi."),
@@ -458,6 +474,7 @@ SECTION_MAP: dict[str, tuple[Section, ...]] = {
         Section("Header", "📄", "Hanya torch yang dipakai modul ini. TensorFlow, Keras, dan JAX terlarang (root §2)."),
         Section("Konfigurasi arsitektur", "🎛️", "<code>d_model=128</code>, bukan 512 — panjang urutan attention adalah N ≤ 12, dan 512 akan over-parameterise terhadap ~14.000 sampel (<code>D25</code>).", "ITransformerConfig"),
         Section("Jadwal panjang", "⏱️", "Arm <code>longsched</code>: <code>lr_halve_every=8</code>, 60 epoch, patience 10 (<code>D62c</code>).", "LongScheduleConfig"),
+        Section("Konfigurasi ter-tuning", "🎯", "Arm <code>tuned</code>: satu-satunya konfigurasi di studi ini yang <code>lr</code>-nya sebuah field, karena pencarian validasi memilihnya dan run harus menjalankannya (<code>D76</code>).", "TunedConfig"),
         Section("Blok encoder", "🧠", "Embedding terbalik <code>Linear(L → d_model)</code>, attention lintas variat, FFN. Tanpa causal mask — semua token sezaman.", "InvertedEmbedding"),
         Section("ITransformer", "🔁", "Encoder-only. Loss dihitung hanya pada kanal target, di setiap rung (<code>D39</code>).", "ITransformer"),
     ),
@@ -531,7 +548,7 @@ SECTION_MAP: dict[str, tuple[Section, ...]] = {
         Section("Header & konstanta", "📄", "Level MCS 90% dan 75%, dan B bootstrap bawaan."),
         Section("Nesting & label model", "🪆", "Tangga bersifat kumulatif dan Naive-RW bersarang di setiap model — itu yang menentukan statistik mana yang sah per pasangan.", "nesting_order"),
         Section("Panel prediksi", "🗂️", "Prediksi seluruh model pada himpunan jendela bersama.", "PredictionPanel"),
-        Section("Membangun panel", "🏗️", "Memuat setiap <code>preds/*.parquet</code> dan menegakkan keselarasan jendela lintas model.", "build_panel"),
+        Section("Ketersediaan & membangun panel", "🏗️", "Memuat setiap <code>preds/*.parquet</code> dan menegakkan keselarasan jendela lintas model.", "available_keys"),
         Section("Diferensial rugi", "➖", "Diferensial per jendela, per (origin, blok) — T ≈ 720, h = 24, lag pemotongan 23.", "_per_window"),
         Section("Bootstrap klaster & Romano–Wolf", "🪜", "Stepdown mengendalikan FWER lintas <em>seluruh</em> pasangan. Ia menghapus kedelapan penolakan mentah terhadap Naive-RW (<code>D35</code>, <code>D62a</code>).", "_studentised"),
         Section("Model Confidence Set", "🏅", "Siapa yang tak terbedakan dari yang terbaik. Di 90% maupun 75%: Naive-RW dan keempat rung ridge, tanpa satu pun model deep.", "model_confidence_set"),
@@ -585,7 +602,7 @@ SECTION_MAP: dict[str, tuple[Section, ...]] = {
         Section("Tabel 2b & 3", "📋", "Eigenspektrum dan PR per rung per origin; hiperparameter dan K seluruh model.", "_table2b"),
         Section("Tabel 4 & 5", "📋", "Hasil utama dengan SE <strong>lintas origin</strong> (<code>D30</code>); <code>D(i,b)</code> per blok yang membawa kata undefined (<code>D60b</code>).", "_table4"),
         Section("Tabel 6", "📋", "Matriks DM — statistik disebut namanya per pasangan, T dicantumkan, kolom Romano–Wolf dan MCS.", "_table6"),
-        Section("Tabel 7, 8, dan render", "📋", "Sweep horizon dan ekonomi, lalu seluruhnya ditulis sebagai <code>.tex</code>.", "_table7"),
+        Section("Tabel 7, 8, 9, dan render", "📋", "Sweep horizon dan ekonomi, lalu seluruhnya ditulis sebagai <code>.tex</code>.", "_table7"),
         Section("Helper plot", "🎨", "Impor matplotlib ditunda dan penyimpan PDF/PNG.", "_pyplot"),
         Section("Figure 2b, 3, 4", "📈", "Figure 3 memikul seluruh paper: <strong>satu</strong> seri, lima belas garis per-origin, dengan MDE digambar di samping fit-nya (<code>D36</code>).", "_figure2b"),
         Section("Figure 5 & 6", "📈", "Peta attention per tercile dan sensitivitas horizon.", "_figure5"),
@@ -754,33 +771,99 @@ def split_module_cells(name: str) -> list[tuple[Section, str]]:
     return cells
 
 
-def _html_module(name: str) -> str:
-    """The ``##``-level banner opening a module's run of cells."""
-    start, end, accent, head, body = MODULE_THEME[name]
+@dataclasses.dataclass(frozen=True)
+class Step:
+    """One orchestration cell — a heading and the body under it.
+
+    Steps are what the notebook *does*; modules are what it *knows*. A phase
+    lists its modules first and its steps second, which is the order they have
+    to run in anyway: a call above the definition it needs fails on Kaggle at
+    cell N rather than in a test here (`D59`).
+    """
+
+    md: str | None
+    code: str
+    guard: str | None = None
+    meta: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class Phase:
+    """One step of the pipeline, as a reader meets it top to bottom.
+
+    The unit of the notebook's outline is the **phase**, not the module
+    (`D73`). Eighteen ``##`` banners named after files told a reader which
+    ``.py`` they were inside and nothing about where they were in the study;
+    the file name is still there, one level down, because a cell body is a
+    byte-exact slice of it and a reader comparing the two needs the name.
+    """
+
+    number: str
+    title: str
+    emoji: str
+    blurb: str
+    theme: str
+    bullets: tuple[str, ...] = ()
+    modules: tuple[str, ...] = ()
+    steps: tuple[Step, ...] = ()
+
+
+def _bullets(items: tuple[str, ...], body: str) -> str:
+    """The ``<ul>`` under a phase blurb, or nothing when the phase has none."""
+    if not items:
+        return ""
+    lis = "".join(
+        f'\n    <li style="margin-bottom: 6px;">{item}</li>' for item in items
+    )
+    return (
+        f'\n  <ul style="color: {body}; margin: 10px 0 0 0; '
+        f'padding-left: 20px; font-size: 0.92em;">{lis}\n  </ul>'
+    )
+
+
+def _html_phase(phase: Phase) -> str:
+    """The ``##``-level banner opening one phase of the pipeline."""
+    start, end, accent, head, body = MODULE_THEME[phase.theme]
     return (
         f'<div style="background: linear-gradient(135deg, {start}, {end}); '
-        f'border-radius: 14px; padding: 26px 32px; margin-bottom: 8px; '
+        f"border-radius: 14px; padding: 26px 32px; margin-bottom: 8px; "
         f'border: 1px solid {accent}33;">\n'
         f'  <h2 style="color: {head}; margin: 0 0 8px 0; font-size: 1.6em; '
         f'font-weight: 700; letter-spacing: 0.5px;">\n'
-        f"    📘 {name}\n"
+        f"    {phase.emoji} {phase.number} &middot; {phase.title}\n"
         f"  </h2>\n"
-        f'  <p style="color: {body}; margin: 0; font-size: 1.0em;">'
+        f'  <p style="color: {body}; margin: 0; font-size: 1.02em;">'
+        f"{phase.blurb}</p>"
+        f"{_bullets(phase.bullets, body)}\n"
+        f"</div>"
+    )
+
+
+def _html_module(name: str) -> str:
+    """The ``###``-level banner opening a module's run of cells inside a phase."""
+    start, end, accent, head, body = MODULE_THEME[name]
+    return (
+        f'<div style="background: linear-gradient(90deg, {start}, {end}); '
+        f"border-left: 4px solid {accent}; border-radius: 8px; "
+        f'padding: 16px 22px;">\n'
+        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.22em;">'
+        f"📘 {name}</h3>\n"
+        f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">'
         f"{MODULE_BLURB[name]}</p>\n"
         f"</div>"
     )
 
 
 def _html_section(name: str, section: Section) -> str:
-    """The ``###``-level banner directly above one code cell."""
+    """The ``####``-level banner directly above one code cell."""
     start, end, accent, head, body = MODULE_THEME[name]
     return (
         f'<div style="background: linear-gradient(90deg, {start}, {end}); '
-        f"border-left: 4px solid {accent}; border-radius: 8px; "
-        f'padding: 14px 20px;">\n'
-        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.15em;">'
-        f"{section.emoji} {section.title}</h3>\n"
-        f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">'
+        f"border-left: 3px solid {accent}88; border-radius: 6px; "
+        f'padding: 11px 18px;">\n'
+        f'  <h4 style="color: {head}; margin: 0 0 5px 0; font-size: 1.02em; '
+        f'font-weight: 600;">{section.emoji} {section.title}</h4>\n'
+        f'  <p style="color: {body}; margin: 0; font-size: 0.9em;">'
         f"{section.blurb}</p>\n"
         f"</div>"
     )
@@ -792,8 +875,8 @@ def _html_step(emoji: str, title: str, blurb: str, theme: str) -> str:
     return (
         f'<div style="background: linear-gradient(90deg, {start}, {end}); '
         f"border-left: 4px solid {accent}; border-radius: 8px; "
-        f'padding: 14px 20px;">\n'
-        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.15em;">'
+        f'padding: 16px 22px;">\n'
+        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.22em;">'
         f"{emoji} {title}</h3>\n"
         f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">{blurb}</p>\n'
         f"</div>"
@@ -902,149 +985,37 @@ def library_cell() -> str:
 
 MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, #1b2a4a); border-radius: 16px; padding: 36px 40px; margin-bottom: 8px;">
   <h1 style="color: #8ecae6; font-size: 2.3em; font-weight: 800; margin: 0 0 10px 0; letter-spacing: 0.5px;">
-    &#9889; iTransformer &middot; Walk-Forward BTCUSDT 1h
+    &#9889; iTransformer &middot; Walk-Forward BTCUSDT 1 jam
   </h1>
   <p style="color: #ffb703; font-size: 1.12em; margin: 0 0 18px 0; font-weight: 500;">
-    Nominal Variates or Effective Dimensionality? &mdash; 15 origins &middot; 684 runs &middot; 2 &times; T4
+    Variat nominal atau dimensionalitas efektif? &mdash; 15 origin &middot; 1.620 run &middot; 2 &times; T4
   </p>
   <hr style="border: none; border-top: 1px solid #2a4365; margin: 16px 0;">
   <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
-    <strong>Self-contained.</strong> This notebook needs exactly two things: itself, and
-    <code>BTCUSDT_1h.parquet</code> attached as a Kaggle Dataset. Every definition it uses is
-    <em>in</em> it &mdash; the cells below are ordinary <code>def</code>, <code>class</code> and
-    constant bodies, run top to bottom. Nothing is written to disk to be imported back, there is
-    no <code>itransformer_btc</code> package on this machine, and no <code>src/</code> on
-    <code>sys.path</code>.
+    <strong>Dibaca dari atas ke bawah, sekali jalan.</strong> Notebook ini disusun menurut
+    <em>tahap pipeline</em>, bukan menurut nama berkas: konfigurasi &rarr; muat data &rarr;
+    pra-proses &rarr; split &rarr; algoritma &rarr; latih &rarr; metrik &rarr; baseline &rarr;
+    grid &rarr; evaluasi &rarr; laporan. Definisi satu tahap dan eksekusinya duduk berdampingan,
+    jadi tidak ada lagi tumpukan modul di tengah yang harus dilewati untuk sampai ke pekerjaannya
+    (<code>D73</code>). Nama modul turun satu tingkat, ke banner <code>###</code> dan ke
+    <code>cell.metadata</code>, karena badan tiap sel adalah potongan byte-exact berkas itu dan
+    pembaca yang membandingkan keduanya tetap butuh namanya.
   </p>
   <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
-    <strong>It is still a launcher, not a program.</strong> Every definition &mdash; the twelve
-    variates, the segment law, the window semantics, the scaler, the model, the metrics &mdash; is
-    authored in <code>src/itransformer_btc/</code> and unit-tested on CPU; the cells below are a
-    transcription, not an authoring surface. <strong>Do not hand-edit the <em>Definitions</em>
-    cells:</strong> they are generated by <code>tools/build_notebook.py</code>,
-    <code>tests/test_notebook_sync.py</code> fails the moment they diverge from the package, and
-    the next generator run reverts the edit.
+    <strong>Mandiri.</strong> Yang dibutuhkan sesi Kaggle hanya dua: notebook ini, dan
+    <code>BTCUSDT_1h.parquet</code> terpasang sebagai Kaggle Dataset. Setiap definisi yang dipakai
+    ada <em>di dalamnya</em> &mdash; sel-sel di bawah adalah <code>def</code>, <code>class</code>,
+    dan konstanta biasa yang dijalankan berurutan. Tidak ada yang ditulis ke disk untuk diimpor
+    balik, tidak ada paket <code>itransformer_btc</code> di mesin ini, dan tidak ada
+    <code>src/</code> di <code>sys.path</code>.
   </p>
   <p style="color: #7f9cc0; font-size: 0.93em; margin: 0;">
-    Answers <strong>RQ1</strong> (does benefit track K or K<sub>eff</sub>?),
-    <strong>RQ2</strong> (does the multivariate gap narrow with model age?),
-    <strong>RQ3</strong> (what retraining cadence?) &mdash; all three pre-registered before any
-    model ran, and none of them changeable now without declaring a new experiment.
+    Menjawab <strong>RQ1</strong> (manfaat mengikuti K atau K<sub>eff</sub>?),
+    <strong>RQ2</strong> (apakah gap multivariat menyempit seiring umur model?),
+    <strong>RQ3</strong> (cadence retraining berapa?) &mdash; ketiganya dipra-registrasi sebelum
+    satu model pun berjalan, dan tak satu pun bisa diubah sekarang tanpa mendeklarasikan
+    eksperimen baru.
   </p>
-</div>"""
-
-MD_SETUP = """<div style="background: linear-gradient(90deg, #0b1021, #112240); border-left: 4px solid #8ecae6; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #8ecae6; margin: 0 0 8px 0;">&#128295; 0 &middot; Setup</h2>
-  <p style="color: #b8c7e0; margin: 0;">Find the immutable artifact by globbing, never by dataset slug. Install only what the Kaggle image lacks.</p>
-  <p style="color: #7f9cc0; margin: 12px 0 0 0; font-size: 0.9em;">Kaggle ships its own torch and
-    pyarrow; pinning them against a local venv is forbidden. <code>/kaggle/input</code> is read-only,
-    everything is written to <code>/kaggle/working</code>. The parquet is <strong>not</strong>
-    re-downloaded here even though Stage 1 could: a fresh download is a new vintage, and &sect;12
-    forbids numbers from two vintages sharing a table.</p>
-</div>"""
-
-MD_DEFINE = """<div style="background: linear-gradient(90deg, #0a1a12, #0f2a1c); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128230; 0b &middot; Definitions</h2>
-  <p style="color: #b8c7e0; margin: 0;">Thirteen cells, one per module, in dependency order. Plain definitions &mdash; run them and every name the rest of the notebook calls exists. Generated from <code>src/</code>; do not hand-edit.</p>
-  <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>Definitions, not files.</strong> The earlier launcher wrote these modules to
-    disk with <code>%%writefile</code> and imported them back, because the grid ran as two
-    subprocesses and a subprocess inherits none of this kernel's namespace. Measured on Kaggle, the
-    completed grid was <strong>534 runs in 2.31 h at ~30 s per run</strong> against a &sect;10.3
-    estimate of 60&ndash;100 s and 10&ndash;20 h (<code>D57</code>), so one process running the grid
-    in sequence is ~4.5 h &mdash; inside the 11 h budget with room. The subprocesses stopped paying
-    for themselves, and the files existed only to feed them.</li>
-    <li><strong>Order is load-bearing now.</strong> These cells are <em>executed</em>, not merely
-    written: decorators run, dataclass field types resolve, module constants evaluate. A cell naming
-    something a later cell defines fails at once rather than at call time. <em>Save Version &rarr;
-    Save &amp; Run All</em> runs them in order, which is the only order that works.</li>
-    <li><strong>Two edits, and only two.</strong> Intra-package imports are removed &mdash; the names
-    are already in this namespace, and the import would fail for want of a package. And
-    <code>runner</code>'s <code>if __name__ == "__main__":</code> guard is removed: in a notebook
-    cell <code>__name__</code> <em>is</em> <code>"__main__"</code>, so it would launch the entire
-    grid the instant its definition cell ran. Everything else is the package, character for
-    character.</li>
-    <li><strong>The digest is the provenance.</strong> There is no git repository on Kaggle and now
-    no package files either, so the cell after these pins <code>code_sha256</code> to the digest of
-    <code>src/itransformer_btc/</code> taken at generation time &mdash; the same number a local
-    checkout of the same source reports (<code>D54b</code>), so a notebook run and a repository run
-    do not look like different code vintages.</li>
-  </ul>
-</div>"""
-
-MD_DATA = """<div style="background: linear-gradient(90deg, #1a1200, #2b1d00); border-left: 4px solid #ffb703; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #ffb703; margin: 0 0 8px 0;">&#128202; 1 &middot; Data &amp; integrity &mdash; Stage 2</h2>
-  <p style="color: #b8c7e0; margin: 0;">Load the immutable artifact and assert the window budget per origin, by exact equality.</p>
-  <ul style="color: #e0c68a; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>No imputation anywhere.</strong> When the exchange is down no price forms, so
-    imputation is <em>undefined</em>, not merely risky &mdash; Rubin's taxonomy applies to values
-    that exist but went unobserved.</li>
-    <li><strong>Per origin, exact equality</strong> (<code>D45</code>). Asserted against the pooled
-    4.9% it fires spuriously at fourteen of fifteen origins, gets loosened until it passes, and then
-    can no longer distinguish positional drift from ordinary between-origin variation.</li>
-    <li>Test blocks hold <strong>720</strong> forecast origins, not 601 (<code>D51b</code>): a test
-    window's lookback may cross backwards, a training window's target may not cross forwards.</li>
-    </ul>
-</div>"""
-
-MD_VARIATES = """<div style="background: linear-gradient(90deg, #001a1a, #002b2b); border-left: 4px solid #48cae4; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #48cae4; margin: 0 0 8px 0;">&#129514; 2 &middot; The twelve variates</h2>
-  <p style="color: #b8c7e0; margin: 0;">Per-bar functions of the current bar, except r, which uses the current and previous close. No rolling window anywhere.</p>
-  <p style="color: #a5e8f0; margin: 10px 0 0 0; font-size: 0.92em;">That is a structural safety
-    property, not a style choice: with no rolling window in the pipeline, the
-    <code>center=True</code> leak class is <em>unrepresentable</em>. Column order is ladder order, so
-    rung K is exactly the first K columns and <code>r</code> is channel 0 at every rung &mdash; which
-    makes the single-channel loss one constant rather than a lookup.</p>
-</div>"""
-
-MD_KEFF = """<div style="background: linear-gradient(90deg, #150029, #22003d); border-left: 4px solid #c77dff; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #c77dff; margin: 0 0 8px 0;">&#128209; 3 &middot; Effective dimensionality &mdash; Stage 3b</h2>
-  <p style="color: #b8c7e0; margin: 0;">K_eff is RQ1's independent variable and it is measured before a single epoch runs.</p>
-  <ul style="color: #d8b4fe; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>Per origin, on that origin's own 21-month training sub-block</strong>
-    (<code>D44</code>). A full-sample PR would be estimated on the same data as the outcome, making
-    RQ1 partly circular &mdash; the one leakage path that survived every checklist item, because
-    &sect;11 audits only the gate.</li>
-    <li><strong>The gate reads the pre-first-origin span alone</strong> (<code>D02</code>), trigger
-    pre-registered at PR &lt; 5.0. Its action is <em>disclosure, not a re-cut</em>
-    (<code>D48</code>): <code>D01</code> leaves no second consistent cut over F1&ndash;F5, so
-    "re-cut the ladder" named no reachable alternative.</li>
-    <li>Reported on <strong>window-normalised</strong> features too (<code>D04</code>) &mdash;
-    <code>use_norm</code> strips volatility <em>level</em>, so the 8&rarr;12 rung can flatten for a
-    reason that has nothing to do with redundancy.</li>
-    </ul>
-</div>"""
-
-MD_INVARIANTS = """<div style="background: linear-gradient(90deg, #002200, #003300); border-left: 4px solid #7ae582; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #7ae582; margin: 0 0 8px 0;">&#128295; 4 &middot; Pre-flight invariants &mdash; Stage 4</h2>
-  <p style="color: #b8c7e0; margin: 0;">Three checks that must pass before the grid. Each failed the first time it ran.</p>
-  <ul style="color: #b7e4c7; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><code>MSE(c&middot;x)/c&sup2; == MSE(x)</code>, <strong>not</strong>
-    <code>MSE(c&middot;x) == MSE(x)</code> (<code>D03</code>) &mdash; the target is a channel of the
-    same array, so it scales too and the loss scales by c&sup2;. The source specification's version
-    cannot pass.</li>
-    <li>Single-batch overfit with <strong><code>dropout=0.0</code></strong> (<code>D52d</code>). With
-    the configured 0.1 still on, the loss floors near 7e-2 and a reader following the instruction
-    literally concludes the plumbing is broken when it is not.</li>
-    <li>The <strong>Naive-RW baseline is computed first</strong>, before any model trains, and it is
-    <code>&#375;<sub>z</sub> = &minus;&mu;<sub>g</sub>/&sigma;<sub>g</sub></code> &mdash; never 0
-    (<code>D31</code>), which would silently be a constant-drift model wearing the EMH baseline's
-    name.</li>
-    </ul>
-</div>"""
-
-MD_GATE = """<div style="background: linear-gradient(90deg, #2b0a00, #3d1000); border-left: 4px solid #ff7b54; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #ff7b54; margin: 0 0 8px 0;">&#128737; 5 &middot; Stage 5 gate &mdash; validation only</h2>
-  <p style="color: #b8c7e0; margin: 0;">Origin 1, 4 K x 3 seeds, scored on the validation sub-block. The test blocks stay shut.</p>
-  <p style="color: #ffc4a3; margin: 10px 0 0 0; font-size: 0.92em;">
-    &sect;11 requires the test blocks be opened once, after the design is frozen, so a gate that
-    repositions the title on a test-block result cannot coexist with it (<code>D27</code>). The
-    statistic is <strong>Clark&ndash;West, not DM</strong> (<code>D29</code>): K=1's feature set is a
-    strict subset of K=8's under the same architecture and sample, and standard DM is systematically
-    undersized against exactly the alternative being tested. The gate is
-    <strong>K=1 vs K=8, never K=12</strong> &mdash; K=12 is built to be redundant, and gating on it
-    would kill a viable paper for the wrong reason. The twelve cells are ordinary main-grid
-    <code>run_id</code>s, so the grid below skips them.</p>
 </div>"""
 
 MD_TUNE = _html_step(
@@ -1053,7 +1024,9 @@ MD_TUNE = _html_step(
     "Delapan belas konfigurasi diranking pada sub-blok validasi origin 1, lalu "
     "pemenangnya dilatih penuh di lima belas origin sebagai arm <code>itrt</code>. "
     "Grid-nya dideklarasikan di <code>TUNING_GRID</code> sebelum dijalankan; ruang "
-    "pencarian yang dipilih setelah melihat pemenangnya bukan pencarian. Arm ini "
+    "pencarian yang dipilih setelah melihat pemenangnya bukan pencarian. Pemenang "
+    "dijalankan <strong>apa adanya, termasuk learning rate-nya</strong> "
+    "(<code>D76</code>). Arm ini "
     "<strong>eksploratori</strong>, tidak masuk perbandingan tangga RQ1, dan "
     "jumlah percobaannya masuk hitungan development trial root §13.5 "
     "(<code>D70</code>).",
@@ -1070,84 +1043,17 @@ GRID_CONFIGS = {"tuned": TUNED_CONFIG}
 (ARTIFACTS / "meta" / "tuning_selection.json").write_text(
     json.dumps({"grid": list(TUNING_GRID), "ranked": TUNING_TABLE,
                 "selected": {"d_model": TUNED_CONFIG.d_model,
-                             "e_layers": TUNED_CONFIG.e_layers}}, indent=1),
+                             "e_layers": TUNED_CONFIG.e_layers,
+                             "lr": TUNED_CONFIG.lr}}, indent=1),
     encoding="utf-8",
 )
-print(f"tuned arm will run {TUNED_CONFIG.d_model=} {TUNED_CONFIG.e_layers=}")
+# `lr` is in `selected` because it is in the search space and in the run. It was
+# in neither before `D76`: the winner's rate was ranked on and then dropped, so
+# the recorded decision and the executed arm disagreed.
+assert TUNED_CONFIG.lr == TUNING_TABLE[0]["lr"], "tuned arm must run the selected lr"
+print(f"tuned arm will run {TUNED_CONFIG.d_model=} {TUNED_CONFIG.e_layers=} "
+      f"{TUNED_CONFIG.lr=}")
 '''
-
-MD_GRID = """<div style="background: linear-gradient(90deg, #001233, #001845); border-left: 4px solid #4cc9f0; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #4cc9f0; margin: 0 0 8px 0;">&#128640; 6 &middot; The grid</h2>
-  <p style="color: #b8c7e0; margin: 0;">684 unique runs across seven arms, executed in this kernel. Resume automatic, budget guard at run boundaries.</p>
-  <ul style="color: #a9d6f5; margin: 10px 0 0 0; padding-left: 20px; font-size: 0.92em;">
-    <li><strong>main 300</strong> &middot; <strong>uniform 75</strong> (<code>D50</code>) &middot;
-    <strong>fresh 15</strong> (falsification) &middot; <strong>horizon 144</strong>. The sweep's
-    H=24 slice shares 48 <code>run_id</code>s with the main grid, so 582 nominal cells are 534 real
-    runs &mdash; executing one twice would mean two files racing for one path.</li>
-    <li><strong>ridge 60</strong> (<code>D17</code>, K=1/4/8/12) &middot;
-    <strong>dlinear 45</strong> &middot; <strong>patchtst 45</strong> &mdash; the &sect;7 comparators,
-    absent from every earlier manifest (<code>D56</code>). Without them "iTransformer has no edge"
-    rests on Naive-RW alone, and a referee reads the null as an untuned configuration rather than a
-    finding. They run <em>after</em> the ladder so a short session leaves RQ1&ndash;RQ3's inputs
-    complete, and so each baseline's <code>D45</code> window-alignment assertion finds its comparator
-    already on disk.</li>
-    <li><strong>One process, one GPU, and a second T4 idles.</strong> A real cost, stated rather than
-    buried: it roughly doubles wall time against the two-worker form. It is what the notebook format
-    costs &mdash; definitions live in this namespace and a subprocess inherits none of it. The
-    measured arithmetic says it still fits: <strong>534 &times; ~30 s &asymp; 4.5 h</strong> for the
-    ladder (<code>D57</code>).</li>
-    <li><strong>PatchTST is the expensive arm, by a factor nobody guessed.</strong> Measured on CPU at
-    origin 1, K=8: iTransformer 113 s over 10 epochs, ridge 0.5 s, DLinear 24 s, PatchTST
-    <strong>1810 s</strong>. Per epoch that is 5.3&times; iTransformer &mdash; it folds channels into
-    the batch, so a step processes B&times;N=256 sequences rather than 32 &mdash; and both
-    channel-independent baselines run the full 30 epochs because early stopping never fires. Scaling
-    <code>D57</code>'s 30 s/run gives ridge and DLinear ~10 min combined and PatchTST
-    <strong>~6 h</strong>, putting the whole manifest near 11 h. <strong>Two sessions is therefore the
-    expected case, not the exception.</strong> That is survivable precisely because the baselines run
-    last: an overrun costs comparators, never RQ1&ndash;RQ3's inputs, and they resume by
-    <code>run_id</code> like anything else.
-    Threads are <em>not</em> the way to reclaim the second GPU:
-    <code>torch.manual_seed</code> seeds <em>every</em> CUDA device, so two threads would clobber
-    each other's generator mid-run and &sect;12's reproducibility contract would be
-    unenforceable.</li>
-    <li><strong>No <code>DataLoader</code>.</strong> At ~280k parameters the run is dominated by data
-    movement and Python overhead, which a per-item loader maximises &mdash; roughly 10&times; worse,
-    which puts the grid outside the 30 h weekly quota outright.</li>
-    <li>Run <em>Save Version &rarr; Save &amp; Run All</em>, never the editor: the 20-minute idle
-    timeout kills interactive sessions, and hitting the 12 h wall interactively loses
-    <code>/kaggle/working</code> entirely.</li>
-    <li><strong>Resume granularity is one run, ~30 s.</strong> A run counts as complete only when
-    both <code>preds/</code> and <code>meta/</code> exist and <code>meta.status ==
-    "complete"</code>, so a session cut short at run 200 of 684 loses at most the one run in flight.
-    The next session subtracts what is done and continues &mdash; there is no bookkeeping to do by
-    hand and no state beyond the files themselves. Intra-run checkpointing is deliberately omitted:
-    at ~30 s per run it costs more complexity than it saves.</li>
-    <li><strong>The budget guard bounds the session, not the grid call.</strong> Kaggle's 12 h wall
-    starts at cell 0, so the prelude &mdash; data, K<sub>eff</sub>, invariants, the twelve pilot
-    runs &mdash; is subtracted before the guard is built. Counting from the grid's own start would
-    let the two clocks drift apart by exactly however long the prelude took.</li>
-  </ul>
-</div>"""
-
-MD_EVAL = """<div style="background: linear-gradient(90deg, #2d0036, #4a0060); border-left: 4px solid #e0aaff; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #e0aaff; margin: 0 0 8px 0;">&#128200; 7 &middot; Evaluation &mdash; RQ1, RQ2, RQ3</h2>
-  <p style="color: #b8c7e0; margin: 0;">Every number below resolves to a persisted prediction file and a config hash, or it does not enter the manuscript.</p>
-  <p style="color: #d8b4fe; margin: 10px 0 0 0; font-size: 0.92em;">Ratio metrics are formed
-    from <strong>seed-averaged MSEs</strong>, never from an average of per-seed ratios
-    (<code>D42</code>): the two differ by Jensen, and the second would require pairing seed 42 at K=1
-    with seed 42 at K=8 &mdash; independent training runs of different models, where any of 5!
-    orderings gives a different answer.</p>
-</div>"""
-
-MD_SAVE = """<div style="background: linear-gradient(90deg, #150029, #240046); border-left: 4px solid #bf5af2; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #bf5af2; margin: 0 0 8px 0;">&#128190; 8 &middot; Save</h2>
-  <p style="color: #b8c7e0; margin: 0;">Every table and figure is generated FROM paper_numbers.json, never transcribed.</p>
-  <p style="color: #c77dff; margin: 10px 0 0 0; font-size: 0.92em;">Numbers produced under
-    different input-artifact hashes are not comparable and must not share a table, so the parquet
-    digest travels with them &mdash; and so does <code>code_sha256</code>, which is what identifies
-    the code off-repo. A number that cannot be regenerated is a documented failure, not a
-    footnote.</p>
-</div>"""
 
 
 # -- code cells --------------------------------------------------------------
@@ -1324,6 +1230,62 @@ if torch.cuda.is_available():
 '''
 
 #: ``{digest}`` is substituted at generation time — see :func:`package_digest`.
+MD_UPSTREAM = _html_step(
+    "📚",
+    "Provenance source code — dari mana tiap algoritma berasal",
+    "Enam belas algoritma, tercetak sebagai <em>output</em> dan bukan hanya "
+    "sebagai teks, jadi notebook yang tersimpan membawa jawabannya sebagai bukti "
+    "(root &sect;15). Format sitasinya IEEE — paper, venue, repo resmi, lisensi, "
+    "tanggal akses — supaya tiap baris bisa langsung diangkat ke bibliografi. "
+    "<strong>Tidak satu pun berkas di sini salinan berkas upstream</strong>: yang "
+    "<code>reimplemented</code> ditulis ulang dari deskripsi terbitannya, dan "
+    "penyimpangannya didaftar dengan ID divergensi yang memaksanya.",
+    "config.py",
+)
+
+CODE_UPSTREAM = r'''# The answer to "where did this code come from", printed rather than implied.
+#
+# Author-year is what every docstring in this package carried before, and it does
+# not answer the question an examiner actually asks. `D16` is the precedent: this
+# project already carries mis-dated references assembled from memory, so a table
+# that names the repository, the licence and the access date is the only form of
+# the claim that can be checked. `tests/test_provenance.py` binds every URL here
+# to the module docstring that repeats it, because two copies with nothing
+# checking them is `D54a` and `D69` over again.
+_STATUS_NOTE = {
+    "reimplemented": "written here from the published description",
+    "library": "imported and called",
+    "own": "no upstream code exists; implemented here from the paper",
+}
+
+print("SOURCE PROVENANCE — 16 algorithms")
+print("=" * 78)
+for _row in SOURCE_PROVENANCE:
+    print()
+    print(f"{_row.component}")
+    print(f"  in         {_row.module}")
+    print(f"  status     {_row.status} ({_STATUS_NOTE[_row.status]})")
+    print(f"  reference  {_row.reference}")
+    if _row.repo:
+        _seen = "verified" if _row.verified else "NOT yet verified (root 13.3)"
+        print(f"  code       {_row.repo}")
+        print(f"             {_row.licence}, accessed {_row.accessed} — {_seen}")
+    else:
+        print("  code       no upstream implementation")
+    if _row.adapted:
+        print(f"  adapted    {_row.adapted}")
+
+_by_status = {s: sum(1 for r in SOURCE_PROVENANCE if r.status == s)
+              for s in _STATUS_NOTE}
+print()
+print("=" * 78)
+print(f"{len(SOURCE_PROVENANCE)} rows: " + ", ".join(
+    f"{n} {s}" for s, n in _by_status.items()))
+print(f"repository pages read in session: "
+      f"{sum(1 for r in SOURCE_PROVENANCE if r.verified)} — the rest are "
+      f"paper-only citations root 13.3 still owes a check")
+'''
+
 CODE_PROVENANCE = r'''# Root section 12 asks a run to name the code that produced it, and names the git
 # sha as the way. There is no git repository on Kaggle and — the cells above
 # being definitions rather than files — nothing on disk to hash either. So
@@ -1338,8 +1300,9 @@ CODE_SHA256_OVERRIDE = "{digest}"
 # sentinel per module, in MODULE_ORDER: cheap here, unbounded there.
 _sentinels = (
     "ORIGINS", "__all__", "build_segments", "count_windows", "budget_table",
-    "build_features", "build_origin_tensors", "ITransformer", "code_sha256",
-    "keff_table", "seed_average", "PatchTST", "manifest",
+    "build_features", "efficiency_table", "build_origin_tensors", "keff_table",
+    "ITransformer", "code_sha256", "seed_average", "PatchTST", "pair_matrix",
+    "economics_table", "tercile_maps", "manifest", "build_report",
 )
 _missing = [name for name in _sentinels if name not in globals()]
 assert not _missing, (
@@ -1853,21 +1816,6 @@ print("\nSave Version now, then attach this output as the next session's input "
 '''
 
 
-MD_REPORT = """<div style="background: linear-gradient(90deg, #001a0d, #003317); border-left: 4px solid #52b788; border-radius: 8px; padding: 18px 24px;">
-  <h2 style="color: #52b788; margin: 0 0 8px 0;">&#128202; 9 &middot; Tables and figures</h2>
-  <p style="color: #b8c7e0; margin: 0;">Everything section 13.4 promises, rendered from
-    <code>paper_numbers.json</code> and never transcribed.</p>
-  <p style="color: #95d5b2; margin: 10px 0 0 0; font-size: 0.92em;">This is the cell
-    <code>D60g</code> was about. The grid produced the numbers and left every table and figure
-    ungenerated; four of them &mdash; the DM matrix, the economic evaluation, the attention
-    heatmap and the equity curve &mdash; had no inputs at all. Three of those four are computed
-    here from the 684 prediction files already on disk. <b>Figure 5 is the exception</b>: attention
-    weights were never persisted, so it needs the <code>attention</code> arm and is skipped
-    <i>by name</i> until that arm runs &mdash; an empty axes labelled as a figure reads as a
-    measurement of nothing.</p>
-</div>"""
-
-
 CODE_REPORT = r'''PAPER = WORK / "paper"
 
 # The manuscript's single source. The grid's own paper_numbers.json written above
@@ -1991,8 +1939,393 @@ def _code(index: int, text: str, metadata: dict | None = None) -> dict:
     }
 
 
+# -- phases ------------------------------------------------------------------
+
+MD_STEP_DATA = _html_step(
+    "📊",
+    "Jalankan Stage 2 — muat bar & asersi anggaran jendela",
+    "Artefak imutabel dimuat, bar tak-layak-pakai ditandai, lalu anggaran jendela "
+    "diasersi <strong>per origin dengan kesamaan persis</strong> terhadap "
+    "<code>docs/ORIGIN_WINDOW_BUDGET.md</code> (<code>D45</code>).",
+    "budget.py",
+)
+
+MD_STEP_FEATURES = _html_step(
+    "🔬",
+    "Bangun frame fitur",
+    "Dua belas variat dari bar layak-pakai. Satu baris per segmen jatuh karena "
+    "<code>r</code> butuh penutup sebelumnya (<code>D52c</code>), dan tiap variat "
+    "diasersi finite — kalau tidak, hukum segmen tidak berjalan.",
+    "features.py",
+)
+
+MD_STEP_KEFF = _html_step(
+    "📐",
+    "Jalankan Stage 3b — ukur K_eff",
+    "Gerbang dibaca pada rentang pra-origin-pertama, lalu tabel K_eff diukur per "
+    "origin pada sub-blok latih 21 bulan masing-masing. Semuanya sebelum satu "
+    "epoch pun berjalan.",
+    "keff.py",
+)
+
+
+#: The notebook's outline, top to bottom (`D73`).
+#:
+#: The unit here is the **phase** — one step of the study as a reader meets it —
+#: and not the module. A phase lists its modules first and its steps second,
+#: which is also the only order that runs: a call placed above the definition it
+#: needs fails on Kaggle at that cell rather than in a test here (`D59`).
+#:
+#: The concatenation of ``phase.modules`` must equal ``MODULE_ORDER``;
+#: :func:`build` asserts it, so the two cannot drift into a notebook that defines
+#: a module twice or leaves one out.
+PHASES: tuple[Phase, ...] = (
+    Phase(
+        number="0",
+        title="Persiapan",
+        emoji="🔧",
+        theme="config.py",
+        blurb="Temukan artefak imutabel lewat glob, tidak pernah lewat slug Dataset. Pasang hanya yang belum ada di image Kaggle.",
+        bullets=(
+            "Kaggle membawa <code>torch</code> dan <code>pyarrow</code>-nya sendiri; mem-pin keduanya terhadap venv lokal terlarang. <code>/kaggle/input</code> hanya-baca, semua tulisan jatuh ke <code>/kaggle/working</code>.",
+            "Kandidat parquet dicocokkan lewat <strong>isi</strong>, bukan nama: <code>PAR1</code> di kedua ujung, diperiksa di titik pemilihan (<code>D72</code>). Pencariannya turun ke kedalaman berapa pun lewat <code>rglob</code>, karena path yang UI Kaggle berikan tiga tingkat dalam — satu tingkat lebih dalam dari pola terdalam yang lama (<code>D71</code>).",
+            "Parquet <strong>tidak</strong> diunduh ulang di sini meski Stage 1 sanggup: unduhan baru adalah vintage baru, dan root &sect;12 melarang angka dari dua vintage berbagi satu tabel.",
+        ),
+        steps=(Step(md=None, code=CODE_SETUP),),
+    ),
+    Phase(
+        number="1",
+        title="Pustaka",
+        emoji="📚",
+        theme="__init__.py",
+        blurb="Setiap impor yang paket ini pakai, dimuat sekali di satu tempat.",
+        bullets=(
+            "Sel-sel definisi di bawah <strong>tidak membawa satu impor pun</strong> — termasuk <code>from __future__ import annotations</code>, karena IPython mengakumulasi flag <code>__future__</code> lintas sel dan direktif di sini berlaku untuk seluruh sesi (<code>D67</code>).",
+            "Daftarnya <strong>digenerate dari modul-modulnya sendiri</strong>, jadi dependensi yang muncul di paket tidak bisa hilang di sini.",
+            "Satu-satunya sel lain yang mengimpor adalah Persiapan di atas, dan itu tak terhindarkan: ia yang <em>memasang</em> paket yang sel ini impor.",
+        ),
+        steps=(
+            Step(md=None, code="{library}", meta={"itbtc": {"role": "library"}}),
+        ),
+    ),
+    Phase(
+        number="2",
+        title="Konfigurasi & permukaan paket",
+        emoji="⚙️",
+        theme="config.py",
+        blurb="Setiap angka protokol yang root &sect;8.1 kunci, sebagai konstanta bernama — lalu daftar nama yang paket ini ekspor.",
+        bullets=(
+            "<strong>Definisi, bukan berkas.</strong> Sel-sel di bawah dieksekusi, tidak ditulis ke disk: dekorator berjalan, tipe field dataclass diselesaikan, konstanta modul dievaluasi. Sel yang menyebut sesuatu yang baru didefinisikan belakangan gagal seketika, bukan saat dipanggil.",
+            "<strong>Dua suntingan, dan hanya dua.</strong> Impor intra-paket dibuang — namanya sudah hidup di namespace ini, dan impornya akan gagal karena tak ada paketnya. Dan guard <code>if __name__ == \"__main__\":</code> milik <code>runner</code> dibuang: di dalam sel, <code>__name__</code> <em>adalah</em> <code>\"__main__\"</code>, jadi ia akan meluncurkan seluruh grid begitu sel definisinya jalan. Sisanya adalah paket itu sendiri, karakter demi karakter.",
+            "<em>Save Version &rarr; Save &amp; Run All</em> menjalankannya berurutan, dan hanya urutan itu yang bekerja.",
+        ),
+        modules=("config.py", "__init__.py"),
+        steps=(Step(md=MD_UPSTREAM, code=CODE_UPSTREAM),),
+    ),
+    Phase(
+        number="3",
+        title="Muat data & hukum segmen",
+        emoji="📥",
+        theme="segments.py",
+        blurb="Muat artefak imutabel, potong deret di tiap gap, lalu asersi anggaran jendela per origin dengan kesamaan persis.",
+        bullets=(
+            "<strong>Tidak ada imputasi di mana pun.</strong> Saat bursa mati tidak ada harga yang terbentuk, jadi imputasi <em>tak terdefinisi</em>, bukan sekadar berisiko — taksonomi Rubin berlaku untuk nilai yang ada tapi tak teramati.",
+            "<strong>Per origin, kesamaan persis</strong> (<code>D45</code>). Diasersi terhadap angka gabungan 4,9% ia menyala palsu di empat belas dari lima belas origin, dilonggarkan sampai lolos, dan setelah itu tidak lagi bisa membedakan drift indeks posisional dari variasi antar-origin biasa.",
+            "Blok uji memuat <strong>720</strong> origin ramalan, bukan 601 (<code>D51b</code>): lookback jendela uji boleh menyeberang ke belakang, target jendela latih tidak boleh menyeberang ke depan.",
+        ),
+        modules=("segments.py", "windows.py", "budget.py"),
+        steps=(Step(md=MD_STEP_DATA, code=CODE_DATA),),
+    ),
+    Phase(
+        number="4",
+        title="Pra-proses — dua belas variat",
+        emoji="🧪",
+        theme="features.py",
+        blurb="Fungsi per-bar dari bar saat ini, kecuali r yang memakai penutup sekarang dan sebelumnya. Tidak ada rolling window di mana pun.",
+        bullets=(
+            "Itu properti keamanan <strong>struktural</strong>, bukan pilihan gaya: tanpa satu pun rolling window di pipeline, kelas kebocoran <code>center=True</code> <em>tak terwakili</em>.",
+            "Urutan kolom adalah urutan tangga, jadi rung K persis K kolom pertama dan <code>r</code> adalah kanal 0 di setiap rung — yang membuat loss kanal-tunggal satu konstanta, bukan sebuah lookup.",
+            "Rogers&ndash;Satchell <strong>tidak</strong> positif tegas: ia lenyap pada bar tanpa bayangan, dan 33 bar seperti itu ada. <code>log(RS + 1e-9)</code> menaruh <code>log &kappa; = &minus;20,7</code> di dalam support terukur, bukan sebagai 33 lonjakan di luar support (<code>D52a</code>).",
+        ),
+        modules=("features.py",),
+        steps=(Step(md=MD_STEP_FEATURES, code=CODE_FEATURES),),
+    ),
+    Phase(
+        number="5",
+        title="Uji efisiensi pasar",
+        emoji="🌊",
+        theme="efficiency.py",
+        blurb="ADF, variance ratio Lo&ndash;MacKinlay, dan eksponen Hurst — full sample dan tiap sub-blok latih 21 bulan.",
+        bullets=(
+            "Mengubah &ldquo;pasar efisien&rdquo; dari asumsi menjadi <strong>temuan</strong>. Klaimnya soal <em>variasi</em>, dan satu baris tidak bisa menunjukkannya — karena itu per origin, bukan sekali di seluruh sampel.",
+            "Jangan mengklaim pasarnya efisien. Nyatakan buktinya campur dan berubah menurut waktu, lalu laporkan angka sendiri (root &sect;4.5).",
+        ),
+        modules=("efficiency.py",),
+    ),
+    Phase(
+        number="6",
+        title="Split walk-forward & scaler",
+        emoji="🪟",
+        theme="splits.py",
+        blurb="Purge H langkah di kedua batas, dan StandardScaler yang dipasang hanya pada sub-blok latih 21 bulan.",
+        bullets=(
+            "<strong>Dua batas, bukan satu</strong> (<code>D24</code>). Tanpa purge latih&rarr;validasi, jendela latih yang targetnya menembus batas 21 bulan membawa observasi validasi ke dalam latihan — dan validasi itulah yang memutuskan early stopping dan &alpha; ridge, jadi split yang terkontaminasi adalah yang mengatur <em>pemilihan model</em>.",
+            "Asimetrinya disengaja: <em>input</em> 96 bar jendela validasi boleh menjangkau mundur ke periode latih. Itu informasi masa lalu yang sah bagi peramal di saat itu, dan memblokirnya membuat evaluasi pesimistis secara tidak realistis. Hanya <strong>target</strong> yang dipurge.",
+            "Memindahkan <code>train_end</code> adalah kebocoran, bukan ketidakcocokan.",
+        ),
+        modules=("splits.py",),
+    ),
+    Phase(
+        number="7",
+        title="Dimensionalitas efektif — Stage 3b",
+        emoji="📐",
+        theme="keff.py",
+        blurb="K_eff adalah variabel bebas RQ1 dan ia diukur sebelum satu epoch pun berjalan.",
+        bullets=(
+            "<strong>Per origin, pada sub-blok latih 21 bulan origin itu sendiri</strong> (<code>D44</code>). PR full-sample akan diestimasi dari data yang sama dengan outcome-nya, membuat RQ1 sebagian sirkular — satu-satunya jalur kebocoran yang lolos dari tiap butir checklist, karena root &sect;11 hanya mengaudit gerbangnya.",
+            "<strong>Gerbang membaca rentang pra-origin-pertama saja</strong> (<code>D02</code>), pemicu dipra-registrasi di PR &lt; 5,0. Aksinya <em>disklosur, bukan re-cut</em> (<code>D48</code>): <code>D01</code> tidak menyisakan potongan konsisten kedua atas F1&ndash;F5.",
+            "Dilaporkan juga pada fitur <strong>ternormalisasi-jendela</strong> (<code>D04</code>) — <code>use_norm</code> mengupas <em>level</em> volatilitas, jadi rung 8&rarr;12 bisa mendatar karena sebab yang tak ada hubungannya dengan redundansi.",
+        ),
+        modules=("keff.py",),
+        steps=(Step(md=MD_STEP_KEFF, code=CODE_KEFF),),
+    ),
+    Phase(
+        number="8",
+        title="Algoritma — arsitektur iTransformer",
+        emoji="🧠",
+        theme="model.py",
+        blurb="Encoder-only. Tiap variat adalah satu token, dan attention berjalan lintas variat, bukan lintas waktu.",
+        bullets=(
+            "<strong>Tanpa causal mask.</strong> Masking berlaku pada sumbu waktu; attention di sini berjalan pada sumbu variat, tempat seluruh token sezaman. Kausalitas ditegakkan di hulu — pada fitur dan windowing.",
+            "<code>d_model = 128</code>, bukan 512: panjang urutan attention adalah N &le; 12, dan 512 akan over-parameterise terhadap ~14.000 sampel (<code>D25</code>).",
+            "<strong>Tidak ada yang di-tune di sini</strong> (<code>D38</code>). Tiap nilai kecuali <code>d_model</code> diadopsi apa adanya dari Liu et al. (2024) dan identik di setiap rung — menahan kapasitas tetaplah yang membuat rung-rungnya sebanding.",
+            "K=1 mendegenerasi menjadi <em>kendali</em>, bukan bug (<code>D50</code>): pada N=1 softmax memberi bobot 1, tapi proyeksi value dan output serta residualnya <strong>tetap ada</strong> — ia bukan identitas telanjang.",
+        ),
+        modules=("model.py",),
+    ),
+    Phase(
+        number="9",
+        title="Loop latih & kontrak keterlacakan",
+        emoji="🔥",
+        theme="train.py",
+        blurb="Loop latih GPU-resident tanpa DataLoader, plus kontrak keterlacakan root &sect;12 yang setiap run tulis.",
+        bullets=(
+            "<strong>Loss MSE pada kanal target saja</strong>, di setiap rung (<code>D39</code>). Di bawah loss all-channel, K=12 menjadi masalah 12-tugas dan K=1 masalah 1-tugas, jadi supervisi tambahan ikut berubah bersama variabel bebas studi ini sendiri.",
+            "Data tidak bergerak setelah muat awal: seluruh split masuk GPU sekali, lalu batch dibentuk dengan mengiris indeks tensor itu. Bentuk <code>DataLoader</code> per-item ~10&times; lebih buruk dan menaruh grid di luar kuota mingguan.",
+            "LR dibelah tiap 4 epoch, bukan tiap epoch (<code>D47</code>) — pembelahan per-epoch mencapai ~4e-7 di epoch 9, jadi anggaran epoch tidak akan pernah mengikat. Terukur: <strong>0 dari 444 run</strong> menyentuh cap 30 epoch (<code>D62c</code>).",
+        ),
+        modules=("train.py",),
+    ),
+    Phase(
+        number="10",
+        title="Metrik & uji statistik",
+        emoji="📏",
+        theme="metrics.py",
+        blurb="Seluruh estimator paper: metrik, DM/Clark&ndash;West, survival, dan bootstrap klaster liar untuk &beta;&#8321;.",
+        bullets=(
+            "Setiap metrik rasio dibentuk dari <strong>MSE yang sudah dirata-rata seed</strong>, tidak pernah dari rata-rata rasio per-seed (<code>D42</code>): keduanya berbeda oleh Jensen.",
+            "Pasangan <strong>bersarang</strong> memakai Clark&ndash;West, bukan DM baku — DM baku sistematis undersized justru terhadap alternatif yang studi ini ada untuk menegakkannya (<code>D29</code>).",
+            "Varians jangka panjang memakai estimator <strong>rektangular terpotong</strong> pada lag h&minus;1, bukan bobot Bartlett: Bartlett menyusutkan &gamma;&#770;&#8322;&#8322; sekitar 92% dan menghasilkan p yang terlalu optimistis (<code>D34</code>).",
+            "<code>D(i,b)</code> hidup di skala <em>skill</em>, bukan RelMSE (<code>D23</code>) — di skala RelMSE tiap &tau; tak terjangkau dan RQ3 akan mengembalikan &ldquo;tanpa decay&rdquo; karena satuan yang tidak cocok, bukan karena pasarnya.",
+        ),
+        modules=("metrics.py",),
+    ),
+    Phase(
+        number="11",
+        title="Baseline",
+        emoji="🪶",
+        theme="baselines.py",
+        blurb="Ridge, DLinear, PatchTST, LSTM, dan dua komparator naif — masing-masing dengan K eksplisit.",
+        bullets=(
+            "<strong>Setiap baseline membawa K</strong> (<code>D40</code>). Baseline channel-independent dengan K yang tak dinyatakan tidak bisa bicara soal debat channel-independence yang jadi pilar Related Work.",
+            "K=8 milik DLinear dan PatchTST berarti <em>dilatih pada</em> delapan kanal lewat bobot bersama, <strong>bukan</strong> meramal target dari delapan kanal (<code>D56</code>). K=8 milik LSTM dan ridge berarti yang kedua. Nyatakan itu di mana pun angkanya muncul.",
+            "Ridge menjawab pertanyaan yang <code>D17</code> ajukan — apakah transformer dibutuhkan sama sekali? Terukur: <strong>tidak</strong>. Rata-rata <code>R&sup2;_oos</code> ridge &minus;0,00057 lawan &minus;0,0180 iTransformer-K8 dan &minus;0,0262 DLinear (<code>D60c</code>).",
+            "ARIMA tetap ditangguhkan <strong>dengan alasan tertulis</strong>: pada log-return crypto per jam, seleksi AIC mendarat di sekitar order (0,0,0) — yang <em>adalah</em> baseline naif (<code>D64</code>).",
+        ),
+        modules=("baselines.py",),
+    ),
+    Phase(
+        number="12",
+        title="Perbandingan model",
+        emoji="⚔️",
+        theme="comparisons.py",
+        blurb="Matriks pasangan, stepdown Romano&ndash;Wolf, dan Model Confidence Set (<code>D35</code>).",
+        bullets=(
+            "SPA dan Reality Check menguji null <em>satu-lawan-banyak</em> dan tidak mengatakan apa pun tentang matriks semua-pasangan yang Tabel 6 muat. Romano&ndash;Wolf yang mengendalikan FWER lintas seluruh pasangan.",
+            "Terukur: stepdown itu <strong>menghapus setiap penolakan terhadap Naive-RW</strong> — 8 dari 11 model menolak mentah di &alpha; = 0,05, nol setelah adjustment, p &ge; 0,336 (<code>D62a</code>).",
+            "MCS di 90% maupun 75% memuat Naive-RW dan keempat rung ridge, dan <strong>tidak satu pun model deep</strong>.",
+        ),
+        modules=("comparisons.py",),
+    ),
+    Phase(
+        number="13",
+        title="Evaluasi ekonomi",
+        emoji="💰",
+        theme="economics.py",
+        blurb="Fase 00:00 UTC, non-overlapping, per segmen, DSR per origin (root &sect;13.5).",
+        bullets=(
+            "<strong>Return lintas-gap terlarang.</strong> Posisi yang ditahan melewati blok downtime tidak punya return terealisasi yang terdefinisi — di blok 2018-02-08 sebuah &ldquo;trade 24 jam&rdquo; akan membukukan gerak 57 jam (<code>D46</code>).",
+            "Fase dikunci di 00:00 UTC: ada 24 penyelarasan partisi harian non-overlapping yang sah, dan memilih fase setelah melihat kurva ekuitas adalah parameter bebas atas klaim ekonomi paper ini.",
+            "P&amp;L positif di bawah <code>R&sup2;_oos</code> negatif bukan kontradiksi: MSE dan P&amp;L arah adalah objektif berbeda, dan sampel yang didominasi kenaikan BTC 2020&ndash;2026 membayar posisi yang mayoritas long untuk <em>drift</em>, bukan untuk ramalannya. Laporkan +20,6% bersama buy-and-hold +29,0% dan DSR 0,173, atau angka pertama terbaca sebagai skill.",
+        ),
+        modules=("economics.py",),
+    ),
+    Phase(
+        number="14",
+        title="Peta attention",
+        emoji="🗺️",
+        theme="attention.py",
+        blurb="Peta per tercile volatilitas untuk Figure 5. Calm dan stress ditentukan data, bukan dipilih setelah melihat petanya.",
+        bullets=(
+            "<strong>Attention bukan penjelasan.</strong> Peta ini bukti deskriptif soal kebergantungan variat, divalidasi lewat stabilitas antar-seed, dan tidak pernah kausal (Jain &amp; Wallace 2019; Wiegreffe &amp; Pinter 2019).",
+            "<code>capture</code> adalah atribut <strong>runtime</strong>, tidak pernah field config — cabangnya tidak mengonsumsi RNG, jadi run yang ditangkap identik bit-per-bit dengan grid utama, dan arm ini sekaligus jadi pemeriksaan reproduksibilitas (<code>D62d</code>).",
+        ),
+        modules=("attention.py",),
+    ),
+    Phase(
+        number="15",
+        title="Manifes & eksekutor grid",
+        emoji="🚀",
+        theme="runner.py",
+        blurb="Manifes 1.620 run, penemuan resume lewat glob, penjaga anggaran sesi, dan eksekutor dua-GPU.",
+        bullets=(
+            "<strong>Ditemukan lewat glob, tidak pernah lewat slug Dataset yang dikodekan mati</strong>, jadi nama Kaggle Dataset bebas berubah. Run dianggap lengkap hanya bila kedua berkas ada <em>dan</em> <code>meta.status</code> berbunyi <code>complete</code>.",
+            "<strong>Paralelisme di tingkat run, tidak pernah tingkat batch.</strong> Satu worker per device dari satu antrean bersama; <code>set_seed(seed, device)</code> menyemai generator CPU dan <strong>hanya device itu</strong>, jadi satu run menghasilkan byte yang sama entah ia berjalan sendiri atau berdampingan (<code>D68</code>). <code>DataParallel</code> ditolak — pada batch 32 biaya scatter/gather melebihi hematnya; DDP lebih buruk lagi pada 969 run pendek.",
+            "<strong>Penjaga anggaran mengukur sesi, bukan worker</strong> (<code>D54f</code>). Dinding 12 jam Kaggle berjalan dari sel 0, jadi prelude dikurangi lebih dulu lewat <code>SESSION_T0</code>.",
+            "Jalankan lewat <em>Save Version &rarr; Save &amp; Run All</em>, jangan lewat editor: idle timeout 20 menit membunuh sesi interaktif, dan menabrak dinding 12 jam secara interaktif menghilangkan <code>/kaggle/working</code> seluruhnya.",
+        ),
+        modules=("runner.py",),
+    ),
+    Phase(
+        number="16",
+        title="Pelaporan",
+        emoji="📋",
+        theme="report.py",
+        blurb="Sembilan tabel dan enam figure, seluruhnya di-render dari paper_numbers.json — tidak pernah disalin tangan.",
+        bullets=(
+            "Ini bagian yang <code>D60g</code> soroti: grid menghasilkan angkanya dan meninggalkan setiap tabel dan figure tak tergenerate, empat di antaranya tanpa masukan sama sekali.",
+            "<code>paper/paper_numbers.json</code> menyebut berkas grid lewat sha256, jadi keduanya tidak bisa diam-diam berbeda (<code>D60f</code>, <code>D62a</code>).",
+        ),
+        modules=("report.py",),
+    ),
+    Phase(
+        number="17",
+        title="Provenance kode & input",
+        emoji="🔐",
+        theme="train.py",
+        blurb="Seluruh sel definisi sudah lewat; sekarang catat kode apa yang barusan didefinisikan, sebelum apa pun yang mahal berjalan.",
+        bullets=(
+            "Root &sect;12 meminta tiap run menyebut kode yang menghasilkannya, dan menyebut git sha sebagai caranya. Di Kaggle tidak ada repositori git, dan sel-sel di atas adalah definisi bukan berkas — jadi tidak ada pula yang bisa di-hash dari disk. <code>code_sha256</code> yang memikulnya (<code>D54b</code>).",
+            "Sentinelnya satu per modul: sel yang terlewat meninggalkan <em>lubang</em>, bukan berkas basi, dan lubang itu baru muncul berjam-jam kemudian di tengah grid. Murah di sini, tak terbatas di sana.",
+        ),
+        steps=(
+            Step(md=MD_MODULE_NAMES, code="{module_names}"),
+            Step(md=MD_PROVENANCE, code=CODE_PROVENANCE),
+        ),
+    ),
+    Phase(
+        number="18",
+        title="Invarian pra-terbang — Stage 4",
+        emoji="🛠️",
+        theme="efficiency.py",
+        blurb="Tiga pemeriksaan yang harus lolos sebelum grid. Ketiganya gagal saat pertama kali dijalankan.",
+        bullets=(
+            "<code>MSE(c&middot;x)/c&sup2; == MSE(x)</code>, <strong>bukan</strong> <code>MSE(c&middot;x) == MSE(x)</code> (<code>D03</code>) — targetnya adalah kanal dari array yang sama, jadi ia ikut terskala dan loss-nya terskala oleh c&sup2;. Versi spesifikasi sumber tidak mungkin lolos.",
+            "Overfit satu batch dengan <strong><code>dropout=0.0</code></strong> (<code>D52d</code>). Dengan 0,1 yang terkonfigurasi masih menyala, loss-nya mentok di sekitar 7e-2 dan pembaca yang menuruti instruksinya secara harfiah menyimpulkan plumbing rusak padahal tidak.",
+            "<strong>Naive-RW dihitung lebih dulu</strong>, sebelum satu model pun latih, dan ia <code>&#375;<sub>z</sub> = &minus;&mu;<sub>g</sub>/&sigma;<sub>g</sub></code> — tidak pernah 0 (<code>D31</code>), yang diam-diam akan menjadi model constant-drift yang memakai nama baseline EMH.",
+        ),
+        steps=(Step(md=None, code=CODE_INVARIANTS),),
+    ),
+    Phase(
+        number="19",
+        title="Gerbang Stage 5 — validasi saja",
+        emoji="🛡️",
+        theme="comparisons.py",
+        blurb="Origin 1, 4 K &times; 3 seed, dinilai pada sub-blok validasi. Blok uji tetap tertutup.",
+        bullets=(
+            "Root &sect;11 menuntut blok uji dibuka sekali, setelah desain dibekukan, jadi gerbang yang mereposisi judul berdasarkan hasil blok uji tidak bisa hidup berdampingan dengannya (<code>D27</code>).",
+            "Statistiknya <strong>Clark&ndash;West, bukan DM</strong> (<code>D29</code>): himpunan fitur K=1 adalah subset tegas K=8 di bawah arsitektur dan sampel yang sama.",
+            "Gerbangnya <strong>K=1 lawan K=8, tidak pernah K=12</strong> — K=12 dibangun untuk redundan, dan menggerbangkan padanya akan membunuh paper yang layak untuk alasan yang salah.",
+            "<strong>Terukur: gerbang GAGAL.</strong> <code>S* = +0,8759, p = 0,1906</code> satu sisi. Judul direposisi ke varian deskriptif pada 2026-08-20, dan arm K=16 karenanya tidak dijalankan — klausa 1 gagal (<code>D60a</code>).",
+        ),
+        steps=(
+            Step(md=None, code=CODE_PILOT),
+            Step(md=MD_TUNE, code=CODE_TUNE),
+        ),
+    ),
+    Phase(
+        number="20",
+        title="Grid",
+        emoji="⚡",
+        theme="splits.py",
+        blurb="Manifes penuh dijalankan di kernel ini. Resume otomatis, penjaga anggaran di batas run.",
+        bullets=(
+            "<strong>Granularitas resume adalah satu run</strong>, ~32 detik. Sesi yang terpotong di run 200 kehilangan paling banyak satu run yang sedang jalan; sesi berikutnya mengurangi yang sudah selesai lalu melanjutkan. Checkpointing intra-run sengaja ditiadakan.",
+            "Terukur pada manifes 894-run: <strong>0 gagal, 7,79 jam, rata-rata 31,8 detik per run</strong> — di satu device. Dengan dua worker (<code>D68</code>), sisa 726 run &asymp; 6,4 GPU-jam &asymp; 3,2 jam wall.",
+            "Baseline berjalan <em>setelah</em> tangga, jadi sesi yang pendek kehilangan komparator, bukan masukan RQ1&ndash;RQ3 — dan asersi keselarasan jendela <code>D45</code> tiap baseline menemukan pembandingnya sudah di disk.",
+            "<strong>Evaluasi digerbangi kelengkapan grid.</strong> Panel parsial adalah panel tak seimbang, dan estimator root &sect;9.1 menolaknya secara desain. &beta;&#8321; setengah-panel adalah estimand yang berbeda, bukan yang lebih berderau (<code>D54e</code>).",
+        ),
+        steps=(Step(md=None, code=CODE_GRID),),
+    ),
+    Phase(
+        number="21",
+        title="Evaluasi — RQ1, RQ2, RQ3",
+        emoji="📈",
+        theme="attention.py",
+        blurb="Setiap angka di bawah bermuara pada berkas prediksi yang dipersist dan satu config hash, atau ia tidak masuk manuskrip.",
+        bullets=(
+            "Metrik rasio dibentuk dari <strong>MSE yang sudah dirata-rata seed</strong>, tidak pernah dari rata-rata rasio per-seed (<code>D42</code>): keduanya berbeda oleh Jensen, dan yang kedua menuntut memasangkan seed 42 di K=1 dengan seed 42 di K=8 — dua run latih independen dari model berbeda, di mana salah satu dari 5! urutan memberi jawaban berbeda.",
+            "<strong>Unit inferensinya adalah origin.</strong> Dispersi seed adalah diagnostik derau Monte-Carlo, tidak pernah ketidakpastian atas estimasi yang teragregasi lintas origin (<code>D30</code>).",
+            "Perbandingan lintas-origin apa pun dilakukan pada RelMSE atau <code>R&sup2;_oos</code>, <strong>tidak pernah</strong> pada MSE ruang-scaler: dua origin membawa &sigma;<sub>g</sub> berbeda, dan angka mentahnya 99,7% adalah drift scaler (<code>D60i</code>).",
+        ),
+        steps=(
+            Step(md=MD_RQ1, code=CODE_RQ1, guard="RQ1"),
+            Step(md=MD_RQ2, code=CODE_RQ2, guard="RQ2"),
+            Step(md=MD_RQ3, code=CODE_RQ3, guard="RQ3"),
+        ),
+    ),
+    Phase(
+        number="22",
+        title="Simpan angka",
+        emoji="💾",
+        theme="train.py",
+        blurb="Setiap tabel dan figure digenerate DARI paper_numbers.json, tidak pernah disalin tangan.",
+        bullets=(
+            "Angka yang dihasilkan di bawah hash artefak input yang berbeda tidak sebanding dan tidak boleh berbagi satu tabel, jadi digest parquet ikut bersamanya — begitu pula <code>code_sha256</code>, yang mengidentifikasi kode di luar repo.",
+            "Angka yang tidak bisa diregenerasi adalah kegagalan yang terdokumentasi, bukan catatan kaki.",
+        ),
+        steps=(Step(md=None, code=CODE_SAVE, guard="paper_numbers.json"),),
+    ),
+    Phase(
+        number="23",
+        title="Tabel & figure",
+        emoji="📊",
+        theme="report.py",
+        blurb="Semua yang root &sect;13.4 janjikan, di-render dari paper_numbers.json dan tidak pernah disalin tangan.",
+        bullets=(
+            "Tiga dari empat deliverable yang dulu tanpa masukan — matriks DM, evaluasi ekonomi, kurva ekuitas — dihitung di sini dari berkas prediksi yang sudah ada di disk.",
+            "<strong>Figure 5 pengecualian</strong>: bobot attention tidak pernah dipersist oleh grid asli, jadi ia butuh arm <code>attention</code> dan dilewati <em>dengan disebut namanya</em> sampai arm itu jalan — sumbu kosong berlabel figure terbaca sebagai pengukuran atas ketiadaan.",
+        ),
+        steps=(Step(md=None, code=CODE_REPORT, guard="tables and figures"),),
+    ),
+)
+
+
 def build() -> dict:
-    """The whole notebook, as an nbformat 4.5 dictionary."""
+    """The whole notebook, as an nbformat 4.5 dictionary.
+
+    Phases in order, each laying out its modules and then its steps. The title
+    banner is the only cell outside a phase.
+    """
+    laid_out = tuple(name for phase in PHASES for name in phase.modules)
+    if laid_out != MODULE_ORDER:
+        raise SystemExit(
+            f"PHASES lays out {laid_out} but MODULE_ORDER is {MODULE_ORDER}. "
+            f"The two disagree, so the notebook would define a module twice or "
+            f"leave one out — a NameError hours into a Kaggle session rather "
+            f"than a failure here (`D73`)."
+        )
+
     cells: list[dict] = []
     counter = 0
 
@@ -2006,51 +2339,30 @@ def build() -> dict:
         cells.append(_code(counter, text, metadata))
         counter += 1
 
+    module_names = "MODULE_NAMES = [\n" + "".join(
+        f"    {name!r},\n" for name in MODULE_ORDER) + "]\n"
+
     md(MD_TITLE)
-    md(MD_SETUP)
-    code(CODE_SETUP)
-
-    md(MD_LIBRARY)
-    code(library_cell(), {"itbtc": {"role": "library"}})
-
-    md(MD_DEFINE)
-    for name in MODULE_ORDER:
-        md(_html_module(name))
-        for section, body in split_module_cells(name):
-            md(_html_section(name, section))
-            code(body, {"itbtc": {"module": name, "section": section.title}})
-    md(MD_MODULE_NAMES)
-    code("MODULE_NAMES = [\n" + "".join(
-        f"    {name!r},\n" for name in MODULE_ORDER) + "]\n")
-    md(MD_PROVENANCE)
-    code(CODE_PROVENANCE.replace("{digest}", package_digest()))
-
-    md(MD_DATA)
-    code(CODE_DATA)
-    md(MD_VARIATES)
-    code(CODE_FEATURES)
-    md(MD_KEFF)
-    code(CODE_KEFF)
-    md(MD_INVARIANTS)
-    code(CODE_INVARIANTS)
-    md(MD_GATE)
-    code(CODE_PILOT)
-    md(MD_TUNE)
-    code(CODE_TUNE)
-
-    md(MD_GRID)
-    code(CODE_GRID)
-    md(MD_EVAL)
-    md(MD_RQ1)
-    code(guarded(CODE_RQ1, "RQ1"))
-    md(MD_RQ2)
-    code(guarded(CODE_RQ2, "RQ2"))
-    md(MD_RQ3)
-    code(guarded(CODE_RQ3, "RQ3"))
-    md(MD_SAVE)
-    code(guarded(CODE_SAVE, "paper_numbers.json"))
-    md(MD_REPORT)
-    code(guarded(CODE_REPORT, "tables and figures"))
+    for phase in PHASES:
+        md(_html_phase(phase))
+        for name in phase.modules:
+            md(_html_module(name))
+            for section, body in split_module_cells(name):
+                md(_html_section(name, section))
+                code(body, {"itbtc": {"module": name, "section": section.title}})
+        for step in phase.steps:
+            if step.md is not None:
+                md(step.md)
+            body = step.code
+            if body == "{library}":
+                body = library_cell()
+            elif body == "{module_names}":
+                body = module_names
+            else:
+                body = body.replace("{digest}", package_digest())
+            if step.guard is not None:
+                body = guarded(body, step.guard)
+            code(body, step.meta)
 
     return {
         "cells": cells,

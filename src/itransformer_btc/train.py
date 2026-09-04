@@ -11,6 +11,29 @@ Root §10.4: **persist raw predictions, always.** They are required for the
 Diebold-Mariano test, the per-regime analysis and the economic evaluation.
 Re-running the grid because only metrics were saved is an expensive, avoidable
 mistake.
+
+Upstream
+--------
+The optimiser and the schedule are PyTorch's; the loop around them is this
+study's, and the departures from a stock training loop are the point.
+
+- ``torch.optim.Adam`` -- D. P. Kingma and J. Ba, "Adam: A method for
+  stochastic optimization," in *Proc. 3rd Int. Conf. Learn. Represent. (ICLR)*,
+  2015. arXiv:1412.6980. Called directly at ``lr = 1e-4``, adopted unchanged
+  from Liu et al. (2024) and never tuned (`D38`).
+- ``torch.optim.lr_scheduler.StepLR`` -- halving every **four** epochs, not
+  every epoch. Per-epoch halving reaches ~4e-7 by epoch 9, so the 30-epoch
+  budget could never bind and the cap would be decorative (`D47`). PyTorch:
+  https://docs.pytorch.org/docs/stable/optim.html (BSD-3-Clause; accessed
+  2026-09-03).
+
+What is **not** taken from any reference loop: there is no ``Dataset`` and no
+``DataLoader`` anywhere. The whole split is resident on the GPU and batching is
+index-slicing into that tensor, which is the difference between ~30 s and
+~300 s per run at this model size and is what puts the grid inside the weekly
+quota at all (`D19`, `D57`). Shuffling permutes an index tensor **on device**;
+moving data after the initial load would undo the entire regime.
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries this row in full.
 """
 
 from __future__ import annotations

@@ -244,4 +244,4 @@ notebooks/artifacts/
 # tools/build_report.py --check compares against what is committed, so ignoring
 # them would make the report generator's drift guard unenforceable.
 !paper/figures/*.pdf
-
+.jupyter-token

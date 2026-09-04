@@ -14,6 +14,33 @@ forecast origin.
 
 **The scaler is fitted on the 21-month sub-block and nothing else**, at every
 origin. Moving ``train_end`` is a leak, not a mismatch (root §8.2).
+
+Upstream
+--------
+**Both the evaluation protocol and the scaler are written here. Neither is a
+library call, and the scaler in particular is not scikit-learn's.**
+
+- Rolling-origin evaluation -- L. J. Tashman, "Out-of-sample tests of
+  forecasting accuracy: An analysis and review," *Int. J. Forecast.*, vol. 16,
+  no. 4, pp. 437-450, 2000; C. Bergmeir and J. M. Benitez, "On the use of
+  cross-validation for time series predictor evaluation," *Information
+  Sciences*, vol. 191, pp. 192-213, 2012 -- the primary justification for
+  rolling-origin over a fixed origin.
+- Purging -- M. Lopez de Prado, *Advances in Financial Machine Learning*.
+  Hoboken, NJ: Wiley, 2018, ch. 7. Adopted; **embargo and CPCV deliberately are
+  not**, and root §8.3 and §8.4 carry the written arguments rather than leaving
+  a protocol element silently absent (`D15`). The purge runs at **both**
+  boundaries -- train/validation as well as train/test -- which the source is
+  not read as requiring and which `D24` shows is the one that governs model
+  selection.
+- ``Scaler`` -- **not** ``sklearn.preprocessing.StandardScaler``, though it
+  computes the same thing. Under ``use_norm=True`` the outer affine scaler
+  cancels algebraically (root §6.3), so what it actually controls is the
+  reporting scale and the baselines that have no internal normalisation;
+  writing it here keeps that fitted object inside the per-origin tensor build
+  rather than taking a dependency for two lines of arithmetic.
+
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries these rows in full.
 """
 
 from __future__ import annotations

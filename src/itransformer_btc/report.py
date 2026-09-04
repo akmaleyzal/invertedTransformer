@@ -57,6 +57,7 @@ from itransformer_btc.budget import budget_table
 from itransformer_btc.comparisons import (
     NAIVE,
     ModelKey,
+    available_keys,
     build_panel,
     label,
     mcs_table,
@@ -65,21 +66,33 @@ from itransformer_btc.comparisons import (
 from itransformer_btc.config import (
     BARS_ACTUAL,
     BARS_EXPECTED,
+    BLOCK_HOURS,
     DATA_END,
     DATA_START,
     GAP_BLOCKS,
+    K_LADDER,
+    FalsificationOrigin,
     MISSING_BARS,
     ORIGINS,
     PRED_LEN,
     SWEEP_ORIGIN_INDICES,
 )
-from itransformer_btc.economics import SLIPPAGE_BAND, economics_table, equity_curves
+from itransformer_btc.economics import (
+    HOLD_LABEL,
+    SLIPPAGE_BAND,
+    economics_table,
+    equity_curves,
+)
 from itransformer_btc.efficiency import efficiency_table
+from itransformer_btc.features import ladder_columns
 from itransformer_btc.keff import rolling_ols_r2, rolling_pr
+from itransformer_btc.model import ITransformerConfig
 from itransformer_btc.metrics import (
     amplification,
     attention_amplification,
     beta1_with_coverage,
+    paired_contrast,
+    panel_beta1_covariate,
     directional_accuracy_table,
     falsification_relmse,
     gather_grid,
@@ -101,6 +114,17 @@ COMPARISON_KEYS: Final[tuple[ModelKey, ...]] = (
     ("itru", 8),
     ("rdg", 1), ("rdg", 4), ("rdg", 8), ("rdg", 12),
     ("dlin", 8), ("ptst", 8),
+    # `D64`'s three arms. Root §7 gives each an explicit K and root §13.2 makes
+    # "no deep model beats Naive-RW" a mandatory disclosure -- a claim that omits
+    # the RNN the crypto literature reaches for first is a hole a reviewer finds
+    # in one pass. LSTM's K=8 means what ridge's and iTransformer's mean, not what
+    # the channel-independent baselines' does, and its loss is target-channel, so
+    # it belongs in this matrix rather than beside it.
+    ("lstm", 8),
+    # K=1 and they are not Naive-RW: both read the target channel and nothing
+    # else, which is what makes 1 the honest label (`D40`). Naive-RW stays the
+    # separate sentinel that forecasts a zero raw log-return (`D31`).
+    ("npst", 1), ("nsea", 1),
     NAIVE,
 )
 
@@ -112,16 +136,116 @@ COMPARISON_KEYS: Final[tuple[ModelKey, ...]] = (
 #: any deep model.
 ECONOMIC_KEYS: Final[tuple[ModelKey, ...]] = (
     ("itr", 1), ("itr", 8), ("rdg", 8), ("dlin", 8), ("ptst", 8),
+    # `D77`. The LSTM is the only deep model the Model Confidence Set keeps, and
+    # a Table 8 that omits it evaluates the economics of five models whose
+    # statistical standing did not change while leaving out the one whose did.
+    ("lstm", 8),
 )
 
-#: Arms whose runs may legitimately be absent: they are the `D62` robustness
+#: Arms whose runs may legitimately be absent: the `D62` and `D70` exploratory
 #: arms, executed after the 684-run grid. A generator that crashed on their
 #: absence would make the report un-runnable until a GPU session finished.
+#:
+#: They sit here rather than in :data:`COMPARISON_KEYS` because root §10.2 says
+#: so in as many words -- *none enters RQ1's ladder comparison; each gets its own
+#: row*. Mixing an exploratory arm into the ladder would make the rungs differ in
+#: something other than K, which is the one thing the ladder holds fixed.
+#:
+#: ``orthogonal`` and ``redundant`` are the exception that proves it. They are the
+#: matched-K pair, same K=8 and same target with PR the only thing that moves
+#: (3.609 against 5.011, either side of the ladder's own 4.668), so they test
+#: RQ1 **by contrast** where the ladder can only infer it through a panel at
+#: ``corr(K, K_eff) = 0.828``. That makes them evidence rather than robustness --
+#: and still not ladder rungs.
 ROBUSTNESS_TAGS: Final[dict[str, str]] = {
     "itrl": "longsched",
     "itrc": "capacity",
     "itra": "attention",
+    "itro": "orthogonal",
+    "itrr": "redundant",
+    "l048": "look048",
+    "l192": "look192",
+    "itrt": "tuned",
 }
+
+#: Paired contrasts reported beside the marginal tables (`D82`), as
+#: ``(left, right, what it answers)``. Positive means the LEFT arm is worse.
+#:
+#: Every table in this report prints an arm's mean RelMSE with its standard error
+#: **across** origins, and a reader who differences two such rows is comparing
+#: marginal spreads for arms that were evaluated on the same fifteen origins
+#: against the same naive baselines. The paired error is about half the marginal
+#: one here, so overlapping bars in Table 4 and Table 9 carry no information about
+#: whether two arms differ. These are the differences the paper's sentences
+#: actually make, computed as differences.
+#:
+#: The first entry is the one that changes an RQ rather than its robustness: at
+#: fixed K = 8, same target and same seeds, ``itrr`` against ``itro`` moves only
+#: the participation ratio, so it is RQ1's K-versus-K_eff question asked **by
+#: contrast** instead of inferred from a panel where the two move together at
+#: ``corr(K, K_eff) = 0.828``.
+PAIRED_CONTRASTS: Final[tuple[tuple[tuple[str, int | None], tuple[str, int | None], str], ...]] = (
+    (("itrr", None), ("itro", None), "RQ1 matched-K: low PR against high PR at K=8"),
+    (("itr", 1), ("itr", 8), "ladder: K=1 against K=8"),
+    (("itr", 4), ("itr", 8), "ladder: K=4 against K=8"),
+    (("itr", 8), ("itr", 12), "ladder: K=8 against K=12"),
+    (("itru", None), ("itr", 8), "uniform attention against learned, at K=8"),
+    (("lstm", None), ("itr", 8), "the RNN against the transformer, both K=8"),
+    (("lstm", None), ("rdg", 8), "the RNN against ridge, both K=8"),
+    (("ptst", None), ("itr", 8), "patch tokens against inverted tokens"),
+    (("dlin", None), ("itr", 8), "the linear decomposition against the transformer"),
+    (("itr", 8), ("rdg", 8), "the transformer against ridge on the same features"),
+)
+
+#: Figure 1's splits. Named rather than inline because its two panels must agree
+#: exactly: a train bar that is one blue in the scheme and another in the
+#: resolved origin reads as two different things. ``oos`` is a shading, not a
+#: fourth split --- out-of-sample IS the six test blocks, and the span is drawn
+#: so a reader stops looking for a region that does not exist.
+SPLIT_COLOUR: Final[dict[str, str]] = {
+    "train": "#1f4e79",
+    "val": "#5b8db8",
+    "purge": "#f4a259",
+    "test": "#c1121f",
+    "test_alt": "#e07a1f",
+    "oos": "#6c757d",
+}
+
+#: Figure 4's encoding: hue is the model family, dash is the rung. Matplotlib's
+#: default cycle holds ten colours against this matrix's fourteen series, so it
+#: paints two models identically and the legend stops being readable against the
+#: plot. Hue-by-family also puts `D60c` on the page rather than in a table: the
+#: ridge lines hug 1.000 and the deep lines sit well above it.
+FAMILY_COLOUR: Final[dict[str, str]] = {
+    "itr": "#1f4e79", "itru": "#5b8db8", "itrf": "#9dc3e6",
+    "rdg": "#2e7d32", "dlin": "#c1121f", "ptst": "#e07a1f",
+    "lstm": "#7b2cbf", "npst": "#8d6e63", "nsea": "#455a64",
+}
+
+#: The two closed-form comparators. They sit near RelMSE 2.0 while every other
+#: model is inside [1.000, 1.027], so Figure 4 zooms past them in its lower panel
+#: and keeps them in its upper one (`D84`).
+NAIVE_COMPARATORS: Final[frozenset[str]] = frozenset({"npst", "nsea"})
+
+#: Dash by rung, so K is legible without a second colour axis.
+RUNG_STYLE: Final[dict[int, str]] = {1: ":", 4: "-.", 8: "-", 12: "--"}
+
+#: Marker by family, so the figure survives a greyscale print -- which an IEEE
+#: submission may well become.
+FAMILY_MARKER: Final[dict[str, str]] = {
+    "itr": "o", "itru": "s", "itrf": "D",
+    "rdg": "^", "dlin": "v", "ptst": "P",
+    "lstm": "X", "npst": "*", "nsea": "h",
+}
+
+#: Figure 5's colour scale is centred on **uniform attention**, ``1/N``. Over
+#: eight variates that is 0.125 and every measured weight lands within about
+#: 0.01 of it, so a sequential map anchored at zero renders the whole panel one
+#: flat colour and the reader concludes "attention is uniform" from the scale
+#: rather than from the data. Uniform is also exactly the null the `D50`
+#: uniform-attention arm implements, so deviation from it is the quantity of
+#: interest and a diverging map centred there is the honest encoding.
+ATTENTION_CMAP: Final = "RdBu_r"
 
 #: Figure 5's regimes, fixed before any map was seen (`D48`): calm is the bottom
 #: tercile of realised volatility across all test blocks, stress the top.
@@ -130,6 +254,13 @@ TERCILE_SHOWN: Final[tuple[str, str]] = ("calm", "stress")
 #: The 684-run grid is the floor for a report. Below it the panel is unbalanced
 #: and §9.1's estimators refuse it by design (`D54e`).
 GRID_FLOOR: Final = 684
+
+#: Fallback epoch cap for a run whose meta carries no schedule --- ridge and the
+#: two naive comparators, which train nothing. Every arm that trains records its
+#: own ``max_epochs``, and `D78` reads the cap from there rather than assuming
+#: root §6.2's: the ``itrl`` arm runs to 60, so a hardcoded 30 counted its runs
+#: as capped when they were not.
+DEFAULT_MAX_EPOCHS: Final = 30
 
 #: Human-readable model names, for tables and figure legends.
 MODEL_NAMES: Final[dict[str, str]] = {
@@ -142,6 +273,14 @@ MODEL_NAMES: Final[dict[str, str]] = {
     "rdg": "Ridge",
     "dlin": "DLinear",
     "ptst": "PatchTST",
+    "lstm": "LSTM",
+    "npst": "Naive-persist",
+    "nsea": "Seasonal-naive",
+    "itro": "iTransformer (orthogonal $K$=8)",
+    "itrr": "iTransformer (redundant $K$=8)",
+    "l048": "iTransformer ($L$=48)",
+    "l192": "iTransformer ($L$=192)",
+    "itrt": "iTransformer (tuned)",
 }
 
 _MISSING: Final = "---"
@@ -317,10 +456,20 @@ def _architecture_section(run_ids: list[str], roots: list[Path]) -> dict:
     """Table 3 --- K, capacity and epochs-to-early-stop for every model.
 
     §6.2 requires epochs-to-stop logged per rung, and the reason is exact: it is
-    how a reader tells a flat 8->12 rung from an under-trained one. Measured over
-    the whole grid it is also what `D62c` rests on --- **0 of 444 iTransformer
-    runs reached the 30-epoch cap**, so the cap was never the binding constraint
-    and widening it alone would have been a no-op.
+    how a reader tells a flat 8->12 rung from an under-trained one. It is also
+    what `D62c` rests on: the iTransformer arms early-stop far below their cap,
+    so the binding constraint is the learning-rate schedule and widening the cap
+    alone would be a no-op.
+
+    **`D78`: the cap is read from the arm's own schedule, and the count is
+    reported rather than asserted.** Two defects lived in the hardcoded 30. The
+    `itrl` arm runs to 60, so runs between 30 and 60 were being counted as capped
+    when they were not. And the claim "no iTransformer run reaches the cap" was
+    written as though permanent: on the 1,620-run grid five of 540 do, while
+    **DLinear reaches it in 56 of 75 runs and PatchTST in 39 of 75**. Those two
+    are budget-truncated, so any reading of the ordering that calls DLinear the
+    worst model is confounded with DLinear being the most truncated --- which is
+    why this number goes in the table instead of in a sentence.
 
     Every baseline carries an explicit K (`D40`). For the channel-independent
     pair that K means *trained on eight channels*, not *predicts the target from
@@ -347,7 +496,10 @@ def _architecture_section(run_ids: list[str], roots: list[Path]) -> dict:
         epochs = np.asarray(row.pop("epochs"), dtype=np.float64)
         row["epochs_mean"] = float(epochs.mean())
         row["epochs_max"] = int(epochs.max())
-        row["epochs_at_cap"] = int((epochs >= 30).sum())
+        schedule = row.get("schedule") or {}
+        cap = int(schedule.get("max_epochs", DEFAULT_MAX_EPOCHS))
+        row["max_epochs"] = cap
+        row["epochs_at_cap"] = int((epochs >= cap).sum())
         out.append(row)
     out.sort(key=lambda row: (row["model"], row["pred_len"], row["k"]))
     return {"cells": out}
@@ -388,6 +540,43 @@ def _horizon_section(seed_avg: pl.DataFrame) -> dict:
     return {"origins": list(SWEEP_ORIGIN_INDICES), "cells": cells}
 
 
+#: Arms that carry exactly one rung, so their frame needs no ``k`` filter.
+_SINGLE_RUNG: Final[frozenset[str]] = frozenset(
+    {"itrc", "itra", "itro", "itrr", "l048", "l192", "itrt"}
+)
+
+
+def _contrasts_section(seed_avg: pl.DataFrame) -> dict:
+    """:data:`PAIRED_CONTRASTS`, computed (`D82`).
+
+    Post-hoc and carrying no multiplicity control of its own --- root §9.2's
+    pre-registered machinery is what a confirmatory claim goes through, and this
+    is here so the paper states its differences as differences instead of leaving
+    a reader to subtract two marginal means and their marginal error bars.
+    """
+    present = set(seed_avg.get_column("model").unique().to_list())
+    rows = []
+    for left, right, question in PAIRED_CONTRASTS:
+        if left[0] not in present or right[0] not in present:
+            rows.append({
+                "left": left[0], "right": right[0], "question": question,
+                "status": "not run",
+            })
+            continue
+        rows.append({**paired_contrast(seed_avg, left, right),
+                     "question": question, "status": "run"})
+    return {
+        "note": (
+            "Positive mean_diff means the LEFT arm is worse. Paired across the "
+            "origins both arms were evaluated on, on RelMSE so no comparison "
+            "crosses a sigma_g boundary (`D60i`), with the origin as the "
+            "inferential unit (`D30`). Post-hoc and uncorrected for "
+            "multiplicity (`D82`)."
+        ),
+        "rows": rows,
+    }
+
+
 def _robustness_section(seed_avg: pl.DataFrame, grid_r2: dict[int, float]) -> dict:
     """`D62b`, `D62c`, `D62d` --- the three arms, reported apart from RQ1-RQ3.
 
@@ -425,6 +614,13 @@ def _robustness_section(seed_avg: pl.DataFrame, grid_r2: dict[int, float]) -> di
                 "se_across_origins": se_across(r2),
                 "n_origins": int(len(r2)),
                 "grid_r2_oos_same_rung": grid_r2.get(int(k)),
+                # `D82`. The arm against its own ladder rung, paired on the
+                # origins both were evaluated on. The marginal SE beside it
+                # answers a different question and is roughly twice as wide.
+                "paired_vs_grid": paired_contrast(
+                    seed_avg, (tag, None if tag in _SINGLE_RUNG else int(k)),
+                    ("itr", int(k)),
+                ),
             })
         cells.sort(key=lambda row: row["k"])
         out[arm] = {"status": "run", "model_tag": tag, "cells": cells}
@@ -523,7 +719,17 @@ def build_report(
     log(f"report: efficiency {efficiency.height} spans, rolling {roll_pr.height} windows")
 
     # Table 6.
-    panel = build_panel(list(COMPARISON_KEYS), roots)
+    # An arm that has not run anywhere is NAMED, not a crash (`D64`, `D70` --- the
+    # `D64` baselines and the exploratory arms land after the 684-run grid, and a
+    # report that cannot be generated until a GPU session finishes is a report
+    # nobody regenerates). Partial coverage still raises inside `build_panel`:
+    # that one is the `D45` defect and hiding it would be the wrong lesson.
+    comparison_keys, absent_keys = available_keys(list(COMPARISON_KEYS), roots)
+    for key in absent_keys:
+        log(f"report: {label(key)} is in COMPARISON_KEYS but has no run --- "
+            f"omitted from Table 4, Table 6 and the MCS, and named in "
+            f"paper_numbers.json")
+    panel = build_panel(comparison_keys, roots)
     pairs = pair_matrix(panel, B=bootstrap_b, seed=seed)
     mcs = mcs_table(panel, B=bootstrap_b, seed=seed)
     log(f"report: {pairs.height} pairs, MCS over {mcs.height} models")
@@ -550,6 +756,16 @@ def build_report(
     amp = amplification(seed_avg)
     attn_amp = attention_amplification(seed_avg)
     beta_full, beta_covered = beta1_with_coverage(amp, seed=seed)
+    # `D80`. Root §9.2 asks for a coverage covariate OR a restriction to
+    # well-covered blocks. The restriction unbalances the panel and comes back
+    # None, which is honest but leaves the requirement unmet; the covariate always
+    # runs, because nothing is dropped.
+    beta_covariate = panel_beta1_covariate(
+        amp.with_columns(
+            (pl.col("n_large") / float(BLOCK_HOURS)).alias("coverage")
+        ),
+        seed=seed,
+    )
 
     grid_r2 = {int(row["k"]): float(row["R2_oos"]) for row in grid["rq1"]["rung_effects"]}
 
@@ -580,7 +796,7 @@ def build_report(
     # Table 4's per-model summary, on the scale-free metrics only (`D60i`).
     main = seed_avg.filter(pl.col("pred_len") == PRED_LEN)
     per_model = []
-    for tag, k in COMPARISON_KEYS:
+    for tag, k in comparison_keys:
         if tag == "naive":
             continue
         cell = main.filter((pl.col("model") == tag) & (pl.col("k") == k))
@@ -658,7 +874,8 @@ def build_report(
         },
         "efficiency": efficiency.to_dicts(),
         "comparisons": {
-            "models": [label(key) for key in COMPARISON_KEYS],
+            "models": [label(key) for key in comparison_keys],
+            "absent": [label(key) for key in absent_keys],
             "B": bootstrap_b,
             "p_floor": 1.0 / (1 + bootstrap_b),
             "pairs": pairs.to_dicts(),
@@ -725,6 +942,20 @@ def build_report(
                 "sample composition trends and beta1 would absorb it."
             ),
             "min_coverage": 0.9,
+            "covariate": {
+                "beta1": beta_covariate.beta1,
+                "t": beta_covariate.t_statistic,
+                "cluster_se": beta_covariate.cluster_se,
+                "headline_p": beta_covariate.headline_p,
+                "G": beta_covariate.n_clusters,
+                "N": beta_covariate.n_observations,
+                "note": (
+                    "A(i,b) = alpha_i + beta1 b + beta2 coverage(i,b) + eps, "
+                    "clustered on origin, WCR one-sided (`D80`). This is root "
+                    "§9.2's covariate route, and it is the one that runs: the "
+                    "restriction below unbalances the panel and returns None."
+                ),
+            },
             "full": {
                 "beta1": beta_full.beta1,
                 "t": beta_full.t_statistic,
@@ -749,6 +980,7 @@ def build_report(
             ),
         },
         "robustness": _robustness_section(seed_avg, grid_r2),
+        "contrasts": _contrasts_section(seed_avg),
     }
 
     return ReportInputs(
@@ -898,9 +1130,13 @@ def _table3(numbers: dict) -> str:
         "the rungs comparable. Ridge's $\\alpha$ is the only hyperparameter "
         "selected anywhere in this study, on the validation sub-block. "
         "Parameter count is identical across rungs \\emph{at a fixed horizon} "
-        "(`D60h'). \\textbf{Epochs at cap} counts runs reaching the 30-epoch "
-        "budget: no iTransformer run ever does, so the binding constraint is the "
-        "learning-rate schedule, not the budget. For DLinear and PatchTST, $K=8$ "
+        "(`D60h'). \\textbf{Epochs at cap} counts runs reaching that arm's own "
+        "epoch budget, 60 for the long-schedule arm and 30 elsewhere (`D78'). The "
+        "iTransformer arms early-stop far below it, so their binding constraint is "
+        "the learning-rate schedule rather than the budget. DLinear and PatchTST "
+        "do not: where an arm sits at its cap its loss is a truncated-training "
+        "figure and has to be read as one before it is called the worst model. "
+        "For DLinear and PatchTST, $K=8$ "
         "means \\emph{trained on eight channels} through their published "
         "all-channel objective, not \\emph{predicts the target from eight "
         "channels}, and their validation losses are all-channel figures not "
@@ -998,6 +1234,8 @@ def _table6(numbers: dict) -> str:
             fmt(row["t_cluster"], 3),
             fmt(row["p_raw"], 4),
             fmt(row["p_romano_wolf"], 4),
+            row.get("family", _MISSING),
+            fmt(row.get("p_romano_wolf_family"), 4),
             fmt(row["T_min"], 0),
         ])
     note = (
@@ -1015,14 +1253,27 @@ def _table6(numbers: dict) -> str:
         f"${fmt(comparisons['p_floor'], 6)}$ (`D53d'). White's Reality Check and "
         "Hansen's SPA are \\emph{not} used here: they test a one-against-many null "
         "and say nothing about an all-pairs matrix (`D35'). $T$ is the smallest "
-        "per-cell sample; $h = 24$."
+        "per-cell sample; $h = 24$. "
+        "The post-hoc family column is $p_{RW}^{fam}$ and it is NOT the headline "
+        "(`D79'). It is the same stepdown run inside one claim family --- pairs "
+        "against Naive-RW, rungs of one model, or one $K$ across architectures "
+        "--- rather than across the Cartesian product. It exists because widening "
+        "the model list from twelve to fifteen took the matrix from 66 pairs to "
+        f"{len(comparisons['pairs'])} and the adjusted rejections from 31 to "
+        "zero while no effect moved: the two naive comparators carry the largest "
+        "$|t|$ in the table, and the shared bootstrap draw puts them into the "
+        "max-$|t|$ null every other pair is judged against. The families were "
+        "declared AFTER that was seen, so $p_{RW}$ over all pairs remains the "
+        "pre-registered and reported result and this column is disclosed beside "
+        "it rather than in place of it."
     )
     return tabular(
         "Pairwise forecast comparison with family-wise error control.",
         "tab:dm",
-        ["Left", "Right", "Stat.", "$t$", "$p_{raw}$", "$p_{RW}$", "$T_{min}$"],
+        ["Left", "Right", "Stat.", "$t$", "$p_{raw}$", "$p_{RW}$",
+         "Family", "$p_{RW}^{fam}$", "$T_{min}$"],
         rows,
-        "llcrrrr",
+        "llcrrrlrr",
         note,
     )
 
@@ -1105,6 +1356,110 @@ def _table8(numbers: dict) -> str:
     )
 
 
+def _table9(numbers: dict) -> str:
+    """The exploratory arms, in their own table --- root §13.2's commitment.
+
+    Their own table and never a column of Table 4, because none of them is a
+    ladder rung: root §10.2 admits them as exploratory and requires each to get
+    its own row, and folding one into the ladder would make the rungs differ in
+    something other than K.
+
+    Every arm that ran appears here **whatever it shows**. An arm reported only
+    when it agrees with the headline is not a robustness arm, and root §13.2
+    carries that as a disclosure a reader is entitled to before the numbers.
+    An arm that has not run says so by name rather than being omitted.
+    """
+    # The matched-K pair is the one contrast here that changes an RQ's evidence
+    # rather than its robustness, and it is a difference BETWEEN two arms, so no
+    # arm-versus-grid column can carry it (`D82`).
+    matched = next(
+        (row for row in numbers.get("contrasts", {}).get("rows", [])
+         if row.get("left") == "itrr" and row.get("right") == "itro"),
+        None,
+    )
+    if matched and matched.get("mean_diff") is not None:
+        matched_note = (
+            " Measured, redundant minus orthogonal is "
+            f"{fmt(matched['mean_diff'], 6)} of RelMSE "
+            f"($t = {fmt(matched['t'], 2)}$, $p = {fmt(matched['p_two_sided'], 4)}$, "
+            f"orthogonal ahead at {matched['n_origins'] - matched['left_better']} "
+            f"of {matched['n_origins']} origins), against "
+            "the whole $K=1$-to-$K=8$ ladder gain."
+        )
+    else:
+        matched_note = ""
+
+    rows = []
+    for arm, state in numbers["robustness"].items():
+        tag = state["model_tag"]
+        name = MODEL_NAMES.get(tag, tag)
+        if state["status"] != "run":
+            rows.append([tex_escape(arm), tex_escape(name), _MISSING,
+                         "not run", _MISSING, _MISSING, _MISSING,
+                         _MISSING, _MISSING])
+            continue
+        for cell in state["cells"]:
+            grid = cell.get("grid_r2_oos_same_rung")
+            paired = cell.get("paired_vs_grid") or {}
+            delta = (
+                fmt(cell["r2_oos"] - grid, 4) if grid is not None else _MISSING
+            )
+            rows.append([
+                tex_escape(arm),
+                tex_escape(name),
+                fmt(cell["k"], 0),
+                fmt(cell["r2_oos"], 4) + " $\\pm$ "
+                + fmt(cell["se_across_origins"], 4),
+                fmt(grid, 4),
+                delta,
+                fmt(paired.get("mean_diff"), 5),
+                fmt(paired.get("p_two_sided"), 4),
+                fmt(cell["n_origins"], 0),
+            ])
+    note = (
+        "\\textbf{Exploratory, declared before running, and reported whatever "
+        "they show} (root §13.2). Not one of them is a rung of the $K$ ladder: "
+        "adding one "
+        "would make the rungs differ in something other than $K$, which is the "
+        "one thing the ladder holds fixed. \\emph{longsched} answers "
+        "``you under-trained'' --- and the epoch cap is not what binds an "
+        "iTransformer run, which is why this arm widens the learning-rate "
+        "schedule rather than the budget (`D62c'); Table 3 carries the measured "
+        "at-cap count per arm rather than a claim about it (`D78'). \\emph{capacity} answers ``you under-capacitised'' at $d_{ff} = "
+        "512$ (`D62b'). \\emph{attention} reproduces the main grid bit-for-bit "
+        "and is what licenses reading Figure 5's maps as maps of the model whose "
+        "numbers are reported (`D62d'). \\emph{orthogonal} and "
+        "\\emph{redundant} are the matched-$K$ pair (`D70'): same $K = 8$, same "
+        "target, same seeds, with the participation ratio the only thing that "
+        "moves --- 5.011 against 3.609, either side of the ladder's own K=8 rung "
+        "at 4.668. They test RQ1 \\textbf{by contrast} where the ladder can only "
+        "infer it through a panel at $corr(K, K_{eff}) = 0.828$."
+        + matched_note + " "
+        "\\emph{look048} and \\emph{look192} halve and double $L = 96$, the one "
+        "first-order hyperparameter root §6.2 never varied. \\emph{tuned} takes "
+        "the configuration origin 1's \\emph{validation} preferred, selected "
+        "where `D27' put the Stage 5 gate and never on a test block --- "
+        "\\textbf{including its learning rate}, which the arm selected and then "
+        "failed to apply until `D76'. $\\Delta$ is against the main grid at the "
+        "same rung and $\\pm$ is the standard error \\emph{across} origins "
+        "(`D30'); \\textbf{Paired} $\\Delta$RelMSE is the same comparison made "
+        "\\emph{pairwise} on the fifteen origins both arms were scored on, with "
+        "its two-sided $p$ from $t(G-1)$ (`D82'). The paired error is about half "
+        "the marginal one, so overlapping $\\pm$ columns say nothing about "
+        "whether two arms differ and the paired column is what the comparison "
+        "rests on. It is post-hoc and uncorrected for multiplicity."
+    )
+    return tabular(
+        "Exploratory arms, reported apart from RQ1--RQ3.",
+        "tab:robustness",
+        ["Arm", "Model", "$K$", "$R^2_{oos}$", "Grid same rung", "$\\Delta$",
+         "Paired $\\Delta$RelMSE", "$p$", "Origins"],
+        rows,
+        "llrrrrrrr",
+        note,
+    )
+
+
 def render_tables(numbers: dict, out_dir: Path) -> list[Path]:
     """Write every table as a standalone ``.tex`` float.
 
@@ -1122,6 +1477,7 @@ def render_tables(numbers: dict, out_dir: Path) -> list[Path]:
         "table6_dm.tex": _table6,
         "table7_horizons.tex": _table7,
         "table8_economics.tex": _table8,
+        "table9_robustness.tex": _table9,
     }
     written = []
     for name, builder in builders.items():
@@ -1161,6 +1517,246 @@ def _save(fig, out_dir: Path, stem: str) -> list[Path]:
 
 def _as_datetime(ms: np.ndarray) -> np.ndarray:
     return np.asarray(ms, dtype="int64").astype("datetime64[ms]")
+
+
+def _figure1(inputs: ReportInputs, out_dir: Path) -> list[Path]:
+    """The walk-forward scheme: fifteen origins above, one origin resolved below.
+
+    Root §13.4 listed Figures 1 and 2 as *schematic, drawn by hand*, which meant
+    in practice that they did not exist. They are drawn here instead, from
+    :data:`config.ORIGINS` and the model's own config, for two reasons. A
+    hand-drawn figure cannot be regenerated, and root §12 requires that of every
+    number in the manuscript. And a hand-drawn one can be **silently wrong**:
+    a rolling window that is not expanding, a 21/3 split, a purge at **both**
+    boundaries and 5-month spacing are four details easy to draw plausibly and
+    incorrectly, and the third is exactly `D24`.
+
+    **Two panels, because one cannot carry both facts.** The upper panel is the
+    scheme: fifteen origins over eight calendar years, where what is legible is
+    the staircase --- a *rolling* 24-month window rather than an expanding one,
+    5-month spacing coprime to 12 (`D26`), and `D28`'s training overlap, which
+    is a required disclosure the shape states without a sentence.
+
+    The lower panel exists because at that scale **the purge is invisible**.
+    ``H = 24`` hours is 0.3% of one 30-day block and 0.03% of the training
+    window, so on an eight-year axis it is thinner than the line drawn to
+    represent it --- and a reader takes its absence for its absence. Resolving
+    one origin in days makes the structure the design turns on legible: train,
+    purge, validation, purge, then six test blocks. **The purge bands are drawn
+    wider than 24 hours and the title says so**, which is the honest way to show
+    a quantity too small to see; drawing it to scale and letting a reader
+    conclude there is no purge would be the dishonest one.
+
+    **Out-of-sample is shaded as its own span, and it is the six test blocks.**
+    There is no fourth split: a forecaster standing at the origin has seen
+    everything before it and nothing after, so every bar to the right of ``o``
+    is out of sample by construction. Naming the span and shading it is what
+    stops a reader looking for a separate region that does not exist --- and it
+    is where the purge earns its place, because the purge is precisely what
+    makes the claim true at the boundary rather than approximately true.
+
+    The lower panel also carries the **falsification arm** (root §8.1), a model
+    trained fresh at ``o + 90 days`` and scored on blocks 4-6 --- the only design
+    in the study that identifies decay directly, and a per-origin element the
+    scheme is incomplete without.
+    """
+    plt = _pyplot()
+    fig, (top, low) = plt.subplots(
+        2, 1, figsize=(7.6, 7.8), gridspec_kw={"height_ratios": [2.05, 1.0]}
+    )
+
+    def _year(moment) -> float:
+        return moment.year + (moment.timetuple().tm_yday - 1) / 365.25
+
+    for row, origin in enumerate(ORIGINS):
+        y = len(ORIGINS) - row
+        train = (_year(origin.train_start), _year(origin.train_sub_end))
+        val = (_year(origin.val_start), _year(origin.val_end))
+        top.barh(y, train[1] - train[0], left=train[0], height=0.62,
+                 color=SPLIT_COLOUR["train"], zorder=2)
+        top.barh(y, val[1] - val[0], left=val[0], height=0.62,
+                 color=SPLIT_COLOUR["val"], zorder=2)
+        for b, start, end in origin.blocks():
+            top.barh(y, _year(end) - _year(start), left=_year(start), height=0.62,
+                     color=SPLIT_COLOUR["test"] if b % 2 else SPLIT_COLOUR["test_alt"],
+                     edgecolor="#ffffff", lw=0.4, zorder=2)
+        for boundary in (val[0], val[1]):
+            top.plot([boundary], [y + 0.44], marker="v", ms=3.2,
+                     color=SPLIT_COLOUR["purge"], zorder=3)
+
+    top.set_yticks(range(1, len(ORIGINS) + 1))
+    top.set_yticklabels([o.label for o in reversed(ORIGINS)], fontsize=7.2)
+    top.set_xlabel("calendar time (UTC)", fontsize=8.5)
+    top.set_ylabel("origin", fontsize=8.5)
+    top.set_title(
+        "Fifteen origins: rolling 24-month window, 5-month spacing. Consecutive "
+        "origins share 79.2% of their training data (D28)",
+        fontsize=9.0,
+    )
+    top.grid(axis="x", alpha=0.25, lw=0.5)
+    top.set_axisbelow(True)
+
+    # -- one origin, resolved in days -----------------------------------------
+    origin = ORIGINS[0]
+    fresh = FalsificationOrigin(origin)
+
+    def _day(moment) -> float:
+        return (moment - origin.train_start).total_seconds() / 86400.0
+
+    # H = 24 hours. Drawn to scale it is a fraction of a point wide here, so it
+    # is drawn WIDE and the title says it is exaggerated (see the docstring).
+    purge_drawn = 22.0
+    oos_start, oos_end = _day(origin.test_start), _day(origin.test_end)
+    low.axvspan(oos_start, oos_end, color=SPLIT_COLOUR["oos"], alpha=0.30,
+                zorder=0, lw=0)
+    low.axvline(oos_start, color="#000000", lw=1.1, ls="--", zorder=4)
+    low.annotate(
+        "", xy=(oos_end, 2.72), xytext=(oos_start, 2.72),
+        arrowprops={"arrowstyle": "<->", "color": "#111111", "lw": 0.9},
+    )
+    low.text((oos_start + oos_end) / 2, 2.78,
+             "OUT OF SAMPLE — 180 days, the six test blocks",
+             ha="center", va="bottom", fontsize=7.4, fontweight="bold")
+    low.text(oos_start - 10, 1.45, "origin $o$", ha="right", va="center",
+             fontsize=7.4, style="italic")
+
+    low.barh(2.0, _day(origin.train_sub_end) - _day(origin.train_start),
+             left=_day(origin.train_start), height=0.52,
+             color=SPLIT_COLOUR["train"], zorder=2)
+    low.barh(2.0, _day(origin.val_end) - _day(origin.val_start),
+             left=_day(origin.val_start), height=0.52,
+             color=SPLIT_COLOUR["val"], zorder=2)
+    for b, start, end in origin.blocks():
+        low.barh(2.0, _day(end) - _day(start), left=_day(start), height=0.52,
+                 color=SPLIT_COLOUR["test"] if b % 2 else SPLIT_COLOUR["test_alt"],
+                 edgecolor="#ffffff", lw=0.5, zorder=2)
+        low.text((_day(start) + _day(end)) / 2, 2.0, str(b), ha="center",
+                 va="center", fontsize=6.5, color="#ffffff", zorder=3)
+
+    # Drawn LAST and above both, because `val_start` IS `train_sub_end` and
+    # `val_end` IS `test_start`: a purge drawn in sequence is painted over by the
+    # split beginning at the same instant, which is exactly how it vanished.
+    for boundary in (origin.train_sub_end, origin.val_end):
+        low.barh(2.0, purge_drawn, left=_day(boundary) - purge_drawn / 2,
+                 height=0.62, color=SPLIT_COLOUR["purge"], zorder=5,
+                 hatch="////", edgecolor="#5a2d00", lw=0.6)
+
+    # Root §8.1's falsification arm: fresh at o + 90 d, scored on blocks 4-6.
+    low.barh(1.15, _day(fresh.train_sub_end) - _day(fresh.train_start),
+             left=_day(fresh.train_start), height=0.34,
+             color=SPLIT_COLOUR["train"], alpha=0.45, zorder=2)
+    low.barh(1.15, _day(fresh.val_end) - _day(fresh.val_start),
+             left=_day(fresh.val_start), height=0.34,
+             color=SPLIT_COLOUR["val"], alpha=0.45, zorder=2)
+    for b, start, end in origin.blocks():
+        if b < 4:
+            continue
+        low.barh(1.15, _day(end) - _day(start), left=_day(start), height=0.34,
+                 color=SPLIT_COLOUR["test"] if b % 2 else SPLIT_COLOUR["test_alt"],
+                 alpha=0.55, edgecolor="#ffffff", lw=0.5, zorder=2)
+
+    low.set_yticks([2.0, 1.15])
+    low.set_yticklabels(["aged model\ntrained at $o$",
+                         "fresh model\n$o$ + 90 d, blocks 4-6"], fontsize=7.2)
+    low.set_ylim(0.80, 3.05)
+    low.set_xlabel(f"days since train_start, origin {origin.label}", fontsize=8.5)
+    low.set_title(
+        "One origin resolved: train, purge, validation, purge, then the "
+        f"out-of-sample span. Purge drawn {purge_drawn:.0f}× wide — "
+        "it is $H$ = 24 hours",
+        fontsize=9.0,
+    )
+    low.grid(axis="x", alpha=0.25, lw=0.5)
+    low.set_axisbelow(True)
+
+    handles = [
+        plt.Line2D([], [], lw=6, color=SPLIT_COLOUR["train"],
+                   label="train, 21 months (scaler fit here and nowhere else)"),
+        plt.Line2D([], [], lw=6, color=SPLIT_COLOUR["val"],
+                   label="validation, final 3 months"),
+        plt.Line2D([], [], lw=6, color=SPLIT_COLOUR["purge"],
+                   label="$H$-step purge, both boundaries (D24)"),
+        plt.Line2D([], [], lw=6, color=SPLIT_COLOUR["test"],
+                   label="test blocks 1–6, 30 days each"),
+        plt.Line2D([], [], lw=6, color=SPLIT_COLOUR["oos"], alpha=0.30,
+                   label="out-of-sample span (= the six test blocks)"),
+    ]
+    low.legend(handles=handles, fontsize=7, frameon=False, ncol=2,
+               loc="lower center", bbox_to_anchor=(0.5, -0.70))
+    fig.tight_layout()
+    paths = _save(fig, out_dir, "figure1_walkforward")
+    plt.close(fig)
+    return paths
+
+
+def _figure2(inputs: ReportInputs, out_dir: Path) -> list[Path]:
+    """Architecture and inverted tokenization, with the tensor shape at each step.
+
+    The shapes are read from the live :class:`ITransformerConfig`, not typed in,
+    so the figure cannot drift from the model the grid ran --- which is the whole
+    reason it is generated rather than drawn (see :func:`_figure1`).
+
+    Two things the caption must carry, and the figure therefore shows. The token
+    is a **variate over its whole lookback**, so attention runs over ``N <= 12``
+    tokens and not over ``L = 96`` timesteps --- which is why ``d_model`` is 128
+    rather than the reference 512 (`D25`), and why **no causal mask appears**:
+    the axis attention runs over is contemporaneous, and causality is enforced
+    upstream in the features and the windowing. And the loss is taken on the
+    **target channel only** (`D39`); under the reference implementation's
+    all-channel default K=12 becomes a 12-task problem and K=1 a 1-task one, so
+    auxiliary supervision would vary with the study's own independent variable.
+    """
+    plt = _pyplot()
+    config = ITransformerConfig()
+    n = 8
+    steps = [
+        ("input window", f"(B, L={config.seq_len}, N={n})", "#e9ecef"),
+        ("transpose — the inversion", f"(B, N={n}, L={config.seq_len})", "#ffd6a5"),
+        (f"InvertedEmbedding: Linear({config.seq_len} -> {config.d_model})",
+         f"(B, N={n}, d={config.d_model})", "#5b8db8"),
+        (f"Encoder x {config.e_layers}: MHA over the {n} VARIATE tokens, "
+         f"{config.n_heads} heads\nLayerNorm, FFN({config.d_model} -> "
+         f"{config.d_ff} -> {config.d_model}), LayerNorm",
+         f"(B, N={n}, d={config.d_model})", "#1f4e79"),
+        (f"Projection: Linear({config.d_model} -> H={config.pred_len})",
+         f"(B, N={n}, H={config.pred_len})", "#5b8db8"),
+        ("transpose, select the target channel",
+         f"(B, H={config.pred_len}, 1)", "#2e7d32"),
+    ]
+
+    fig, ax = plt.subplots(figsize=(7.0, 5.6))
+    height, gap = 0.62, 0.34
+    for row, (text, shape, colour) in enumerate(steps):
+        y = (len(steps) - row) * (height + gap)
+        ax.add_patch(plt.Rectangle((0.04, y), 0.64, height, facecolor=colour,
+                                   edgecolor="#333333", lw=0.7))
+        ax.text(0.36, y + height / 2, text, ha="center", va="center", fontsize=7.4,
+                color="#ffffff" if colour in ("#1f4e79", "#2e7d32") else "#111111")
+        ax.text(0.71, y + height / 2, shape, ha="left", va="center", fontsize=7.4,
+                family="monospace")
+        if row + 1 < len(steps):
+            ax.annotate("", xy=(0.36, y - gap + 0.02), xytext=(0.36, y),
+                        arrowprops={"arrowstyle": "-|>", "color": "#333333",
+                                    "lw": 0.9})
+
+    ax.text(
+        0.04, 0.56,
+        "Attention runs over N variates, never over L timesteps, so there is no "
+        "causal mask:\ncausality is enforced upstream, in the features and the "
+        "windowing (root section 6.1).\nLoss is MSE on the TARGET CHANNEL ONLY "
+        "at every rung, so auxiliary supervision\ndoes not vary with K, which is "
+        "the study's own independent variable (D39).",
+        fontsize=7.0, va="top", color="#333333",
+    )
+    ax.set_xlim(0, 1.02)
+    ax.set_ylim(0.0, (len(steps) + 1) * (height + gap))
+    ax.axis("off")
+    ax.set_title("Inverted tokenization: one token per variate, not per timestep",
+                 fontsize=9.5)
+    fig.tight_layout()
+    paths = _save(fig, out_dir, "figure2_architecture")
+    plt.close(fig)
+    return paths
 
 
 def _figure2b(inputs: ReportInputs, out_dir: Path) -> list[Path]:
@@ -1232,11 +1828,38 @@ def _figure3(inputs: ReportInputs, out_dir: Path) -> list[Path]:
 
 
 def _figure4(inputs: ReportInputs, out_dir: Path) -> list[Path]:
-    """RelMSE per test block, every model, averaged over origins."""
+    """RelMSE per test block, every model, averaged over origins.
+
+    **Colour is the model family and dash is the rung**, not matplotlib's default
+    cycle. The cycle holds ten colours and this matrix carries fourteen series
+    once the `D64` baselines land, so the default silently paints ``itr-K1`` and
+    ``ptst-K8`` the same blue -- a legend that cannot be read against the plot.
+    Encoding family in hue also puts the figure's actual finding on the page:
+    every ridge line hugs 1.000 and every deep line sits well above it, which is
+    `D60c` seen rather than tabulated.
+
+    **Two panels, and the split is not decoration** (`D84`). The two naive
+    comparators land at RelMSE close to 2.0 --- forecasting the previous return
+    when returns are serially uncorrelated costs exactly ``2 sigma^2`` --- while
+    every model the paper argues about lives inside ``[1.000, 1.027]``. On one
+    pair of axes that is a 40:1 range and the twelve informative series collapse
+    into a single indistinguishable band on the floor, so the figure that exists
+    to show `D60c`'s ordering showed nothing. Adding those two models to
+    :data:`COMPARISON_KEYS` under `D74` is what did it, quietly, the same way the
+    same two models took the Romano-Wolf matrix to zero rejections (`D79`).
+
+    The upper panel keeps them, because dropping a model to make a figure legible
+    is the wrong repair and their distance from 1.0 is itself the white-noise
+    check. The lower panel is the same data on the range the argument happens in.
+    """
     plt = _pyplot()
     main = inputs.seed_avg.filter(pl.col("pred_len") == PRED_LEN)
-    fig, ax = plt.subplots(figsize=(7.0, 4.2))
+    fig, axes = plt.subplots(
+        2, 1, figsize=(7.2, 6.0), sharex=True,
+        gridspec_kw={"height_ratios": [1.0, 2.0]},
+    )
 
+    series = []
     for tag, k in COMPARISON_KEYS:
         if tag == "naive":
             continue
@@ -1246,17 +1869,37 @@ def _figure4(inputs: ReportInputs, out_dir: Path) -> list[Path]:
         by_block = cell.group_by("block").agg(
             pl.col("rel_mse").mean().alias("rel_mse")
         ).sort("block")
-        ax.plot(by_block.get_column("block").to_numpy(),
-                by_block.get_column("rel_mse").to_numpy(),
-                marker="o", ms=3.5, lw=1.2, label=label((tag, k)))
+        series.append((
+            tag, k,
+            by_block.get_column("block").to_numpy(),
+            by_block.get_column("rel_mse").to_numpy(),
+        ))
 
-    ax.axhline(1.0, lw=1.2, color="#000000", ls="--", label="Naive-RW")
-    ax.set_xlabel("test block $b$ (30 days each)")
-    ax.set_ylabel("RelMSE (lower is better)")
-    ax.set_title("RelMSE per block; everything above the dashed line loses to Naive-RW",
-                 fontsize=10)
-    ax.legend(fontsize=7, ncol=2, frameon=False)
-    ax.grid(alpha=0.25, lw=0.5)
+    for axis in axes:
+        for tag, k, blocks, values in series:
+            axis.plot(blocks, values,
+                      marker=FAMILY_MARKER.get(tag, "o"), ms=3.5, lw=1.2,
+                      color=FAMILY_COLOUR.get(tag, "#666666"),
+                      ls=RUNG_STYLE.get(k, "-"),
+                      label=label((tag, k)))
+        axis.axhline(1.0, lw=1.2, color="#000000", ls="--", label="Naive-RW")
+        axis.grid(alpha=0.25, lw=0.5)
+
+    # The zoom bound is read off the data, never fixed: a hardcoded 1.03 would
+    # silently crop an arm a later manifest adds.
+    zoom = [v for tag, k, _, values in series if tag not in NAIVE_COMPARATORS
+            for v in values]
+    margin = 0.1 * (max(zoom) - 1.0)
+    axes[1].set_ylim(min(min(zoom), 1.0) - margin, max(zoom) + margin)
+    axes[0].set_title(
+        "RelMSE per block; everything above the dashed line loses to Naive-RW",
+        fontsize=10,
+    )
+    axes[0].set_ylabel("full range")
+    axes[1].set_ylabel("RelMSE (lower is better), zoomed")
+    axes[1].set_xlabel("test block $b$ (30 days each)")
+    axes[0].legend(fontsize=6.5, ncol=2, frameon=False, loc="center left",
+                   bbox_to_anchor=(1.01, 0.0))
     fig.tight_layout()
     paths = _save(fig, out_dir, "figure4_relmse")
     plt.close(fig)
@@ -1269,32 +1912,82 @@ def _figure5(inputs: ReportInputs, out_dir: Path) -> list[Path]:
     Returns an empty list when the `D62d` arm has not run: an empty axes labelled
     as a figure is worse than a named absence, because only one of the two tells
     a reader that nothing was measured.
+
+    **The scale is centred on uniform, and that is not a cosmetic choice.** Over
+    N variates a row of softmax weights sums to one, so ``1/N`` is what "attends
+    to nothing in particular" looks like; at N=8 that is 0.125 and every measured
+    weight lands within about 0.01 of it. Rendered on a sequential map anchored
+    at zero, the whole panel comes out one flat colour and a reader takes
+    "attention is uniform" from the colour bar rather than from the data ---
+    asserting the `D50` null by choice of scale. Centring a diverging map on
+    ``1/N`` and giving every panel the **same** symmetric limits shows the
+    deviation, which is the quantity Figure 5 exists to display, and keeps the
+    calm and stress panels comparable to each other rather than each to itself.
+
+    Axes carry **variate names**, not indices. "Which variate does the model
+    lean on under stress" is the question the figure answers, and it cannot be
+    answered from a tick labelled ``6``.
     """
     if inputs.attention is None:
         return []
     plt = _pyplot()
     maps = inputs.attention
     layers = sorted(set(maps.get_column("layer").to_list()))
-    fig, axes = plt.subplots(
-        len(layers), 2, figsize=(6.4, 3.0 * len(layers)), squeeze=False
-    )
-    for row, layer in enumerate(layers):
-        for col, tercile in enumerate(TERCILE_SHOWN):
+
+    panels: dict[tuple[int, str], np.ndarray] = {}
+    for layer in layers:
+        for tercile in TERCILE_SHOWN:
             part = maps.filter(
                 (pl.col("layer") == layer) & (pl.col("tercile") == tercile)
             ).group_by(["i", "j"]).agg(pl.col("weight").mean()).sort(["i", "j"])
             size = int(part.get_column("i").max()) + 1
-            grid = part.get_column("weight").to_numpy().reshape(size, size)
-            image = axes[row][col].imshow(grid, cmap="magma", vmin=0.0)
-            axes[row][col].set_title(f"layer {layer}, {tercile}", fontsize=9)
-            axes[row][col].set_xlabel("attended variate")
-            axes[row][col].set_ylabel("query variate")
-            fig.colorbar(image, ax=axes[row][col], fraction=0.046)
+            panels[(layer, tercile)] = (
+                part.get_column("weight").to_numpy().reshape(size, size)
+            )
+
+    size = next(iter(panels.values())).shape[0]
+    uniform = 1.0 / size
+    # One symmetric limit across every panel, so a colour means the same thing in
+    # all four. Taken from the data rather than fixed, because the deviation's
+    # magnitude is itself a finding and clipping it would hide it.
+    spread = max(float(np.abs(grid - uniform).max()) for grid in panels.values())
+    names = ladder_columns(size) if size in K_LADDER else [
+        str(i) for i in range(size)
+    ]
+
+    fig, axes = plt.subplots(
+        len(layers), 2, figsize=(7.6, 3.6 * len(layers)), squeeze=False
+    )
+    image = None
+    for row, layer in enumerate(layers):
+        for col, tercile in enumerate(TERCILE_SHOWN):
+            axis = axes[row][col]
+            image = axis.imshow(
+                panels[(layer, tercile)], cmap=ATTENTION_CMAP,
+                vmin=uniform - spread, vmax=uniform + spread,
+            )
+            axis.set_title(f"layer {layer}, {tercile}", fontsize=9)
+            axis.set_xticks(range(size))
+            axis.set_yticks(range(size))
+            # Only the bottom row carries x labels: rotated variate names under an
+            # upper panel overprint the title of the panel beneath it.
+            bottom = row == len(layers) - 1
+            axis.set_xticklabels(
+                names if bottom else [""] * size, rotation=90, fontsize=6.5
+            )
+            axis.set_yticklabels(names if col == 0 else [""] * size, fontsize=6.5)
+            if col == 0:
+                axis.set_ylabel("query variate", fontsize=8)
+            if bottom:
+                axis.set_xlabel("attended variate", fontsize=8)
+
+    bar = fig.colorbar(image, ax=axes, fraction=0.030, pad=0.02)
+    bar.set_label(f"attention weight (uniform = {uniform:.3f})", fontsize=8)
+    bar.ax.axhline(uniform, color="#000000", lw=1.0)
     fig.suptitle(
         "Variate attention, calm versus stress terciles of realised volatility",
         fontsize=10,
     )
-    fig.tight_layout()
     paths = _save(fig, out_dir, "figure5_attention")
     plt.close(fig)
     return paths
@@ -1329,11 +2022,53 @@ def _figure6(inputs: ReportInputs, out_dir: Path) -> list[Path]:
 
 
 def _figure7(inputs: ReportInputs, out_dir: Path) -> list[Path]:
-    """Equity curves at all three pre-registered slippage levels."""
+    """Equity curves before costs and at all three pre-registered slippage levels.
+
+    **The series is a wealth multiple, not a cumulative log return.**
+    ``economics.equity_curves`` emits ``exp(cumsum(net))``, so it starts at 1.0
+    and break-even is the line at 1.0 --- the axis label said log return and the
+    reference line sat at 0.0, which is a mislabelled unit in the one figure the
+    economic claim rests on. A reader who took the label at face value would read
+    a 20% gain as a 1.2 log return, an order of magnitude out.
+
+    **Buy-and-hold is drawn, because it is the comparator the claim is stated
+    against.** Root §13.2 requires the economic result be reported beside it ---
+    +20.6% net against +29.0% --- and a figure that omits the number the headline
+    is measured against lets the strategy's own curve read as skill. It comes
+    from the same `economics.buy_and_hold` position the Table 8 ``hold_*``
+    columns use, so figure and table cannot disagree.
+
+    **The leftmost panel is before costs and is labelled so.** Root §13.5's band
+    is 0.02/0.05/0.10% per side; a zero-slippage panel is outside the
+    pre-registration and is shown because §13.4 asks for "before and after
+    costs", which is what makes the size of the cost band legible.
+
+    **Every curve stops at the shortest origin, and that truncation is the
+    figure's correctness** (`D83`). Origins do not carry the same number of
+    tradable days --- a holding period spanning an outage has no defined realised
+    return and is skipped (`D46`), so the count runs from 146 to 180. Averaging
+    each day over whatever origins still have data made the mean jump wherever an
+    origin ran out, and the largest of those jumps rendered as a **near-vertical
+    fall of about seven points at day 146** that a reader takes for a crash. It
+    was not a crash: it was the first origin leaving the average. Worse, the
+    origins that leave earliest are the ones with the most outages and outages
+    cluster on stress, so the untruncated tail was an average over the *easy*
+    origins and drifted optimistic exactly where it looked dramatic --- `D45`'s
+    future-conditioned exclusion, surfacing in the figure the economic claim
+    rests on. Truncating to the common horizon keeps the denominator at fifteen
+    for every plotted day.
+    """
     plt = _pyplot()
     equity = inputs.equity
     slippages = sorted(set(equity.get_column("slippage_per_side").to_list()))
-    fig, axes = plt.subplots(1, len(slippages), figsize=(4.0 * len(slippages), 3.6),
+    # The longest day index every (model, origin) series reaches.
+    common = int(
+        equity.group_by(["model", "origin", "slippage_per_side"])
+        .agg(pl.col("period").max().alias("last"))
+        .get_column("last").min()
+    )
+    equity = equity.filter(pl.col("period") <= common)
+    fig, axes = plt.subplots(1, len(slippages), figsize=(3.6 * len(slippages), 3.8),
                              sharey=True, squeeze=False)
     for col, slippage in enumerate(slippages):
         axis = axes[0][col]
@@ -1342,16 +2077,35 @@ def _figure7(inputs: ReportInputs, out_dir: Path) -> list[Path]:
             by_period = sub.group_by("period").agg(
                 pl.col("equity").mean().alias("equity")
             ).sort("period")
+            tag = str(model).split("-")[0]
+            hold = tag == HOLD_LABEL.split("-")[0]
             axis.plot(by_period.get_column("period").to_numpy(),
                       by_period.get_column("equity").to_numpy(),
-                      lw=1.2, label=str(model))
-        axis.axhline(0.0, lw=0.8, color="#888888")
-        axis.set_title(f"slippage {100 * float(slippage):.2f}% per side", fontsize=9)
-        axis.set_xlabel("trading day since origin")
+                      lw=2.0 if hold else 1.2,
+                      color="#000000" if hold else FAMILY_COLOUR.get(tag, "#666666"),
+                      ls="--" if hold else "-",
+                      label=str(model))
+        # Break-even. The series is exp(cumsum(net)), so 1.0 is flat, not 0.0.
+        axis.axhline(1.0, lw=0.8, color="#888888")
+        priced = (
+            "before costs (not in the §13.5 band)" if float(slippage) == 0.0
+            else f"slippage {100 * float(slippage):.2f}% per side"
+        )
+        axis.set_title(priced, fontsize=8.5)
+        axis.set_xlabel("trading day since origin", fontsize=8.5)
         axis.grid(alpha=0.25, lw=0.5)
-    axes[0][0].set_ylabel("cumulative net log return")
-    axes[0][-1].legend(fontsize=7, frameon=False)
-    fig.suptitle("Equity curves, averaged over the fifteen origins", fontsize=10)
+    axes[0][0].set_ylabel("net equity multiple (1.0 = break-even)")
+    # Framed and opaque: the curves reach the panel corners at every slippage
+    # level, and a frameless legend printed the break-even line straight through
+    # the comparator's own label.
+    axes[0][-1].legend(fontsize=7, frameon=True, framealpha=0.9,
+                       edgecolor="#cccccc", loc="lower left")
+    fig.suptitle(
+        "Equity curves, averaged over the fifteen origins, taker fee 0.04% per side\n"
+        f"truncated at day {common}, the shortest origin, so every plotted day "
+        "averages all fifteen (`D83`)",
+        fontsize=10,
+    )
     fig.tight_layout()
     paths = _save(fig, out_dir, "figure7_equity")
     plt.close(fig)
@@ -1368,6 +2122,8 @@ def render_figures(inputs: ReportInputs, out_dir: Path, log=print) -> list[Path]
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for name, builder in (
+        ("figure1", _figure1),
+        ("figure2", _figure2),
         ("figure2b", _figure2b),
         ("figure3", _figure3),
         ("figure4", _figure4),

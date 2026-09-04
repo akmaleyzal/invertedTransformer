@@ -1,0 +1,76 @@
+% Gate 1 reference list --- SCREENING GRADE.
+% Only entry with verified="fetched" was retrieved and read this session.
+% CLAUDE.md 13.3 forbids any citation entering the manuscript without a
+% verified DOI and the source read. Entries below marked "screened" have NOT
+% cleared that bar and must be verified before they reach paper/.
+
+@article{bitcoin_walkforward_costs_2026,
+  title   = {Machine Learning-Based Bitcoin Trading Under Transaction Costs:
+             Evidence From Walk-Forward Forecasting},
+  year    = {2026},
+  journal = {arXiv preprint},
+  eprint  = {2606.00060},
+  archiveprefix = {arXiv},
+  url     = {https://arxiv.org/abs/2606.00060},
+  note    = {verified=fetched. Hourly BTC/USDT futures, 2017-12 to 2026-01,
+             ~70k obs, Binance REST; 27 walk-forward folds (12m train / 3m val
+             / 3m test, 3m advance); XGBoost, LSTM, iTransformer; ~104
+             features. No R2_oos vs random walk, no decay measurement, no
+             K/K_eff, not pre-registered. CLOSEST PRIOR ART to Candidate A.}
+}
+
+@article{transformer_mts_less_is_more_2024,
+  title   = {Transformer Multivariate Forecasting: Less is More?},
+  year    = {2024},
+  journal = {arXiv preprint},
+  eprint  = {2401.00230},
+  archiveprefix = {arXiv},
+  url     = {https://arxiv.org/abs/2401.00230},
+  note    = {verified=screened. Channel dimensionality reduction inside the
+             attention module --- a method, not a measurement. Nearest
+             neighbour to Candidate B without occupying it.}
+}
+
+@article{mspciformer_2026,
+  title   = {MSPCIFormer: A Multi-Scale Patching Channel-Independent
+             Transformer for Cryptocurrency Price Forecasting},
+  author  = {Zhao and others},
+  journal = {Expert Systems},
+  year    = {2026},
+  doi     = {10.1111/exsy.70343},
+  note    = {verified=screened. Channel-independence pillar, crypto domain.}
+}
+
+@article{cryptomamba_2025,
+  title   = {CryptoMamba: Leveraging State Space Models for Accurate Bitcoin
+             Price Prediction},
+  year    = {2025},
+  journal = {arXiv preprint},
+  eprint  = {2501.01010},
+  archiveprefix = {arXiv},
+  url     = {https://arxiv.org/abs/2501.01010},
+  note    = {verified=screened. Positive-result crypto forecasting; context
+             for Candidate C.}
+}
+
+@article{helformer_2025,
+  title   = {Helformer: An Attention-Based Deep Learning Model for
+             Cryptocurrency Price Forecasting},
+  journal = {Journal of Big Data},
+  year    = {2025},
+  doi     = {10.1186/s40537-025-01135-4},
+  note    = {verified=screened. Reports very high R2 on price levels ---
+             the metric CLAUDE.md 9.1 forbids, and the reason the published
+             literature looks so much better than this study's returns-scale
+             numbers. Useful as a positioning citation.}
+}
+
+@article{crypto_ml_returns_2023,
+  title   = {Forecasting Cryptocurrency Returns with Machine Learning},
+  journal = {Research in International Business and Finance},
+  year    = {2023},
+  doi     = {10.1016/j.ribaf.2023.101905},
+  note    = {verified=screened, DOI UNCONFIRMED --- resolve before citing.
+             Reported out-of-sample R2 around +4.855 percent; direct
+             counterpoint to this study's negative R2_oos.}
+}

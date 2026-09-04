@@ -1444,4 +1444,563 @@ one is what §12's traceability contract is about.
 Tests live in `tests/test_notebook_cells.py` and read the function out of the **committed notebook**
 (`D55`): four rejection cases, the shadowing case, and the depth cases from `D71`.
 
-New contradictions found later take IDs **D73+**.
+---
+
+## D73 — the notebook outline was the package, not the study
+
+**Severity: I. Found 2026-08-28, by reading the notebook beside `notebooks/section-example.ipynb`.**
+
+`D63` cut eighteen module-sized dump cells into 137 readable ones and was right to. What it did not
+change is *what the outline is about*. The top level read: Setup, Definitions, then `config.py`,
+`__init__.py`, `segments.py`, `windows.py`, `budget.py`, `features.py`, `splits.py`, `model.py`,
+`train.py`, `keff.py`, `efficiency.py`, `metrics.py`, `baselines.py`, `comparisons.py`,
+`economics.py`, `attention.py`, `runner.py`, `report.py`, and only then the nine execution stages —
+Data, Variates, K_eff, Invariants, Gate, Grid, Evaluation, Save, Tables.
+
+Two axes at one level. Eighteen entries name a *file*; nine name a *stage of the study*, and every
+one of the nine sits after all eighteen. So the reader meets `budget.py` three hundred cells before
+the cell that calls `budget_table`, and meets `report.py` before the grid that produces anything for
+it to report. What surfaced it was a reader, not a test: the reference notebook supplied alongside
+runs Library, Data Loader, EDA, Feature Engineering, Data Prep, Model, Tuning, Training, Evaluation,
+Strategy, Save — and nothing in it is named after a file.
+
+Two smaller defects rode along. Module banners and section banners were both `<div>` blocks whose
+only structural difference was an `<h2>` versus an `<h3>` inside a differently sized box, so a reader
+scanning for where a module starts had no reliable signal. And the language split down the same seam
+as the outline: stage banners in English, module banners in Indonesian.
+
+**The fix is an outline, and the outline is the pipeline.** `PHASES` is now the generator top-level
+table: twenty-four phases, each with a number, an Indonesian title naming what that step of the study
+does, a blurb, its bullets, its modules and its orchestration steps — in that order, which is also
+the order they execute in. Hierarchy is three levels, uniformly: `##` phase, `###` module or
+orchestration step, `####` section. `_html_phase` is new; `_html_module` dropped from `<h2>` to
+`<h3>` and `_html_section` from `<h3>` to `<h4>`.
+
+**`MODULE_ORDER` was re-cut, and the two constraints agree.** The new order is `config`, `__init__`,
+`segments`, `windows`, `budget`, `features`, `efficiency`, `splits`, `keff`, `model`, `train`,
+`metrics`, `baselines`, `comparisons`, `economics`, `attention`, `runner`, `report`. It is a
+topological order of the intra-package import graph — checked edge by edge, and `metrics` moved ahead
+of `baselines` for exactly that reason, since `baselines` imports `assert_same_windows` from it — and
+it is simultaneously the order a reader expects, because the pipeline *is* the dependency chain:
+nothing can be split before it is featurised, and nothing featurised before the segment law has said
+which bars exist.
+
+**What this cost, and the number that says it cost nothing.** `package_digest()` hashes
+`sorted(PACKAGE.glob("*.py"))`, so module *order* does not enter `code_sha256`. Measured before and
+after the re-cut: `0103dc19fe345020` both times. The 894 completed runs on disk are untouched, and a
+resumed session finds every one of them.
+
+**Three orchestration cells moved, each for a stated reason.** `CODE_PROVENANCE` asserts one sentinel
+per module, so it has to follow the last definition; it is now phase 17, after `report.py`, where it
+also reads as what it is — every definition has run, record the vintage before anything expensive
+starts. Its sentinel tuple held **thirteen names for eighteen modules**, which its own comment
+already claimed otherwise; it is eighteen now. `CODE_INVARIANTS` sits at phase 18, beside the Stage 5
+gate it is a pre-flight for, rather than in the middle of the analysis modules.
+
+**The guard against getting this wrong later.** `build()` compares the concatenation of
+`phase.modules` against `MODULE_ORDER` and refuses to write on a mismatch. Without it, a phase table
+that dropped a module would emit a notebook that runs until the first call into the missing name —
+`D59` exactly, and `D59` cost 365 seconds of a Kaggle session to discover.
+`tests/test_notebook_sync.py` needed no change: it asserts cells-grouped-by-module equals
+`MODULE_ORDER`, which is order-relative, and it executes every definition cell in notebook order
+inside one namespace, which is the test that actually proves the re-cut safe. 35 notebook tests pass.
+
+**The transferable rule: an outline is for the reader, and the reader is not the generator.** The
+file-per-section cut was the shape the *generator* found natural, because its unit of work is a
+module. Root section 1 makes the notebook something an examiner opens beside the manuscript, and an
+examiner unit is a step of the study. When those two disagree the artefact answers to the reader, and
+the file name moves down a level — into the `###` banner and into `cell.metadata`, where a reader
+comparing a cell against `src/` still finds it.
+
+## `D74` — the manifest grew to 1,620 runs and the reporting layer still knew 684 of them
+
+**Severity: F.** Found 2026-08-31, by the only lens that catches it: reading the *reporting* code
+against the *manifest*, rather than either against itself. Every test passed. `--check` was green on
+the tables. The notebook regenerated clean. And of the 1,620 runs the manifest emits, **480 produced
+no table row, no figure line and no Model Confidence Set membership** — silently, because
+`build_panel` is only ever asked for the keys `COMPARISON_KEYS` names, and a tag absent from that
+tuple is not a failure, it is a question nobody asked.
+
+**The arithmetic.** `ARM_MODEL_TAG` carries seventeen tags. `COMPARISON_KEYS` named eight of them and
+`ROBUSTNESS_TAGS` three more, so eight had no reporting home at all: `lstm`, `npst`, `nsea` (`D64`)
+and `itro`, `itrr`, `l048`, `l192`, `itrt` (`D70`). They are 480 runs and roughly two of the 3.2
+wall-hours the pending manifest costs on two T4s.
+
+**Two of the eight were load-bearing, for different reasons.**
+
+- **`lstm`.** Root §13.2 makes *no deep model beats Naive-RW* a mandatory disclosure, and root §7
+  says in as many words that LSTM is the deep model the crypto forecasting literature reaches for
+  first. Table 4 without it, Table 6 without it and an MCS computed without it assert that claim over
+  a set that omits its most likely counterexample. `D64` built the arm precisely so the claim would
+  not rest on an untested model; leaving it out of the matrix reintroduced the hole the arm closed.
+- **`itro` / `itrr`, the matched-K pair.** `D70` records that this pair *changes an RQ's evidence
+  rather than its robustness*: same K=8, same target, same seeds, PR the only thing that moves —
+  5.011 against 3.609, either side of the ladder's own 4.668. It is the only **direct** test of RQ1's
+  question, the ladder being able to answer only through a panel at `corr(K, K_eff) = 0.828`. One
+  hundred and fifty runs whose output reached no deliverable.
+
+**And there was no deliverable to reach.** Root §13.2 requires the exploratory arms *in their own
+table*; `_robustness_section` computed that section into `paper_numbers.json` and `render_tables`
+rendered nine tables, none of them it. The three `D62` arms had been in the same position since
+`D62b`–`D62d` and it went unnoticed because their numbers *were* in the JSON — present in the
+evidence file, absent from everything a reader sees.
+
+**Resolution, four parts.**
+
+1. `COMPARISON_KEYS` gains `("lstm", 8)`, `("npst", 1)`, `("nsea", 1)` — root §7 baselines with an
+   explicit K (`D40`), so they belong in Table 4, Table 6 and the MCS. `nesting_order` already routes
+   them correctly: Clark–West against Naive-RW, DM–HLN across arms.
+2. `ROBUSTNESS_TAGS` gains the five `D70` arms. They stay **out** of `COMPARISON_KEYS` because root
+   §10.2 says none of them enters the ladder comparison and each gets its own row — folding one in
+   would make the rungs differ in something other than K.
+3. **Table 9** exists: `report._table9`, `paper/tables/table9_robustness.tex`, every arm with its
+   `R²_oos ± SE across origins`, the main grid at the same rung, and the difference. An arm that has
+   not run says **not run** by name rather than being omitted, the same discipline `_figure5` uses.
+4. `comparisons.available_keys` splits requested keys into those with runs and those without.
+   `build_panel`'s `FileNotFoundError` on **partial** coverage is untouched and must stay — a matrix
+   short one origin for one model compares models over different origin sets, which is `D45` one
+   level up. What changed is only that an arm absent *everywhere* is named in the log and in
+   `paper_numbers.json` under `comparisons.absent`, instead of aborting a report that a reader needs
+   before the next GPU session finishes.
+
+**Measured immediately, from the 894 runs already on disk.** longsched at K=1 and K=8, capacity at
+K=12 and attention at K=8 all come back **slightly worse** than the main grid at the same rung
+(Δ`R²_oos` = −0.0009, −0.0004, −0.0005, −0.0002). So *you under-trained* and *you under-capacitised*
+are both answered, and answered against the arms — which is the point of a robustness arm and exactly
+what root §13.2 committed to reporting whatever it showed. Nothing rendered it until now.
+
+**The transferable rule: a manifest and a reporting layer are two lists, and nothing was checking
+they agreed.** `D54a` is the same shape one level up — two artifacts required to agree with nothing
+enforcing it — and `D69` again. The defect class survives because the failure is silent in the
+direction that looks like success: the report generates, the tables render, the tests pass, and the
+missing arms are missing in a place no assertion looks. A tag added to `ARM_MODEL_TAG` should not be
+able to reach a GPU without appearing in some deliverable.
+
+**Vintage.** The edits touch `report.py` and `comparisons.py` only — analysis, not the training path
+— so `code_sha256` moved (`0103dc19fe345020` → `29d3f15b1cc594e7`) while every byte a run produces
+did not. The 894 completed runs are **not orphaned**: `run_id` carries no digest and resume is by
+`run_id`. The pending 726 will log the new digest beside the old, which is `D62g`'s situation
+exactly — the vintage that matters for a number is the vintage of the runs that produced it, and the
+runner is unchanged.
+
+## `D75` — two figures did not exist and three of the six that did were wrong
+
+**Severity: F.** Found 2026-08-31, auditing root §13.4's figure inventory against the files on
+disk and then against what each file actually shows. The count matched what the generator claimed
+and every test passed. Six of the eight required figures existed; **two had never been produced at
+all**, and of the six, **three carried defects that a reader would take as findings**.
+
+### Figures 1 and 2 did not exist
+
+Root §13.4's state table marked them *schematic --- drawn by hand; no dependency on the grid*, which
+in practice meant nobody had drawn them and nothing said so. Two problems with the disposition
+itself, separate from the fact that it had not been executed. A hand-drawn figure **cannot be
+regenerated**, which root §12 requires of everything else in the manuscript. And a hand-drawn one
+can be **silently wrong**: Figure 1 has to show a rolling 24-month window that is not expanding,
+a 21/3 train-validation split, a purge at **both** boundaries and 5-month origin spacing --- four
+details that are easy to draw plausibly and incorrectly, and the third is exactly `D24`, the defect
+this register rates fatal.
+
+Both are now generated. `report._figure1` reads `config.ORIGINS` and draws every origin's train,
+validation and six test blocks on a calendar axis with a purge marker at each boundary; it also
+displays `D28`'s training overlap, which is a required disclosure and which the staircase makes
+visible without a sentence. `report._figure2` reads a live `ITransformerConfig` for every tensor
+shape, so the architecture figure cannot drift from the model the grid actually ran.
+
+### Figure 5 asserted its own null through the colour scale
+
+`imshow(grid, cmap="magma", vmin=0.0)` with no `vmax`. Attention weights over N variates sum to one
+per row, so uniform is `1/N` --- 0.125 at K=8 --- and every measured weight lands within about 0.01
+of it. Anchoring a sequential map at zero renders all four panels one flat cream, and a reader takes
+**"attention is uniform"** from the colour bar rather than from the data. That is the `D50`
+uniform-attention null being asserted by a plotting keyword. Axes were also labelled `0`...`7`, so
+*which* variate the model leans on --- the only question Figure 5 exists to answer --- was
+unanswerable from the figure.
+
+Fixed: a diverging map centred on `1/N`, one symmetric limit shared by every panel so a colour means
+the same thing in all four, and variate **names** on both axes from `features.ladder_columns`. The
+structure it was hiding is substantial and reportable --- a strong self-attention diagonal,
+`vwap_location` self-attending hardest in layer 1, an F3 block (`log_quote_volume` /
+`log_trade_count`) and an F4 block (`taker_buy_ratio` / `signed_flow`, which `D12` predicts because
+one is a deterministic function of the other), and a visible calm-versus-stress difference in how
+`r` attends to the intensity variates.
+
+### Figure 7 mislabelled its unit and omitted its own comparator
+
+`economics.equity_curves` emits `exp(cumsum(net))`, a **wealth multiple** starting at 1.0. The axis
+said *cumulative net log return* and the reference line sat at `0.0`. A reader taking the label at
+face value reads a 20% gain as a 1.2 log return --- an order of magnitude out, in the one figure the
+economic claim rests on. And **buy-and-hold was not drawn**, though root §13.2 states the economic
+result explicitly against it (+20.6% net against +29.0%) and `economics_table` already computed it
+as the `hold_*` columns. Without the comparator the strategy's own rising curve reads as skill, when
+the sample is dominated by BTC's 2020-2026 rise. The zero-slippage panel was also presented
+indistinguishably from the three pre-registered ones.
+
+Fixed: `net equity multiple (1.0 = break-even)`, break-even at 1.0, buy-and-hold drawn in black from
+the same `hold_position` Table 8 uses so figure and table cannot disagree, and the zero-slippage
+panel titled *before costs (not in the §13.5 band)*. The corrected figure shows buy-and-hold above
+every strategy at every slippage level, which is the disclosure made visual.
+
+### Figure 4 painted two models the same colour
+
+Eleven series on matplotlib's ten-colour default cycle, so `itr-K1` and `ptst-K8` were the same blue;
+at 14 series after `D64` it would have been four collisions. Now hue is the **model family**, dash
+is the **rung**, and marker is the family again so the figure survives a greyscale print. Encoding
+family in hue also puts `D60c` on the page rather than in a table: the ridge lines hug 1.000 and
+every deep line sits well above it.
+
+**Figures 2b, 3 and 6 were checked and left alone.** They were correct.
+
+**The transferable rule: a figure that renders is not a figure that is right, and "it exists" is
+the weakest check there is.** Every defect here survived a green suite, because the tests assert
+that a file is written and that the LaTeX is balanced --- properties of the artifact, not of what it
+shows. `D62h` already established that exact equality is the wrong drift guard for numbers; this is
+the same lesson for figures. The three that were wrong were wrong in the direction that looks like
+a result: a flat attention map reads as *no cross-variate structure*, an unlabelled equity axis
+reads as a bigger number than it is, and a colour collision reads as one model where there are two.
+---
+
+## `D76` — the tuned arm ranked on a learning rate it then threw away
+
+**F.** `TUNING_GRID` is `d_model x e_layers x lr`, eighteen points, and `tune_on_validation` ranked
+all of them on origin 1's validation sub-block. It then returned
+
+```python
+ITransformerConfig(pred_len=PRED_LEN, d_model=int(best["d_model"]), e_layers=int(best["e_layers"]))
+```
+
+and `ITransformerConfig` carries no learning rate --- `lr` is an argument to `train_one`, supplied by
+`cfg.schedule()`. So the winning `lr` was **selected and then discarded**, and the arm ran the
+winner's *architecture* under root §6.2's default `1e-4`.
+
+The evidence is three files disagreeing:
+
+| file | says |
+|---|---|
+| `meta/tuning_selection.json` -> `ranked[0]` | `{"d_model": 256, "e_layers": 3, "lr": 0.001, "val_mse": 0.466377}` |
+| `meta/tuning_selection.json` -> `selected` | `{"d_model": 256, "e_layers": 3}` --- no `lr` |
+| `meta/itrt_o01_K08_H024_s42.json` | `config.d_model = 256`, `config.e_layers = 3`, **`schedule.lr = 0.0001`** |
+
+Three consequences, in ascending order of how much they matter.
+
+The **run does not match its record**, which is root §12's contract in one sentence: a number must
+resolve to the decision that produced it, and the decision on disk is not the decision that ran.
+Table 9's caption said *"the configuration origin 1's validation preferred"* and that was false as
+executed. And the executed configuration --- `{256, 3, 1e-4}` --- is a point this same search
+evaluated and did **not** rank first, so the arm reported the generalisation of a configuration the
+search had rejected while claiming to report the generalisation of the one it chose.
+
+Worse than any of those: the *architecture* was chosen partly because of the rate that was then not
+applied. Ranking is over the joint space, so `{256, 3}` won as a pair with `1e-3`. The runner-up
+`{64, 3, 1e-4}` sat 1e-4 behind in validation MSE --- an order of magnitude below the seed noise ---
+and would have been reproduced faithfully.
+
+**Fixed** with `TunedConfig(ITransformerConfig)`: a subclass carrying `lr` as a **field** and
+returning `TrainSchedule(lr=self.lr)`. The field is the exception to the Architecture protocol's
+methods-not-fields rule and it is deliberate --- `write_artifacts` records `asdict(cfg)`, so a field
+on `ITransformerConfig` would enter every iTransformer `meta/*.json`, while a field on a subclass one
+arm uses enters only that arm's, which is exactly where §12 wants the executed rate recorded. The
+notebook's prelude now asserts `TUNED_CONFIG.lr == TUNING_TABLE[0]["lr"]` before the grid starts.
+
+**The 75 `itrt` runs on disk predate this and must be re-run.** They are the old configuration.
+
+**The transferable rule: a search that ranks on a parameter must apply it.** Any dimension the
+selection scores on and the run does not set makes the arm answer a different question from the one
+its caption claims --- and nothing in a green suite can see the difference, because both
+configurations train, converge and write valid artifacts.
+
+---
+
+## `D77` — the only deep model in the Model Confidence Set had no economics row
+
+**U.** `ECONOMIC_KEYS` carried five models: `itr-K1`, `itr-K8`, `rdg-K8`, `dlin-K8`, `ptst-K8`. On the
+1,620-run grid the Model Confidence Set at both 90% and 75% contains Naive-RW, all four ridge rungs
+and **`lstm-K8`** --- and `lstm-K8` was the one model in the matrix absent from Table 8 and Figure 7.
+
+That inverts what a subset is for. §13.5 evaluates a subset because a twelve-model Table 8 with an
+interval on every figure is a wall of numbers; the subset is supposed to be the models whose standing
+the reader is asked to weigh. `lstm-K8` is the only model whose statistical standing changed when the
+manifest grew, and it was the one left out.
+
+**Fixed**: `("lstm", 8)` added, 225 economic cells to 270. What it shows is worth the row ---
+**`lstm-K8` is the worst arm in Figure 7 at every slippage level** despite being the best deep model
+on MSE, which is the cleanest statement available that MSE and directional P&L are different
+objectives (root §13.5).
+
+---
+
+## `D78` — the epoch cap was hardcoded, and the claim about it was asserted rather than measured
+
+**C.** `_architecture_section` counted `epochs >= 30`. Two defects in one constant.
+
+**It is the wrong cap for one arm.** `D62c`'s `itrl` runs to 60, so any `itrl` run between 30 and 60
+epochs was counted as capped when it had early-stopped normally. The cap now comes from that run's own
+`meta['schedule']['max_epochs']`, with `DEFAULT_MAX_EPOCHS` as the fallback for ridge and the naive
+comparators, which train nothing.
+
+**And the claim built on it had gone stale.** Root §6.2 and §13.2 both assert *"0 of 444 iTransformer
+runs reached the 30-epoch cap"*. Measured on 1,620 runs, correctly scoped:
+
+| arm | mean epochs | at its own cap |
+|---|---|---|
+| `itr` at H=24 | 9.08-13.69 | **0 of 300** |
+| `itr` at H=168 | 16.20-16.75 | **5 of 80** |
+| `itrl` (cap 60) | 13.72-17.41 | 0 of 150 |
+| `lstm` | 8.97 | 3 of 75 |
+| `ptst` | 25.51 | **39 of 75** |
+| `dlin` | 27.64 | **56 of 75** |
+
+So `D62c`'s claim **holds at the headline horizon** and fails only at H=168, where the sweep trains
+longer. Scope it and it stands.
+
+**What was never disclosed at all is the last two rows.** DLinear sits at its cap in 75% of runs and
+PatchTST in 52%. Both are budget-truncated, so *"DLinear is the worst model"* --- a sentence the
+results section makes --- is confounded with *"DLinear is the most truncated model"*. Table 3 now
+prints the per-arm at-cap count and its caption says that where an arm sits at its cap its loss is a
+truncated-training figure and has to be read as one before it is called worst.
+
+**The transferable rule: a constant that encodes one arm's assumption is a defect the moment a second
+arm exists**, and a measured claim written into prose expires the next time the manifest grows.
+
+---
+
+## `D79` — adding two closed-form baselines cost the study every adjusted rejection it had
+
+**C.** Romano-Wolf controls FWER over the family it is handed, and `pair_matrix` hands it the
+Cartesian product. `D74` widened `COMPARISON_KEYS` from twelve models to fifteen. The consequence,
+measured:
+
+| | 894-run report, 12 models | 1,620-run report, 15 models |
+|---|---|---|
+| pairs | 66 | 105 |
+| raw `p < 0.05` | 57 | 90 |
+| **Romano-Wolf `p < 0.05`** | **31** | **0** |
+| minimum adjusted `p` | 0.0423 | 0.0848 |
+
+**No effect moved.** The ladder's `t` statistics are unchanged; the falsification arm, beta1 and every
+`R2_oos` are bit-identical. What changed is the family. `npst` and `nsea` generate the largest `|t|`
+in the table --- `lstm-K8` against `npst-K1` is -8.52 --- and the shared bootstrap draw that makes
+this a stepdown rather than 105 separate tests puts those statistics into the max-`|t|` null every
+other hypothesis is judged against. Two closed-form comparators that no claim in the paper rests on
+swallowed all 31 surviving rejections.
+
+**Fixed** by reporting the stepdown a second time within a declared claim family, as
+`family` / `p_romano_wolf_family` beside the unchanged `p_romano_wolf`. `pair_family` assigns the
+family from the model keys alone, so no p-value enters the definition:
+
+* **`vs-naive`** --- every pair containing Naive-RW. §13.2's headline disclosure *is* this family.
+* **`ladder`** --- same tag, different K. RQ1's rungs and ridge's own.
+* **`architecture`** --- same K, different tags. §13.1's channel-independence pillar.
+* **`other`** --- the remainder, on which no claim rests.
+
+Measured, and the first row is the one that settles whether this is self-serving:
+
+| family | pairs | rejections, all-pairs | rejections, within family | min `p` within family |
+|---|---|---|---|---|
+| `vs-naive` | 14 | 0 | **0** | 0.2646 |
+| `ladder` | 12 | 0 | 4 | 0.0372 |
+| `architecture` | 23 | 0 | 21 | 0.0035 |
+| `other` | 56 | 0 | 48 | 0.0025 |
+
+**The family that carries the headline rejects nothing under either correction.** *No model beats
+Naive-RW* is therefore robust to the choice, which is what makes reporting the narrower column
+disclosure rather than p-hacking. Within the ladder, K=1 against K=4, K=8 and K=12 and K=4 against
+K=8 survive; the 8-to-12 rung does not, which is the designed contrast behaving as designed.
+
+**`p_romano_wolf` over all pairs remains the headline**, because that is what §9.2 pre-registers and
+it is the conservative number. The families were declared **after** the all-pairs column had been
+read, so the second column is labelled post-hoc in the module, in `paper_numbers.json` and in Table
+6's caption. Suppressing it would hide how much of the collapse is the family's doing; promoting it
+would be choosing the correction after seeing which correction rejects. Both columns, and the label.
+
+**The transferable rule: FWER is a property of the family you declare, not of the data.** Adding a
+model to a pairwise matrix is not free --- it taxes every other comparison in it --- so a model
+enters the matrix because a claim needs it, never because a run exists.
+
+---
+
+## `D80` — §9.2 asked for one of two coverage checks and got neither
+
+**U.** Root §9.2 requires block coverage entered **as a covariate** *or* beta1 re-estimated **on
+well-covered blocks**. `beta1_with_coverage` attempts the second, and returns `None` --- correctly,
+because restricting unbalances the panel and beta1's reduction to the mean of within-slopes holds
+only on a balanced one. That is an honest report of a check that cannot run. It is not a check that
+ran. The covariate route was never built, so the requirement was unmet by one route and unattempted
+by the other, while `paper_numbers.json` carried a `restricted: null` that reads like the question
+was settled.
+
+**Fixed** with `panel_beta1_covariate`, fitting
+
+```
+A(i,b) = alpha_i + beta1 b + beta2 coverage(i,b) + eps
+```
+
+by Frisch-Waugh inside the origin fixed effects --- outcome and block index both within-demeaned and
+then residualised on within-demeaned coverage, after which beta1 is a simple slope and the existing
+cluster-robust sandwich and restricted wild bootstrap carry over unchanged (WCR, bootstrapping the
+cluster-robust *t*, one-sided at `H1: beta1 < 0`, Rademacher and Webb, the `(1 + count)/(1 + B)`
+floor). It always runs, because nothing is dropped.
+
+Measured: **beta1 = +0.000250, t = +0.696, cluster SE 0.000360, headline p = 0.7305** against the
+uncontrolled **+0.000256, t = +0.717, p = 0.7381**. The trend `D45` warned beta1 could be absorbing
+is worth 6e-6 of it. RQ2's verdict does not move, and now it does not move *for a stated reason*.
+
+---
+
+## `D81` — the function said covariance and computed correlation, and the fix did not do what it claimed
+
+**C.** `D53b` replaced the `K*L x K*L` **covariance** spectrum with the **correlation** one. The code
+made that change and the naming did not: `lookback_covariance_pr`, `KeffRow.pr_lookback_cov` and the
+`pr_lookback_cov` parquet column all still said covariance. A reader checking whether `D53b` had
+landed found the word it replaced.
+
+Renamed to `lookback_correlation_pr` / `pr_lookback_corr` throughout --- but the naming is the small
+half. **`D53b` justified the change by monotonicity in K, and the correlation spectrum is not
+monotone in K either:**
+
+| rung | covariance spectrum | correlation spectrum (stored) |
+|---|---|---|
+| K=1 | 92.1 | 92.1 |
+| K=4 | 3.0 | 21.9 |
+| K=8 | 44.0 | 37.3 |
+| K=12 | 8.8 | 15.5 |
+
+What the correlation spectrum actually buys is **scale-freeness** --- on the covariance the statistic
+is dominated by whichever channel carries the largest variance, so the K=1-to-4 collapse was entirely
+`log_quote_volume`'s arrival and said nothing about dimensionality. That reason is real and survives.
+Monotonicity was never delivered and root §5.4 should stop implying it was.
+
+Root §5.4 also **mislabels the numbers**: it attributes `92.1 / 21.9 / 37.3 / 15.5` to the covariance
+spectrum, and those are the correlation figures the artifact stores.
+
+And the divergence `D44` requires be reported is sharper than "the constructs differ". As a fraction
+of the `K*L` ceiling the lookback measure runs **0.980, 0.078, 0.047, 0.020** while the
+contemporaneous PR runs **1.00, 3.33, 4.27, 3.98**: the two `K_eff` constructs are **ordinally
+opposed**, not merely different. A methods referee will spend the review here, and §4.1b has to say
+it in those words.
+
+---
+
+## `D82` — every comparison in the paper was printed as two marginal means
+
+**U.** Table 4 and Table 9 print each arm's mean RelMSE with its standard error **across** origins.
+Every arm is evaluated on the same fifteen origins against the same naive baselines, so the
+comparison a reader wants is *paired* --- and differencing two marginal means with marginal error
+bars is the wrong arithmetic on the right numbers. Measured, the paired SE is about **half** the
+marginal one, so overlapping bars in those tables carry no information about whether two arms differ.
+
+The cost was concrete. `itro` and `itrr` --- `D70`'s matched-K pair, the one contrast in this study
+that changes an RQ's evidence rather than its robustness --- appeared as two separate rows against
+the ladder, and their difference, which is the entire point of building them, was **computed
+nowhere**.
+
+**Fixed** with `per_origin_relmse` and `paired_contrast`, a `contrasts` section in
+`paper_numbers.json`, a per-arm paired column in Table 9, and the matched-K result written into
+Table 9's caption because it is a difference *between* two arms and no arm-versus-grid column can
+carry it. Measured:
+
+| contrast | mean d-RelMSE | SE | t | p | left better at |
+|---|---|---|---|---|---|
+| **`itrr` - `itro`** (matched K=8) | **+0.001241** | 0.000198 | **+6.27** | <0.0001 | 1/15 |
+| `itr-K1` - `itr-K8` | +0.002242 | 0.000496 | +4.52 | 0.0005 | 2/15 |
+| `itr-K4` - `itr-K8` | +0.000651 | 0.000148 | +4.40 | 0.0006 | 3/15 |
+| `itr-K8` - `itr-K12` | -0.000523 | 0.000136 | -3.85 | 0.0018 | 10/15 |
+| `itru` - `itr-K8` | -0.000287 | 0.000081 | -3.53 | 0.0033 | 11/15 |
+| `lstm` - `itr-K8` | -0.016028 | 0.001138 | -14.08 | <0.0001 | 15/15 |
+| `lstm` - `rdg-K8` | +0.000758 | 0.000449 | +1.69 | 0.1137 | 2/15 |
+| `ptst` - `itr-K8` | -0.001635 | 0.001084 | -1.51 | 0.1535 | 10/15 |
+| `dlin` - `itr-K8` | +0.008448 | 0.001404 | +6.02 | <0.0001 | 1/15 |
+| `itr-K8` - `rdg-K8` | +0.016785 | 0.000927 | +18.11 | <0.0001 | 0/15 |
+
+Positive means the left arm is worse. Three readings the marginal tables could not support: at fixed
+K = 8 halving effective rank costs **half the entire K=1-to-K=8 ladder gain**, which is RQ1 answered
+by contrast; **uniform attention beats learned attention** at p = 0.0033; and the LSTM beats the
+transformer at **15 of 15** origins while being indistinguishable from ridge.
+
+Post-hoc, uncorrected for multiplicity, and labelled so everywhere it appears. It guides what belongs
+in the paper; §9.2's pre-registered machinery is what a confirmatory claim goes through.
+
+---
+
+## `D83` — Figure 7's crash was an origin leaving the average
+
+**F.** Origins do not carry the same number of tradable days. A holding period spanning an outage has
+no defined realised return and is skipped (`D46`), so the count runs from **146 to 180**. Figure 7
+averaged each day over whatever origins still had data, so the denominator fell from 15 across the
+tail --- and where an origin dropped out the mean stepped.
+
+The largest step rendered as a **near-vertical fall of about seven points at day 146**, in the one
+figure the economic claim rests on, in a panel whose y-axis is a wealth multiple. A reader takes that
+for a crash. It was the first origin leaving the average.
+
+Worse than a cosmetic artefact: the origins that run out earliest are the ones with the most outages,
+outages cluster on stress, so the untruncated tail averaged the **easy** origins and drifted
+optimistic exactly where it looked most dramatic. That is `D45`'s future-conditioned exclusion,
+surfacing in the economics.
+
+**Fixed** by truncating every curve at the shortest series, so every plotted day averages all fifteen
+origins, with the day named in the figure's own subtitle. The corrected figure has no discontinuity
+anywhere, and `lstm-K8` is visibly the worst strategy at every slippage level.
+
+---
+
+## `D84` — Figure 4 lost its resolution when the manifest grew
+
+**C.** `npst` and `nsea` land at RelMSE about 2.0. Every model the paper argues about lives inside
+`[1.000, 1.027]`. On one pair of axes that is a 40:1 range: the two closed forms set the scale and the
+twelve informative series collapsed into a single indistinguishable band on the floor. The figure
+that exists to show `D60c`'s ordering --- ridge hugging 1.000, every deep model above it --- showed a
+flat line.
+
+Same cause as `D79`, one figure over: `D74` added the two comparators to `COMPARISON_KEYS`,
+correctly, and the cost landed silently somewhere else.
+
+**Fixed** with two panels sharing an x-axis: the upper keeps the full range, because dropping a model
+to make a figure legible is the wrong repair and the distance from 1.0 is itself the white-noise
+check (forecasting the previous return when returns are serially uncorrelated costs exactly
+`2 sigma^2`, and 2.004 is what was measured); the lower zooms to the range the argument happens in,
+with its bound read from the data so a later arm cannot be silently cropped. The zoomed panel shows
+`D60c` at a glance: ridge and LSTM on the line, DLinear worst, the iTransformer band between.
+
+**Figures 1, 2, 2b, 3, 5 and 6 were re-checked at the same time and left alone.** They were right.
+
+**The transferable rule, twice over now: a change that is correct in one place is not free in
+another.** Adding two trivial baselines was right for Table 4 and cost Table 6 every adjusted
+rejection (`D79`) and Figure 4 its entire dynamic range. Neither showed up as a failure; both showed
+up as an artifact that still rendered.
+---
+
+## `D85` — resume skipped a run whose configuration had changed underneath it
+
+**F.** `run_id` is `{model}_o{origin}_K{k}_H{h}_s{seed}` and encodes nothing about the configuration.
+Root §10.4's rule --- *changing any component deliberately orphans prior outputs rather than silently
+reusing a mismatched result* --- therefore covers only a change that **renames the arm**. A fix
+*inside* an arm leaves every id identical.
+
+`D76` is exactly that shape. The tuned arm's learning rate changed; its 75 `itrt` ids did not. A
+session resuming from the 1,620-run output would have found all 75 "complete", skipped every one, and
+reported the superseded configuration under the corrected Table 9 caption --- the same defect `D76`
+fixed, re-entering through the resume path, silently, with a green suite and a finished grid.
+
+Nothing would have caught it. `is_complete` asks for two files and a status. The report reads what is
+on disk. `code_sha256` was already written into every meta and already compared by nothing.
+
+**Fixed** by giving `completed_run_ids` an optional `code_digest` and having `pending` pass
+`code_sha256()`. Within one vintage every digest matches and resume behaves exactly as before, which
+is the case a partial session actually hits; across vintages the grid re-runs, which is what §12 asks
+for --- *numbers produced under different input-artifact hashes are not comparable and must not share
+a table* --- stated as behaviour instead of as a paragraph.
+
+**The filter is off by default and only `pending` turns it on**, because the function has two callers
+wanting opposite things. Resume decides whether to *skip* and must be strict. The report merely
+*discovers*, and `D62g` settles that case the other way: the vintage that matters for a number is the
+vintage of the runs that produced it, and the reporting code is a reader of those runs, not a producer
+of them. A strict default made `build_report` refuse to read a grid it could describe perfectly well
+--- caught by the suite within one run of making the mistake.
+
+**The transferable rule: an identity that does not include everything that varies is not an
+identity.** `run_id` names a *cell of the design*, not a *result*, and idempotence keyed on it is
+only as strong as the assumption that the code behind a cell never changes. The digest was already
+being recorded; it just was not being read.
+
+New contradictions found later take IDs **D86+**.

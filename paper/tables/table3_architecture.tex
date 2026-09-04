@@ -8,19 +8,31 @@
 \toprule
 Model & $K$ & Params & Epochs (mean) & Max & At cap & Runs \\
 \midrule
-DLinear & 8 & 4,656 & 27.38 & 30 & 32 & 45 \\
+DLinear & 8 & 4,656 & 27.64 & 30 & 56 & 75 \\
 iTransformer & 1 & 280,472 & 13.69 & 23 & 0 & 75 \\
 iTransformer & 4 & 280,472 & 9.35 & 13 & 0 & 75 \\
 iTransformer & 8 & 280,472 & 9.08 & 11 & 0 & 75 \\
 iTransformer & 12 & 280,472 & 9.15 & 11 & 0 & 75 \\
+iTransformer (attn. captured) & 8 & 280,472 & 9.08 & 11 & 0 & 75 \\
+iTransformer (d\_ff 512) & 12 & 412,056 & 8.33 & 10 & 0 & 75 \\
 iTransformer (fresh) & 8 & 280,472 & 9.00 & 10 & 0 & 15 \\
+iTransformer (long schedule) & 1 & 280,472 & 17.41 & 21 & 0 & 75 \\
+iTransformer (long schedule) & 8 & 280,472 & 13.72 & 16 & 0 & 75 \\
+iTransformer (orthogonal $K$=8) & 8 & 280,472 & 8.99 & 11 & 0 & 75 \\
+iTransformer (redundant $K$=8) & 8 & 280,472 & 9.36 & 13 & 0 & 75 \\
+iTransformer (tuned) & 8 & 1,218,328 & 7.20 & 9 & 0 & 75 \\
 iTransformer (uniform attn.) & 8 & 280,472 & 9.37 & 12 & 0 & 75 \\
-PatchTST & 8 & 302,360 & 25.58 & 30 & 27 & 45 \\
+iTransformer ($L$=48) & 8 & 274,328 & 9.53 & 12 & 0 & 75 \\
+iTransformer ($L$=192) & 8 & 292,760 & 8.40 & 10 & 0 & 75 \\
+LSTM & 8 & 205,848 & 8.97 & 30 & 3 & 75 \\
+Naive-persist & 1 & 0 & 0.00 & 0 & 0 & 15 \\
+Seasonal-naive & 1 & 0 & 0.00 & 0 & 0 & 15 \\
+PatchTST & 8 & 302,360 & 25.51 & 30 & 39 & 75 \\
 Ridge & 1 & 2,328 & 0.00 & 0 & 0 & 15 \\
 Ridge & 4 & 9,240 & 0.00 & 0 & 0 & 15 \\
 Ridge & 8 & 18,456 & 0.00 & 0 & 0 & 15 \\
 Ridge & 12 & 27,672 & 0.00 & 0 & 0 & 15 \\
 \bottomrule
 \end{tabular}
-\vspace{2pt}\par\footnotesize Every hyperparameter is adopted unchanged from Liu et al. (2024) except $d_{model}$, reduced from 512 to 128 against $\sim$14{,}000 training windows; \textbf{nothing is tuned per rung} (`D38'), which is what makes the rungs comparable. Ridge's $\alpha$ is the only hyperparameter selected anywhere in this study, on the validation sub-block. Parameter count is identical across rungs \emph{at a fixed horizon} (`D60h'). \textbf{Epochs at cap} counts runs reaching the 30-epoch budget: no iTransformer run ever does, so the binding constraint is the learning-rate schedule, not the budget. For DLinear and PatchTST, $K=8$ means \emph{trained on eight channels} through their published all-channel objective, not \emph{predicts the target from eight channels}, and their validation losses are all-channel figures not comparable to the ladder's (`D56').
+\vspace{2pt}\par\footnotesize Every hyperparameter is adopted unchanged from Liu et al. (2024) except $d_{model}$, reduced from 512 to 128 against $\sim$14{,}000 training windows; \textbf{nothing is tuned per rung} (`D38'), which is what makes the rungs comparable. Ridge's $\alpha$ is the only hyperparameter selected anywhere in this study, on the validation sub-block. Parameter count is identical across rungs \emph{at a fixed horizon} (`D60h'). \textbf{Epochs at cap} counts runs reaching that arm's own epoch budget, 60 for the long-schedule arm and 30 elsewhere (`D78'). The iTransformer arms early-stop far below it, so their binding constraint is the learning-rate schedule rather than the budget. DLinear and PatchTST do not: where an arm sits at its cap its loss is a truncated-training figure and has to be read as one before it is called the worst model. For DLinear and PatchTST, $K=8$ means \emph{trained on eight channels} through their published all-channel objective, not \emph{predicts the target from eight channels}, and their validation losses are all-channel figures not comparable to the ladder's (`D56').
 \end{table}

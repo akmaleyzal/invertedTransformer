@@ -469,10 +469,18 @@ in §3.4 and Table 3; left unstated it feeds §13.5's DSR trial count as an unkn
 serves all four rungs, one pre-registered robustness run at K=12 with larger `d_ff` exists so a flat
 8→12 rung cannot be read as under-tuning — built as the `capacity` arm (§10.2, `D62b`).
 
-**The epoch cap was never the binding constraint (`D62c`).** 0 of 444 iTransformer runs reached 30
-epochs; mean 10.49, max 26. The binding constraint is the **LR schedule** (`lr_halve_every = 4` puts
-the rate at ≈1.6e-6 by epoch 26), so raising `max_epochs` alone is a provable no-op. The `longsched`
-arm widens the schedule instead.
+**The epoch cap is not the binding constraint at the headline horizon, and the claim carries its
+scope (`D62c`, rescoped by `D78`).** On the 1,620-run grid, **0 of 300** iTransformer runs at H = 24
+reach 30 epochs; at H = 168 the sweep trains longer and **5 of 80** do. The binding constraint is the
+**LR schedule** (`lr_halve_every = 4` puts the rate at ≈1.6e-6 by epoch 26), so raising `max_epochs`
+alone is a provable no-op — `itrl` runs to 60 and never exceeds 21. The `longsched` arm widens the
+schedule instead.
+
+**But the cap does bind for two baselines, and that was never disclosed (`D78`).** DLinear reaches it
+in **56 of 75** runs and PatchTST in **39 of 75**. Where an arm sits at its cap its loss is a
+truncated-training figure, so "DLinear is the worst model" is confounded with "DLinear is the most
+truncated model" until the at-cap count is printed beside it — which Table 3 now does, reading each
+arm's cap from its own `meta['schedule']` rather than assuming 30.
 
 **The loss is single-channel, and this is not a detail (`D39`).** Standard iTransformer
 implementations compute the loss over **all N channels**. Under an all-channel loss, K=12 becomes a
@@ -1450,8 +1458,10 @@ Each is a place a reviewer will otherwise find a hole:
   own table, never mixed into RQ1–RQ3. State also that neither was run to rescue the null: **an arm
   reported only when it agrees with the headline is not a robustness arm**, and a reader is entitled
   to that commitment in writing before the numbers appear;
-- **that the epoch cap was never binding** (`D62c`) — 0 of 444, mean 10.49, max 26 — so "train it
-  longer" is answered by the LR schedule, not the budget;
+- **that the epoch cap does not bind at H = 24** (`D62c`, `D78`) — 0 of 300 — so "train it longer"
+  is answered by the LR schedule, not the budget; **and that it does bind for DLinear (56 of 75) and
+  PatchTST (39 of 75)**, so their losses are truncated-training figures and the ordering must be read
+  with that beside it;
 - **that the attention arm reproduces the main grid bit-for-bit** (`D62d`), the reproducibility
   statement the paper would otherwise lack, and what licenses reading its maps as maps *of the model
   whose numbers are reported*;
@@ -1500,6 +1510,7 @@ Each binds to an artifact and a stage. **Figure 3 carries the entire paper.**
 | 6 | DM matrix — statistic named per pair, T stated, Romano–Wolf adjusted, MCS column | 6 | Horizon sensitivity |
 | 7 | Horizon sweep | 7 | Equity curve before and after costs, at three slippage levels |
 | 8 | Economics: Sharpe, Sortino, MDD, turnover, DSR, **each with an interval** | | |
+| 9 | Exploratory arms (`D62`, `D70`) apart from RQ1-RQ3: `R²_oos` ± SE across origins, the main grid at the same rung, and the difference. An arm not yet run says **not run** by name (`D74`) | | |
 
 **Figure 3 shows one series, not four (`D36`).** `A(i,b)` is defined only as the K=1-versus-K=8 gap and
 §3 fixes RQ2 on that pair. Plotting "A(b) for K=1,4,8,12" asks for a quantity identically zero at K=1
@@ -1525,18 +1536,31 @@ and renders everything from it; the notebook's cell 9 runs the same functions on
 | Table 6 | **generated** | `comparisons.pair_matrix` + `comparisons.mcs_table`, 66 pairs over 12 models |
 | Table 7 | **generated** | `report._horizon_section`, restricted to the four named sweep origins at **every** horizon so the columns share a sample |
 | Table 8 | **generated** | `economics.economics_table`, all three slippage levels, each figure with an interval |
+| Table 9 | **generated** | `report._table9` from `_robustness_section`; §13.2 requires the exploratory arms in their **own** table and nothing rendered one until `D74` |
 | Figure 2b | **generated** | `keff.rolling_pr` / `rolling_ols_r2`, **descriptive only** (§5.4) |
 | Figure 3 | **generated** | `report._figure3`; one series, not four (`D36`), with the MDE drawn beside the fit |
 | Figure 4 | **generated** | `report._figure4` |
 | Figure 5 | **generated** from the `D62d` arm | `attention.tercile_maps` — the only deliverable needing GPU time, because attention weights were not persisted by the original grid |
 | Figure 6 | **generated** | `report._figure6` |
 | Figure 7 | **generated** | `report._figure7` from `economics.equity_curves` |
-| Figures 1, 2 | schematic | drawn by hand; no dependency on the grid |
+| Figure 1 | **generated** | `report._figure1` from `config.ORIGINS` — every origin's train/validation/test blocks on a calendar axis, purge marked at **both** boundaries, and `D28`'s overlap visible in the staircase. Was *drawn by hand*, which meant it did not exist (`D75`) |
+| Figure 2 | **generated** | `report._figure2`, every tensor shape read from a live `ITransformerConfig` so it cannot drift from the model the grid ran (`D75`) |
 
-**Key results from the deliverables, worth stating here because they sharpen the paper:** the **Model
-Confidence Set at both 90% and 75% contains Naive-RW and all four ridge rungs, and no deep model**
-(rank order by mean loss: Naive-RW, `rdg-K4`, `rdg-K8`, `rdg-K12`, `rdg-K1`, then every iTransformer
-arm, PatchTST, DLinear); across the whole matrix Romano–Wolf removes **26 of 57** raw rejections.
+**Key results from the deliverables, on the 1,620-run grid.** The **Model Confidence Set at both 90%
+and 75% contains Naive-RW, all four ridge rungs, and `lstm-K8`** — rank order by mean loss: Naive-RW,
+`rdg-K4`, `rdg-K8`, `rdg-K12`, **`lstm-K8`**, `rdg-K1`, then every iTransformer arm, PatchTST,
+DLinear. **One deep model is in the set**, which the 894-run report's "and no deep model" no longer
+survives: the LSTM's `R²_oos` is −0.00156 against iTransformer-K8's −0.01799, it wins at 15 of 15
+origins paired, and it is indistinguishable from ridge (paired p = 0.114). It still does not *beat*
+Naive-RW, so §13.2's headline disclosure stands — but the sharper claim built on top of it does not,
+and the honest framing is **not "deep learning fails here" but "the attention-based long-sequence
+architectures fail here"**.
+
+Across the whole matrix Romano–Wolf now removes **90 of 90** raw rejections, leaving zero of 105
+pairs — an artefact of the family, not of the data (`D79`). Within the declared claim families the
+picture is legible again: `vs-naive` rejects **nothing** under either correction, so the headline is
+robust to the choice; the ladder keeps K=1 against K=4/8/12 and K=4 against K=8, and loses the 8→12
+rung, which is the designed contrast behaving as designed.
 
 ### 13.5 Economic evaluation
 
@@ -1735,7 +1759,39 @@ purpose defeats the second.
 
 | D72 | **F** | The 2026-08-27 session printed `parquet   /kaggle/working/__notebook__.ipynb` and died 48 s later inside polars: `File out of specification`. Discovery matched on **name** and never checked the file was a parquet, so a wrong answer travelled three cells before failing, and failed somewhere that could name neither the file nor why it was chosen. **Root cause of the binding is not established** — no committed `find_parquet` can produce that path, and replay raises correctly | `looks_like_parquet`: `PAR1` at both ends, checked at the point of selection. Failing candidates are skipped, so a corrupt copy no longer shadows a valid one; when all fail the error lists them. Rule: **matching on name has verified nothing** | 10.5 |
 
-**New contradictions found later take IDs D73+. Absorbing one silently is the exact failure this
+| D73 | I | The notebook outline was the *package*, not the study: eighteen `##` banners named after `.py` files, with all nine execution stages trailing behind them, so a reader met `config.py` through `report.py` and only then reached the work. Module and section banners were both `<div>` blocks, so the two levels looked alike; heading language was half English, half Indonesian | **Phases**, not files — 24 of them, each carrying its modules and then its execution: config, muat data, pra-proses, split, algoritma, latih, metrik, baseline, grid, evaluasi, laporan. Hierarchy is `##` phase, `###` module or step, `####` section. `MODULE_ORDER` re-cut to that order and asserted against `PHASES` in `build()`; it stays a valid topological order of the import graph, and `package_digest()` hashes `sorted(glob)` so **`code_sha256` is unchanged and no completed run is orphaned**. All prose Indonesian | 15 |
+
+| D74 | **F** | The manifest grew to 1,620 runs and the reporting layer still knew 684 of them. `COMPARISON_KEYS` named 8 of `ARM_MODEL_TAG`'s 17 tags and `ROBUSTNESS_TAGS` three more, so **480 runs produced no table row, no figure line and no MCS membership** — `lstm`/`npst`/`nsea` (`D64`) and the five `D70` arms. Two were load-bearing: LSTM is the deep model §13.2's *no deep model beats Naive-RW* most needs tested, and `itro`/`itrr` is RQ1's only **direct** K-versus-K_eff contrast. And §13.2's *own table* for the exploratory arms did not exist — `render_tables` wrote nine, none of them it | Three `D64` baselines into `COMPARISON_KEYS`; five `D70` arms into `ROBUSTNESS_TAGS`, never the ladder (§10.2); **Table 9** renders every arm, "not run" **by name**; `available_keys` names an arm absent everywhere instead of aborting the report, while `build_panel` still raises on **partial** coverage, which is `D45` | 7, 10.2, 13.4 |
+
+| D75 | **F** | **Two of §13.4's eight figures had never been produced**, and three of the six that had were wrong in the direction that looks like a result. Figures 1 and 2 were marked *drawn by hand* and therefore did not exist. Figure 5's `imshow(..., vmin=0.0)` with no `vmax` rendered every attention panel one flat colour, so a reader took **"attention is uniform"** from the colour bar rather than the data — `D50`'s null asserted by a plotting keyword — with axes labelled `0…7` so the one question the figure answers was unanswerable. Figure 7's axis said *cumulative net log return* over `exp(cumsum(net))`, a wealth multiple: an order of magnitude out in the figure the economic claim rests on, and **buy-and-hold** — the comparator §13.2 states the result against — was not drawn. Figure 4 put 11 series on a 10-colour cycle, painting `itr-K1` and `ptst-K8` identically | Figures **1 and 2 generated** from `ORIGINS` and a live `ITransformerConfig`, so neither can be silently wrong or drift from the model that ran; Figure 5 on a diverging map centred on `1/N` with shared limits and **variate names**; Figure 7 relabelled `net equity multiple (1.0 = break-even)` with buy-and-hold from the same `hold_position` Table 8 uses; Figure 4 hue-by-family, dash-by-rung. **A figure that renders is not a figure that is right** | 13.4 |
+
+### D76–D84 — defects found by *re-reading the 1,620-run grid against the code that produced it*
+
+The thirteenth pass (2026-09-02) ran after the full manifest completed. Its lens is the one no earlier
+pass had: **a finished grid, read against the document that specified it and the code that emitted
+it**. Four of the nine are consequences of `D64` and `D74` adding models that were right to add — the
+cost landed somewhere else and nothing failed.
+
+| ID | Sev | Defect | Resolution | § |
+|---|---|---|---|---|
+| D76 | **F** | The `tuned` arm ranked eighteen configurations on `d_model × e_layers × lr` and returned a bare `ITransformerConfig`, which has no `lr` — so the winner's `1e-3` was **selected and then discarded** and the arm ran the winner's architecture at the default `1e-4`, a point the same search had not ranked first. Record and run disagreed | `TunedConfig` carries `lr` as a field and returns `TrainSchedule(lr=self.lr)`; the notebook asserts `TUNED_CONFIG.lr == TUNING_TABLE[0]["lr"]` before the grid starts. **The 75 `itrt` runs on disk predate this and must be re-run** | 6.2, 10.2 |
+| D77 | U | `lstm-K8` is the only deep model in the Model Confidence Set and the only model in the matrix with no economics row | `("lstm", 8)` added to `ECONOMIC_KEYS`; 225 cells → 270. It is the **worst** strategy in Figure 7 at every slippage level, which is MSE and directional P&L being different objectives, measured | 13.5 |
+| D78 | C | `epochs_at_cap` hardcoded 30, so `itrl` (cap 60) was miscounted; and "0 of 444 reached the cap" had gone stale | Cap read from each run's own `meta['schedule']`. Measured: 0 of 300 at H=24, 5 of 80 at H=168 — and **DLinear 56 of 75, PatchTST 39 of 75**, never disclosed before | 6.2, 13.2, 13.4 |
+| D79 | C | Widening `COMPARISON_KEYS` from 12 models to 15 took Romano–Wolf from **31 of 66** rejections to **0 of 105** while no effect moved: the two naive comparators carry `\|t\|` up to 8.5 and the shared draw puts them in the max-`\|t\|` null | Second column `p_romano_wolf_family`, stepped down inside a declared claim family, beside the unchanged all-pairs headline. `vs-naive` rejects nothing under either, so the headline is robust to the choice. Post-hoc and labelled so | 9.2, 13.4 |
+| D80 | U | §9.2 asks for a coverage covariate **or** a restriction to well-covered blocks. The restriction returns `None` (it unbalances the panel) and the covariate was never built, so neither ran | `panel_beta1_covariate`, Frisch–Waugh inside the origin fixed effects with the same WCR bootstrap. β₁ = **+0.000250**, p = 0.7305, against the uncontrolled +0.000256 / 0.7381 | 9.2 |
+| D81 | C | `lookback_covariance_pr` has computed the **correlation** spectrum since `D53b`, but function, field and parquet column all still said covariance — and the correlation spectrum is **not monotone in K** either, which is the reason `D53b` gave | Renamed to `lookback_correlation_pr` / `pr_lookback_corr`. The real justification is scale-freeness. §5.4 mislabels `92.1 / 21.9 / 37.3 / 15.5` as covariance; they are the correlation figures, and the two `K_eff` constructs are **ordinally opposed** | 5.4 |
+| D82 | U | Every comparison was printed as two marginal means with marginal SEs, on arms scored on the same fifteen origins. The paired SE is **half** the marginal one, and `itrr` versus `itro` — RQ1's only direct contrast — was computed nowhere | `per_origin_relmse`, `paired_contrast`, a `contrasts` section, a paired column in Table 9. Matched-K measures **+0.001241, t = +6.27, 14 of 15 origins** — half the whole K=1→K=8 ladder gain, at fixed K | 9.1, 13.4 |
+| D83 | **F** | Figure 7 averaged each day over whatever origins still had data. Origins carry 146 to 180 tradable days, so the denominator fell across the tail and the first drop-out rendered as a **near-vertical seven-point fall at day 146** — read as a crash, in the figure the economic claim rests on. The early drop-outs are the outage-heavy origins, so the tail was also optimistic | Every curve truncated at the shortest series, the day named in the subtitle, so each plotted day averages all fifteen | 13.4 |
+| D85 | **F** | `run_id` encodes no configuration, so §10.4's orphaning rule covers only a renamed arm. `D76` changed the tuned arm's learning rate and none of its 75 ids, so a resumed session would have skipped all of them and reported the superseded configuration under the corrected caption | `pending` passes `code_sha256()` to `completed_run_ids`; within a vintage resume is unchanged, across vintages the grid re-runs. The filter is **off by default** because the report is a reader of runs, not a producer (`D62g`) | 10.4, 10.5, 12 |
+| D84 | C | `npst` and `nsea` sit at RelMSE ≈ 2.0 while every model the paper argues about is inside `[1.000, 1.027]`, so Figure 4 was a flat line and `D60c`'s ordering was invisible | Two panels: full range above, data-derived zoom below. Ridge and LSTM on the line, DLinear worst, the iTransformer band between | 13.4 |
+
+**The rule this pass bought, stated once because it fired four times: a change that is correct in one
+place is not free in another.** `D64` and `D74` were right to add the LSTM and the two naive
+comparators. Doing so cost Table 6 every adjusted rejection (`D79`), Figure 4 its entire dynamic
+range (`D84`), and left the one model whose standing changed out of the economics (`D77`) — none of
+which failed a test, because each produced an artifact that still rendered.
+
+**New contradictions found later take IDs D86+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---
@@ -1766,8 +1822,8 @@ invertedTransformer/
 notebooks/outputs/artifacts/        paper/
 ├── preds/{run_id}.parquet          ├── CLAUDE.md              # manuscript writing posture
 ├── meta/{run_id}.json              ├── paper_numbers.json     # THE manuscript source (§12)
-├── paper_numbers.json              ├── tables/table{1,2,2b,3,4,5,6,7,8}.tex
-├── run_block_metrics.parquet       ├── figures/figure{2b,3,4,5,6,7}.{pdf,png}
+├── paper_numbers.json              ├── tables/table{1,2,2b,3,4,5,6,7,8,9}.tex
+├── run_block_metrics.parquet       ├── figures/figure{1,2,2b,3,4,5,6,7}.{pdf,png}
 ├── seed_averaged_cells.parquet     └── panels/*.parquet
 ├── amplification_panel.parquet
 ├── decay_panel.parquet             # 0 rows — empty by the D55 guard (D60b)
@@ -1791,13 +1847,26 @@ worse than none.
 `BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload, keep in step by hand, and
 silently run stale. No definition moved: the cells *transcribe* `src/` and the generator writes them.
 
+**The outline is the pipeline, not the package (`D73`).** Twenty-four **phases**, each opening a
+`##` banner and named for what that step of the study *does* — Persiapan, Pustaka, Konfigurasi,
+Muat data, Pra-proses, Efisiensi, Split, K_eff, Algoritma, Loop latih, Metrik, Baseline,
+Perbandingan, Ekonomi, Attention, Runner, Pelaporan, Provenance, Invarian, Gerbang, Grid,
+Evaluasi, Simpan, Tabel. A phase carries its modules first and its orchestration steps second, so
+each stage of the study keeps its definitions and its execution together instead of eighteen modules
+stacking up in one block with every Stage cell trailing behind them. `PHASES` in the generator is
+that outline; `build()` refuses to run unless the concatenation of `phase.modules` equals
+`MODULE_ORDER`, because a phase table that drops or repeats a module produces a `NameError` hours
+into a Kaggle session rather than a failure here. **Headings and prose are Indonesian; identifiers,
+code and error strings are not.**
+
 **It carries the package as definition cells, not as files (`D58`), segmented by logical group
-(`D63`).** Eighteen modules, each opening a `##` section and cut into `###` subsections of functions
-that work together — 137 code cells of 20–120 lines, every one preceded by an HTML markdown heading
-naming what it does and which rule of this document it enforces. `SECTION_MAP` in the generator is
-that cut; `main()` refuses to run when a module is missing from it, for the same reason it refuses on
-a missing `MODULE_ORDER` entry. Cells define plain `def`, `class` and constant bodies in the kernel
-namespace; nothing is on `sys.path` and nothing is imported. Five consequences, each load-bearing:
+(`D63`).** Eighteen modules, each opening a `###` banner inside its phase and cut into `####`
+subsections of functions that work together — 137 definition cells of 20–120 lines plus 21
+orchestration cells, every one preceded by an HTML markdown heading naming what it does and which
+rule of this document it enforces. `SECTION_MAP` in the generator is that cut; `main()` refuses to
+run when a module is missing from it, for the same reason it refuses on a missing `MODULE_ORDER`
+entry. Cells define plain `def`, `class` and constant bodies in the kernel namespace; nothing is on
+`sys.path` and nothing is imported. Five consequences, each load-bearing:
 
 - **The flattening is subtractive, over exactly three declared categories.** *Intra-package imports*
   are removed, by `ast` node span rather than line matching so parenthesised and function-local ones

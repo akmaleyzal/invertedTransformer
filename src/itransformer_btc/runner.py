@@ -65,7 +65,11 @@ from itransformer_btc.baselines import (
 )
 from itransformer_btc.features import MATCHED_K_SUBSETS
 from itransformer_btc.attention import tercile_maps
-from itransformer_btc.model import ITransformerConfig, LongScheduleConfig
+from itransformer_btc.model import (
+    ITransformerConfig,
+    LongScheduleConfig,
+    TunedConfig,
+)
 from itransformer_btc.splits import OriginTensors, build_origin_tensors
 from itransformer_btc.train import (
     ARTIFACTS,
@@ -73,6 +77,7 @@ from itransformer_btc.train import (
     INPUT_PARQUET_ENV,
     Architecture,
     RunSpec,
+    code_sha256,
     is_complete,
     pick_device,
     train_one,
@@ -477,14 +482,49 @@ def discover_roots(working: Path = ARTIFACTS) -> list[Path]:
     return [r for r in roots if not (str(r) in seen or seen.add(str(r)))]
 
 
-def completed_run_ids(roots: list[Path]) -> set[str]:
+def completed_run_ids(roots: list[Path], code_digest: str = "") -> set[str]:
     """Run ids complete under root §10.5: both artifacts present, status complete.
 
     A prediction file without its meta, or a meta whose status is anything else,
     is **not** complete and the run is redone from scratch. Intra-run
     checkpointing is deliberately omitted: at ~30 s per run measured (`D57`) it
     costs far more complexity than it saves.
+
+    **A run from a different code vintage is not complete either** (`D85`). Root
+    §10.4 says a changed component orphans prior outputs rather than silently
+    reusing a mismatched result, but ``run_id`` encodes ``{model, origin, K, H,
+    seed}`` and nothing about the configuration, so a fix *inside* an arm leaves
+    the ids identical and resume happily keeps the stale predictions. `D76` is
+    exactly that shape: the tuned arm's learning rate changed, the 75 ``itrt``
+    ids did not, and a resumed session would have skipped every one of them and
+    reported the old configuration under the new caption. Comparing
+    ``meta['code_sha256']`` against the running package closes it, and it is also
+    §12's rule stated as behaviour --- numbers produced under different digests
+    are not comparable, so a grid must not silently become a mixture of two.
+
+    The cost is bounded and the trade is the right way round: within one vintage
+    every digest matches and resume behaves exactly as before, which is the case
+    a partial session actually hits. Across vintages the grid re-runs, which is
+    what §12 asks for and what the 1,620-run session did anyway in 8.96 h.
+
+    **The filter is off by default, and only :func:`pending` turns it on.** This
+    function has two callers wanting opposite things. Resume decides whether to
+    *skip* a run and must be strict. The report merely *discovers* what exists,
+    and `D62g` settles that case in the other direction: the vintage that matters
+    for a number is the vintage of the runs that produced it, and the reporting
+    code is a reader of those runs, not a producer of them. A strict default
+    would have made the generator refuse to read a grid it is perfectly able to
+    describe.
+
+    Args:
+        roots: Directories to search, each holding ``preds/`` and ``meta/``.
+        code_digest: Vintage to require. Empty accepts any, which is what a
+            reader wants; :func:`pending` passes the running package's.
+
+    Returns:
+        The run ids that may be skipped.
     """
+    wanted = code_digest
     done: set[str] = set()
     for root in roots:
         meta_dir = Path(root) / "meta"
@@ -495,16 +535,34 @@ def completed_run_ids(roots: list[Path]) -> set[str]:
             if not (Path(root) / "preds" / f"{run_id}.parquet").exists():
                 continue
             try:
-                if json.loads(meta_path.read_text()).get("status") == "complete":
-                    done.add(run_id)
+                meta = json.loads(meta_path.read_text())
             except (json.JSONDecodeError, OSError):
                 continue
+            if meta.get("status") != "complete":
+                continue
+            if wanted and meta.get("code_sha256") not in (None, wanted):
+                continue
+            done.add(run_id)
     return done
 
 
 def pending(cells: list[RunCell], roots: list[Path]) -> list[RunCell]:
-    """Manifest minus what is already complete, order preserved."""
-    done = completed_run_ids(roots)
+    """Manifest minus what is already complete **at this code vintage** (`D85`).
+
+    The vintage clause is the whole point. ``run_id`` encodes
+    ``{model, origin, K, H, seed}`` and nothing about the configuration, so root
+    §10.4's "a changed component orphans prior outputs" only covers a change that
+    renames the arm. A fix *inside* an arm leaves every id identical, and `D76`
+    was exactly that: the tuned arm's learning rate changed and its 75 ids did
+    not, so a resumed session would have skipped all of them and reported the old
+    configuration under the corrected caption.
+
+    Passing the digest makes the skip decision agree with §12, which already says
+    numbers from different digests are not comparable: a grid must not silently
+    become a mixture of two. Within one vintage nothing changes, which is the
+    case a partial session actually hits.
+    """
+    done = completed_run_ids(roots, code_digest=code_sha256())
     return [c for c in cells if c.run_id not in done]
 
 
@@ -898,9 +956,9 @@ def execute_parallel(
 #:
 #: Three knobs root §6.2 adopted from Liu et al. (2024) and never varied, each at
 #: the published value and one step either side. ``d_ff`` is absent on purpose:
-#: `D62b`'s capacity arm already swept it and made things worse at 14 of 15
-#: origins, and repeating it here would spend the budget re-answering a question
-#: that has an answer.
+#: `D62b`'s capacity arm already swept it and made things worse at 13 of 15
+#: origins on RelMSE, and repeating it here would spend the budget re-answering a
+#: question that has an answer.
 TUNING_GRID: tuple[dict[str, object], ...] = tuple(
     {"d_model": d, "e_layers": e, "lr": lr}
     for d in (64, 128, 256)
@@ -909,8 +967,11 @@ TUNING_GRID: tuple[dict[str, object], ...] = tuple(
 )
 
 #: Epochs each probe is given. Short on purpose: this ranks configurations, it
-#: does not train them. The winner is then trained under root §6.2's full
-#: schedule like every other arm.
+#: does not train them. The winner is then trained under root §6.2's full budget
+#: --- 30 epochs, patience 5, LR halved every 4 --- **at the learning rate the
+#: search selected**, which :class:`~itransformer_btc.model.TunedConfig` carries
+#: (`D76`). Everything except ``lr`` is the main arm's, so the arm differs from
+#: the ladder in exactly what the search chose and in nothing else.
 TUNING_EPOCHS: int = 6
 
 
@@ -921,7 +982,7 @@ def tune_on_validation(
     k: int = 8,
     device=None,
     log=print,
-) -> tuple[ITransformerConfig, list[dict]]:
+) -> tuple[TunedConfig, list[dict]]:
     """Pick one iTransformer config on one origin's **validation** sub-block.
 
     This exists to answer the one attack on the null that root §6.2 leaves open.
@@ -934,6 +995,9 @@ def tune_on_validation(
 
     Three properties keep it inside the pre-registration:
 
+    - **The winner is run as selected, learning rate included** (`D76`). Anything
+      the search ranks on and the arm then does not apply makes the arm answer a
+      different question from the one its caption claims.
     - **Validation only, one origin.** Exactly where `D27` put the Stage 5 gate,
       and for its reason: root §11 opens the test blocks once, after the design is
       frozen, so a selection that reads one cannot coexist with it.
@@ -971,10 +1035,18 @@ def tune_on_validation(
     rows.sort(key=lambda r: r["val_mse"])
     best = rows[0]
     log(f"tuned config selected on origin {origin_index} validation: {best}")
+    # `D76`: **the learning rate travels with the winner.** It is a third of the
+    # declared search space, and returning a bare ``ITransformerConfig`` --- which
+    # has no ``lr`` --- selected it and then threw it away, so the arm ran the
+    # winner's architecture under the default rate: a point this same search had
+    # evaluated and had not ranked first. :class:`TunedConfig` carries it into
+    # ``train_one`` through ``schedule()`` and into ``meta['config']`` through
+    # ``asdict``, which is what makes the arm regenerable under root §12.
     return (
-        ITransformerConfig(
+        TunedConfig(
             pred_len=PRED_LEN,
             d_model=int(best["d_model"]), e_layers=int(best["e_layers"]),
+            lr=float(best["lr"]),
         ),
         rows,
     )

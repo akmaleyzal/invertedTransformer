@@ -12,6 +12,7 @@ moved off the raw covariance.
 
 from __future__ import annotations
 
+import json
 import math
 
 import numpy as np
@@ -655,7 +656,9 @@ def test_parallel_executor_runs_every_cell_exactly_once(tmp_path, monkeypatch) -
                             fit=partial(fake_fit, None)))
     monkeypatch.setattr(runner, "write_artifacts", lambda *a, **k: (None, None))
     monkeypatch.setattr(runner, "is_complete", lambda *a, **k: False)
-    monkeypatch.setattr(runner, "completed_run_ids", lambda roots: set())
+    monkeypatch.setattr(
+        runner, "completed_run_ids", lambda roots, code_digest="": set()
+    )
     monkeypatch.setattr(runner._TensorCache, "get",
                         lambda self, cell: SimpleNamespace(train=[0]))
 
@@ -805,3 +808,33 @@ def test_tuning_grid_is_declared_and_covers_the_adopted_values() -> None:
         p["d_model"] == adopted.d_model and p["e_layers"] == adopted.e_layers
         for p in runner.TUNING_GRID
     ), "the grid cannot return the configuration the study actually ran"
+
+
+def test_resume_refuses_a_run_from_a_different_code_vintage(tmp_path) -> None:
+    """`D85` --- a fix inside an arm leaves the run_id identical, so resume must
+    look at the digest as well.
+
+    Root §10.4's orphaning rule only covers a change that renames the arm.
+    ``D76`` changed the tuned arm's learning rate and none of its 75 ids, so a
+    resumed session would have skipped every one and reported the superseded
+    configuration under the corrected caption. The reader path stays permissive
+    on purpose (`D62g`): the report describes runs, it does not produce them.
+    """
+    root = tmp_path / "artifacts"
+    (root / "preds").mkdir(parents=True)
+    (root / "meta").mkdir(parents=True)
+    run_id = "itrt_o01_K08_H024_s42"
+    (root / "preds" / f"{run_id}.parquet").write_bytes(b"PAR1")
+    (root / "meta" / f"{run_id}.json").write_text(
+        json.dumps({"status": "complete", "code_sha256": "stale" * 8})
+    )
+
+    # The reader sees it; the resume filter does not.
+    assert runner.completed_run_ids([root]) == {run_id}
+    assert runner.completed_run_ids([root], code_digest="stale" * 8) == {run_id}
+    assert runner.completed_run_ids([root], code_digest="current") == set()
+
+    cell = next(c for c in runner.manifest(("tuned",)) if c.run_id == run_id)
+    assert runner.pending([cell], [root]) == [cell], (
+        "a run written by a different code vintage must be redone, not skipped"
+    )

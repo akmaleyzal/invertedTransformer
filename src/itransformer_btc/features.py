@@ -15,6 +15,35 @@ window anywhere, the ``center=True`` leak class is unrepresentable (root §5.3).
 ladder order, so rung K is exactly the first K columns and ``r`` is channel 0 at
 every rung. Root §6.2 requires the loss be MSE on the **target channel only** at
 every rung; with ``r`` pinned at index 0 that is one constant, not a lookup.
+
+Upstream
+--------
+**All twelve variates are written here in polars from their published closed
+forms. Nothing is taken from a technical-analysis library, and that exclusion is
+a design decision rather than an oversight** -- RSI, MACD and Bollinger belong
+to no F1-F5 family, so admitting them would break the taxonomy that makes
+``K_eff`` interpretable and render the K=8 versus K=12 contrast meaningless
+(`D37`).
+
+The F2 volatility estimators, each per-bar:
+
+- M. Parkinson, "The extreme value method for estimating the variance of the
+  rate of return," *J. Business*, vol. 53, no. 1, pp. 61-65, 1980.
+- M. B. Garman and M. J. Klass, "On the estimation of security price
+  volatilities from historical data," *J. Business*, vol. 53, no. 1,
+  pp. 67-78, 1980.
+- L. C. G. Rogers and S. E. Satchell, "Estimating variance from high, low and
+  closing prices," *Ann. Appl. Probab.*, vol. 1, no. 4, pp. 504-512, 1991.
+
+Two departures worth stating where a reader meets the code. **No estimator is
+trailing-averaged** (`D13`): every variate is a pure per-bar function, which is
+what makes the ``center=True`` leakage class structurally unrepresentable and
+licenses root §8.3's no-embargo argument (`D15`). And Rogers-Satchell **is not
+strictly positive** -- it vanishes on the 33 shadowless bars in this sample --
+so it is taken as ``log(RS + 1e-9)``, the floor chosen to land inside the
+measured support rather than as 33 out-of-support spikes; Parkinson and
+Garman-Klass need no floor (`D52a`).
+:data:`itransformer_btc.config.SOURCE_PROVENANCE` carries this row in full.
 """
 
 from __future__ import annotations

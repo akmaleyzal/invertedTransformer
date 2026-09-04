@@ -37,6 +37,38 @@ design said:
   autocovariance to lag 23 is genuinely nonzero and equally real; Bartlett
   weights shrink the lag-22 term by ~92%, understating the variance and
   producing exactly the over-optimistic p-values this module exists to prevent.
+
+Upstream
+--------
+**Every estimator here is written on numpy from its published definition. No
+statistical package is imported at module level, and none is vendored.** The
+algorithms are cited to their papers; the implementations are this study's.
+
+- ``dm_test`` — F. X. Diebold and R. S. Mariano, "Comparing predictive
+  accuracy," *J. Bus. Econ. Statist.*, vol. 13, no. 3, pp. 253-263, 1995, with
+  the small-sample correction of D. Harvey, S. Leybourne, and P. Newbold,
+  "Testing the equality of prediction mean squared errors," *Int. J.
+  Forecast.*, vol. 13, no. 2, pp. 281-291, 1997. Validated against R's
+  ``forecast::dm.test``
+  (https://pkg.robjhyndman.com/forecast/reference/dm.test.html, accessed
+  2026-09-03) — a validation target, not a dependency.
+- ``clark_west_test`` — T. E. Clark and K. D. West, "Approximately normal tests
+  for equal predictive accuracy in nested models," *J. Econometrics*, vol. 138,
+  no. 1, pp. 291-311, 2007. Used for every nested pair, where standard DM is
+  undersized against the alternative this study exists to establish (`D29`).
+- Wild cluster restricted bootstrap — A. C. Cameron, J. B. Gelbach, and
+  D. L. Miller, *Rev. Econ. Statist.*, vol. 90, no. 3, pp. 414-427, 2008;
+  J. G. MacKinnon, M. O. Nielsen, and M. D. Webb, *J. Econometrics*, vol. 232,
+  no. 2, pp. 272-299, 2023; the ``(1 + count)/(1 + B)`` p-value from
+  A. C. Davison and D. V. Hinkley, *Bootstrap Methods and their Application*,
+  CUP, 1997. **Not the** ``wildboottest`` **package**, which root §9.2 names as
+  the reference implementation but which this package does not import
+  (`D42`, `D53d`).
+
+The rectangular long-run variance is deliberate, and it is the reason
+``statsmodels``' ``cov_hac`` is absent here: that estimator is Bartlett by
+default (`D34`). :data:`itransformer_btc.config.SOURCE_PROVENANCE` carries
+these rows in full.
 """
 
 from __future__ import annotations
@@ -50,7 +82,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from itransformer_btc.config import BLOCK_HOURS
+from itransformer_btc.config import BLOCK_HOURS, PRED_LEN
 
 #: ``{model}_o{origin:02d}_K{K:02d}_H{H:03d}_s{seed}`` (root §10.4).
 RUN_ID_PATTERN = re.compile(
@@ -1360,6 +1392,132 @@ def falsification_relmse(seed_avg: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def per_origin_relmse(
+    seed_avg: pl.DataFrame, model: str, k: int | None = None
+) -> pl.DataFrame:
+    """One RelMSE per origin for one arm: window-weighted over its test blocks.
+
+    Seed-averaged MSEs first, ratio second, exactly as `D42` requires --- the two
+    orders differ by Jensen, and the per-seed form would additionally have to pair
+    seed 42 of one arm with seed 42 of another, which are independent training
+    runs of different models.
+
+    Args:
+        seed_avg: :func:`seed_average`'s output.
+        model: Model tag.
+        k: Rung, when the tag carries more than one.
+
+    Returns:
+        ``origin, rel_mse, n_windows``, sorted by origin.
+    """
+    part = seed_avg.filter(
+        (pl.col("model") == model) & (pl.col("pred_len") == PRED_LEN)
+    )
+    if k is not None:
+        part = part.filter(pl.col("k") == k)
+    return (
+        part.group_by("origin")
+        .agg(
+            (pl.col("mse") * pl.col("n_windows")).sum().alias("_num"),
+            (pl.col("mse_naive") * pl.col("n_windows")).sum().alias("_den"),
+            pl.col("n_windows").sum().alias("n_windows"),
+        )
+        .with_columns((pl.col("_num") / pl.col("_den")).alias("rel_mse"))
+        .drop(["_num", "_den"])
+        .sort("origin")
+    )
+
+
+def paired_contrast(
+    seed_avg: pl.DataFrame,
+    left: tuple[str, int | None],
+    right: tuple[str, int | None],
+) -> dict:
+    """Paired difference in RelMSE between two arms, across the origins they share.
+
+    **The contrast the marginal columns cannot give you** (`D82`). Table 4 and
+    Table 9 print each arm's mean RelMSE with its standard error *across* origins,
+    and a reader differencing two such rows is comparing marginal spreads when the
+    arms are evaluated on the same fifteen origins with the same naive baselines.
+    The paired standard error is roughly half the marginal one here, so overlapping
+    error bars in those tables say nothing about whether the arms differ.
+
+    It is what RQ1's matched-K pair needs in particular. ``itro`` and ``itrr`` hold
+    K = 8, the target and the seeds fixed and move only the participation ratio, so
+    their difference is the direct K-versus-K_eff contrast the ladder can only
+    infer through a panel at ``corr(K, K_eff) = 0.828``. Reporting them as two
+    separate rows against the ladder leaves that difference uncomputed.
+
+    Sign convention: **positive means the left arm is worse**, since a higher
+    RelMSE is a worse forecast.
+
+    The origin is the inferential unit (`D30`) and RelMSE is scale-free, so this
+    never compares scaler-space MSEs fitted under different ``sigma_g`` (`D60i`).
+    It is a **post-hoc** statistic with no multiplicity control of its own: it
+    guides what belongs in the paper, and root §9.2's pre-registered machinery is
+    what a confirmatory claim goes through.
+
+    Args:
+        seed_avg: :func:`seed_average`'s output.
+        left: ``(model_tag, k)``; ``k`` may be None when the tag has one rung.
+        right: The arm it is measured against.
+
+    Returns:
+        ``left, right, mean_diff, se, t, p_two_sided, ci_low, ci_high,
+        n_origins, left_better``. ``p_two_sided`` is referred to ``t(G-1)``.
+    """
+    a = per_origin_relmse(seed_avg, left[0], left[1])
+    b = per_origin_relmse(seed_avg, right[0], right[1])
+    joined = a.join(b, on="origin", how="inner", suffix="_right").sort("origin")
+    diff = (
+        joined.get_column("rel_mse").to_numpy()
+        - joined.get_column("rel_mse_right").to_numpy()
+    )
+    g = int(diff.size)
+    label = lambda arm: arm[0] if arm[1] is None else f"{arm[0]}-K{arm[1]}"
+    if g < 2:
+        return {
+            "left": label(left), "right": label(right), "n_origins": g,
+            "mean_diff": None, "se": None, "t": None, "p_two_sided": None,
+            "ci_low": None, "ci_high": None, "left_better": None,
+        }
+
+    mean = float(diff.mean())
+    se = float(diff.std(ddof=1) / math.sqrt(g))
+    if se > 0:
+        t_stat = mean / se
+        p = 2.0 * _upper_tail(abs(t_stat), g - 1)
+        half = _t_critical(g - 1) * se
+    else:
+        # Identical at every origin. The attention arm is exactly this: it
+        # reproduces the main grid bit for bit, so the contrast is a zero with no
+        # spread and a t-statistic would be 0/0 (`D62d`).
+        t_stat, p, half = (0.0, 1.0, 0.0) if mean == 0.0 else (math.inf, 0.0, 0.0)
+
+    return {
+        "left": label(left),
+        "right": label(right),
+        "mean_diff": mean,
+        "se": se,
+        "t": t_stat,
+        "p_two_sided": float(p),
+        "ci_low": mean - half,
+        "ci_high": mean + half,
+        "n_origins": g,
+        "left_better": int((diff < 0).sum()),
+    }
+
+
+def _t_critical(df: int) -> float:
+    """Two-sided 5% Student-t critical value, normal fallback without scipy."""
+    try:
+        from scipy import stats as _stats  # root §16's named stats boundary
+
+        return float(_stats.t.ppf(0.975, df=df))
+    except ImportError:  # pragma: no cover - scipy ships with the Kaggle image
+        return 1.959963984540054
+
+
 def beta1_with_coverage(
     panel: pl.DataFrame,
     min_coverage: float = 0.9,
@@ -1401,3 +1559,122 @@ def beta1_with_coverage(
         # Unbalanced after the restriction. Loosening the estimator to produce a
         # number here would answer a different question than the one asked.
         return full, None
+
+
+def panel_beta1_covariate(
+    panel: pl.DataFrame,
+    value: str = "A",
+    covariate: str = "coverage",
+    B: int = 99_999,
+    seed: int = 42,
+) -> Beta1Result:
+    """``A(i,b) = alpha_i + beta1 b + beta2 c(i,b) + eps``, clustered on origin.
+
+    Root §9.2 requires **either** block coverage as a covariate **or** beta1
+    re-estimated on well-covered blocks. Until `D80` neither had been produced:
+    :func:`beta1_with_coverage` attempts the second and honestly returns ``None``
+    because restricting unbalances the panel, so the requirement was reported as
+    unmet by one route and never attempted by the other. This is the other route,
+    and unlike the restriction it always runs --- the panel stays balanced because
+    nothing is dropped.
+
+    Why it matters, in the terms `D45` puts it: test-window survival is
+    conditioned on **future** gaps, outages cluster on stress, so within an origin
+    the surviving sample composition trends and beta1 would absorb that trend as
+    though it were decay. Adding coverage as a regressor asks what is left of
+    beta1 once the trend it could be absorbing is accounted for.
+
+    Estimated by Frisch-Waugh inside the origin fixed effects: both the outcome
+    and the block index are within-demeaned and then residualised on the
+    within-demeaned coverage, after which beta1 is the simple slope. That is
+    algebraically the two-regressor fit and it lets the same cluster-robust
+    sandwich and the same restricted wild bootstrap carry over unchanged --- WCR,
+    bootstrapping the cluster-robust *t*, one-sided at ``H1: beta1 < 0``, with
+    Rademacher and Webb weights and the ``(1 + count) / (1 + B)`` floor (`D42`,
+    `D53d`).
+
+    Args:
+        panel: Balanced long frame with ``origin``, ``block``, ``value`` and
+            ``covariate``.
+        value: Dependent variable column.
+        covariate: The control. Coverage as a fraction, not a count, so
+            ``beta2`` reads per unit of surviving-window share.
+        B: Bootstrap replications.
+        seed: Bootstrap seed, recorded so the p-value is regenerable (root §12).
+
+    Returns:
+        A :class:`Beta1Result` whose ``beta1`` is the coverage-adjusted slope.
+        ``within_slopes`` are the per-origin adjusted slopes, so they still
+        average to ``beta1`` on a balanced panel.
+
+    Raises:
+        ValueError: If the panel is unbalanced, or if coverage has no
+            within-origin variation at all --- in which case there is nothing to
+            adjust for and :func:`panel_beta1` is the estimator that applies.
+    """
+    a, blocks = _balanced_matrix(panel, value)
+    c, _ = _balanced_matrix(panel, covariate)
+    g, n_blocks = a.shape
+
+    within = a - a.mean(axis=1, keepdims=True)
+    cw = c - c.mean(axis=1, keepdims=True)
+    xw = np.tile(blocks - blocks.mean(), (g, 1))
+
+    scc = float((cw * cw).sum())
+    if scc <= 0.0:
+        raise ValueError(
+            "coverage has no within-origin variation, so it cannot be a "
+            "covariate here; panel_beta1 is the estimator that applies"
+        )
+
+    # Frisch-Waugh: residualise the regressor of interest and the outcome on the
+    # control, both already swept of origin means. beta1 and the residuals of the
+    # two-regressor fit are then exactly those of the simple fit on the residuals.
+    xr = xw - (float((xw * cw).sum()) / scc) * cw
+    ar = within - (float((within * cw).sum()) / scc) * cw
+    sxx = float((xr * xr).sum())
+    if sxx <= 0.0:
+        raise ValueError("the block index is collinear with coverage within origin")
+
+    beta = float((ar * xr).sum() / sxx)
+    resid = ar - beta * xr
+    score = (resid * xr).sum(axis=1)
+    variance = float((score * score).sum()) / sxx**2
+    se = math.sqrt(variance) if variance > 0 else float("nan")
+    t_obs = beta / se if se == se and se > 0 else float("nan")
+
+    # Restricted residuals: imposing beta1 = 0 leaves alpha_i and beta2, and ar is
+    # already swept of both, so u_tilde is ar itself. Per-cluster inner products
+    # against the fixed regressors are all a bootstrap draw needs.
+    ux = (ar * xr).sum(axis=1)
+    uc = (ar * cw).sum(axis=1)
+    xx = (xr * xr).sum(axis=1)
+    cx = (cw * xr).sum(axis=1)
+
+    def _p(kind: str) -> float:
+        rng = np.random.default_rng(seed)
+        weights = _weights(kind, (B, g), rng)
+        beta_star = (weights @ ux) / sxx
+        delta_star = (weights @ uc) / scc
+        score_star = (
+            weights * ux[None, :]
+            - delta_star[:, None] * cx[None, :]
+            - beta_star[:, None] * xx[None, :]
+        )
+        var_star = np.square(score_star).sum(axis=1) / sxx**2
+        ok = var_star > 0
+        t_star = beta_star[ok] / np.sqrt(var_star[ok])
+        below = int(np.sum(t_star <= t_obs))  # H1: beta1 < 0, left tail
+        return (1.0 + below) / (1.0 + int(ok.sum()))
+
+    return Beta1Result(
+        beta1=beta,
+        t_statistic=t_obs,
+        cluster_se=se,
+        p_rademacher=_p("rademacher"),
+        p_webb=_p("webb"),
+        n_clusters=g,
+        n_observations=g * n_blocks,
+        within_slopes=(ar * xr).sum(axis=1) / (xr * xr).sum(axis=1),
+        B=B,
+    )
