@@ -20,6 +20,14 @@ recomputation method for the parts not present in `paper_numbers.json` is in §1
 > **The 75 `itrt` runs on disk predate the `D76` fix and are the wrong configuration**, so the grid
 > must be re-run **without attaching the previous output as a resume input** --- see §11.
 
+> **DISCHARGED, 2026-09-04.** That re-run happened. All 1,620 runs on disk now carry the single
+> vintage `bfb43f21028da322…`, `itrt` included, so the tuned arm is the corrected configuration and
+> the caption above it is no longer describing a superseded one. The `36fa9c77…` this file was
+> written against is one vintage behind; §1's table has been re-measured, and every *number* below
+> was read from the same artifacts and stands. Two things this file says are now out of date by
+> design rather than by neglect: the suite count (194) predates `D86`–`D88`, and `paper/` has since
+> been rebuilt from the 1,620-run grid.
+
 ---
 
 ## 1. Provenance — read this before quoting any number
@@ -29,7 +37,7 @@ recomputation method for the parts not present in `paper_numbers.json` is in §1
 | Runs complete / in manifest | **1,620 / 1,620** (`status: complete`, all of them) |
 | `preds/*.parquet` | 1,620 |
 | `meta/*.json` | 1,621 (1,620 runs + `tuning_selection.json`) |
-| `code_sha256` | `36fa9c77e65f6a1ba278dc11a4600658dac5a56d02701c1f8b86ef75e14f5198` — **one vintage across all 1,620** |
+| `code_sha256` | `bfb43f21028da322e123402837625815164a32b70f24f6fa50bed22f6679cadb` — **one vintage across all 1,620** (re-measured 2026-09-04; the `36fa9c77…` this table first named was superseded when §11's re-run landed) |
 | `input_sha256` | `8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e` (`file-digest`), §4.1's pinned parquet |
 | Grid file | `notebooks/outputs/artifacts/paper_numbers.json`, sha256 `b6aea49f96f4001612274ee4a3df5808d94cc02f680786ea2b01e8c3eec984ab`, generated `2026-08-31T15:15:40Z` |
 | Report file | `notebooks/outputs/paper/paper_numbers.json`, generated `2026-08-31T15:17:19Z`, names the grid file by the sha above — **chain intact** |

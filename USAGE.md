@@ -19,6 +19,9 @@ persisted prediction file plus a config hash.
 | One command to check the repo is sound | `python -m pytest tests/ -q` → **59 passed**, ~13 s, CPU only |
 | One command to run one experiment | `python -m itransformer_btc.runner --arms fresh --shard 0 --shards 15` |
 | One command after editing `src/` | `python tools/build_notebook.py` — the notebook carries the package (`D54`) |
+| One command after editing a **notebook cell** | save the notebook, then `python tools/notebook_to_src.py` — the return leg, verified byte-exact (`D88`) |
+| Keeping a Kaggle run's outputs | `python tools/build_notebook.py --preserve-outputs <exported.ipynb>` — carried onto byte-identical cells only (`D86`) |
+| Finding which cell writes what | the artefact-map cell near the top of the notebook prints it; the manifest lives in `cell.metadata.itbtc` (`D87`) |
 | One notebook to run the whole study | `notebooks/iTransformer.ipynb` on Kaggle 2×T4. **Self-contained**: attach the data, nothing else |
 | Where results land | `artifacts/preds/`, `artifacts/meta/`, `artifacts/paper_numbers.json` |
 

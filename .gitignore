@@ -245,3 +245,6 @@ notebooks/artifacts/
 # them would make the report generator's drift guard unenforceable.
 !paper/figures/*.pdf
 .jupyter-token
+
+*.png
+*.pdf

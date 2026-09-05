@@ -1074,8 +1074,8 @@ aggregated estimate. Never a single number.**
 | Falsification (fresh at `o_i + 90 d`) | `itrf` | 15 | 15 origins (`D26`) |
 | Horizon sweep | `itr` | 144 | origins 1, 5, 10, 15 × 4 K × 4 H × 3 seeds (`D08`, `D48`), **H=24 slice deduplicated** against the main grid (`D53e`) |
 | Ridge | `rdg` | 60 | 15 × 4 K (`D17`) |
-| DLinear | `dlr` | 45 | 15 × K=8 × 3 seeds |
-| PatchTST | `ptt` | 45 | 15 × K=8 × 3 seeds |
+| DLinear | `dlin` | 45 | 15 × K=8 × 3 seeds |
+| PatchTST | `ptst` | 45 | 15 × K=8 × 3 seeds |
 | **Subtotal — the manifest that ran 2026-08-11** | | **684** | 534 iTransformer + 150 baselines |
 | Attention capture | `itra` | 45 | 15 × K=8 × 3 seeds — Figure 5's maps, **and a bit-exact reproducibility check of the main grid** (`D62d`) |
 | Long schedule | `itrl` | 90 | 15 × K ∈ {1, 8} × 3 seeds, `lr_halve_every = 8`, 60 epochs, patience 10 (`D62c`) |
@@ -1091,7 +1091,16 @@ aggregated estimate. Never a single number.**
 | Lookback L=192 | `l192` | 75 | 15 × K=8 × 5 seeds (`D70`) |
 | Tuned | `itrt` | 75 | 15 × K=8 × 5 seeds at the config origin 1's **validation** preferred (`D70`) |
 | **Exploratory arms raised from 3 seeds to 5** | | +186 | horizon 144→240, DLinear/PatchTST/LSTM/attention 45→75 each, longsched 90→150 (`D70`) |
-| **Total manifest** | | **1,620** | 894 on disk, **726 pending ≈ 6.4 GPU-h ≈ 3.2 h wall on two devices** |
+| **Total manifest** | | **1,620** | **complete on disk, 2026-09-03** — see the measured row below |
+
+**Measured on disk, not planned (2026-09-04).** All **1,620** runs carry `status: complete` and a
+**single** `code_sha256` `bfb43f21028da322…`, so `D62g`'s mixed vintage is gone: the previously
+completed 894 were **re-run**, not resumed, which is also how `D76`'s corrected tuned configuration
+reached the 75 `itrt` runs. `meta/` holds 1,621 files — the runs plus `tuning_selection.json`.
+Per arm: `itr` 540 · `itrl` 150 · `dlin` `itra` `itrc` `itro` `itrr` `itrt` `itru` `l048` `l192`
+`lstm` `ptst` 75 each · `rdg` 60 · `itrf` `npst` `nsea` 15 each. The counts above this row are the
+manifest as it *grew*; these are what ran. **`notebooks/outputs/RUN_ANALYSIS.md` is the authority on
+what the grid returned**, and its own provenance table names the superseded `36fa9c77…` vintage.
 
 **`D70`'s five arms are exploratory, declared before running, and reported whatever they show** —
 §13.2's commitment, which an arm reported only when it agrees with the headline does not meet. None
@@ -1791,12 +1800,75 @@ comparators. Doing so cost Table 6 every adjusted rejection (`D79`), Figure 4 it
 range (`D84`), and left the one model whose standing changed out of the economics (`D77`) — none of
 which failed a test, because each produced an artifact that still rendered.
 
-**New contradictions found later take IDs D86+. Absorbing one silently is the exact failure this
+### D86–D88 — defects found by *reading the notebook as the deliverable it became*
+
+The fourteenth pass (2026-09-04) has the lens §1 implies and no earlier pass applied: **the notebook
+is what an examiner opens.** `D63` and `D73` already moved in that direction, cutting module dumps
+into sectioned cells and the outline into phases. What they left untouched was everything about the
+notebook that a *reader* needs and a *launcher* does not — evidence, and a way to find anything in
+354 cells.
+
+| ID | Sev | Defect | Resolution | § |
+|---|---|---|---|---|
+| D86 | **F** | `D61` forbade committing the Kaggle export over the generated notebook, correctly, and nobody stated the price: the committed notebook carried **zero outputs** for the life of the project, so the artefact §15 calls *evidence* had none — while the only executed copy was the one file that could not be committed. §15's own "stale evidence is worse than none" was read as licensing *no* evidence | `build_notebook.py --preserve-outputs`: outputs carried forward only onto **byte-identical** cells, dropped everywhere else, definition cells always cleared. 12 cells and 169 kB of the 1,620-run session's evidence now survive regeneration, and `--check` stays byte-stable | 15 |
+| D87 | **F** | 144 definition cells carried `metadata.itbtc`; the **seventeen cells that produce every artefact carried none**, and seven of them had no heading either. *Which cell writes the figures* and *which writes the metric parquets* were unanswerable except by reading 354 cells in order — in the artefact a reader opens to answer exactly that | Every step cell gets a stable slug and a `reads`/`writes` manifest, rendered as a **MENULIS/MEMBACA** strip under its banner; an index cell near the top prints the map, built from the cells actually emitted rather than from `PHASES`. `tests/test_artifact_map.py` asserts each declared path against the cell body | 15 |
+| D88 | I | The notebook became the thing people edit while `src/` stayed the only place a change could be *made*, so editing a cell meant retyping it into a module — two copies kept in step by hand, which is `D54a` and `D69` in a new costume | `tools/notebook_to_src.py`: cells regrouped by `itbtc`, removed lines restored at their aligned anchors, then **re-flattened and refused unless byte-identical**. Activation lives in a fully commented last cell, inert on Kaggle where neither `tools/` nor `src/` exists | 15, 16 |
+
+**`D87` is filed **F**, not **I**, and the reason is §1.** A launcher nobody opens can be unnavigable
+at no cost. A manuscript's companion artefact cannot: an examiner who cannot find where a figure was
+produced has no way to check that it was produced the way the methodology says, and §12's whole
+contract is that every number resolves to something regenerable. Unfindable is unverifiable.
+
+**New contradictions found later take IDs D89+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---
 
 ## 15. Repository layout
+
+**The notebook is the primary surface; `src/` is its tested projection (`D88`, 2026-09-04).** This
+inverts the emphasis of everything below it, and the emphasis is the only thing it inverts. §1's
+deliverable is a manuscript, and `notebooks/iTransformer.ipynb` is what an examiner opens beside it,
+what runs on Kaggle, and now what you may edit directly. `src/itransformer_btc/` remains the
+importable package the test suite loads and the thing `code_sha256` hashes — half of §12's contract —
+so it is not a shadow and must not be described as one.
+
+What changed is that the two are now kept in step **in both directions**, by the same byte-exact
+comparison, and neither is retyped by hand:
+
+| Direction | Command | What it guarantees |
+|---|---|---|
+| `src/` → notebook | `python tools/build_notebook.py` | Cells are byte-exact slices of the flattened modules; `--check` fails the suite on drift |
+| notebook → `src/` | `python tools/notebook_to_src.py` | Re-flattens what it wrote and refuses unless it reproduces the cells byte for byte |
+
+**Three rules follow, and none of them is optional.**
+
+- **Edit either side; commit both.** They are one change. A commit carrying only one of them is the
+  two-copies-nobody-checks failure `D54a` and `D69` are both instances of.
+- **An import can only be added in `src/`.** Module-level imports are stripped by the flattening and
+  re-emitted once in the Library cell, which is generated *from* the modules (`D66`), so a cell has
+  no import line to edit. `notebook_to_src.py` refuses with a message naming `src/` rather than
+  guessing where the text belongs.
+- **The sync cell at the bottom of the notebook stays commented out.** On Kaggle there is no `tools/`
+  and no `src/`; an active cell there fails in the last cell of a twelve-hour session or writes
+  rubbish into the session's working directory. Activation is a deliberate act in a local checkout.
+
+**Committed outputs are evidence, and are now kept (`D86`).** `D61` forbids overwriting the generated
+notebook with the Kaggle export, and it was right — the export carries papermill metadata and turns
+the suite red. Its cost went unstated for a month: the committed notebook carried **zero outputs**,
+so the artefact this section calls evidence had none, while the only executed copy of it was the one
+thing nobody was allowed to commit. `build_notebook.py` now carries outputs forward onto
+**byte-identical** cells and drops them everywhere else, so an output that survives regeneration
+provably describes the code above it. Definition cells are exempt and always cleared: they define and
+return nothing, and the one thing they can emit is their own docstring echoed back.
+
+**Every producing cell declares what it reads and writes (`D87`).** The 144 definition cells carried
+`metadata.itbtc`; the seventeen cells that actually produce something carried nothing, so *which cell
+makes the figures* and *which one writes the metric parquets* could not be answered except by reading
+354 cells in order. Each step cell now carries a stable slug and a `reads`/`writes` manifest, its
+banner renders that manifest, and an index cell near the top prints the map, built from the cells
+actually emitted. `tests/test_artifact_map.py` asserts every declared path against the cell body, so
+a manifest cannot outrun its code.
 
 ```
 invertedTransformer/
@@ -1806,9 +1878,10 @@ invertedTransformer/
 ├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D62; §14 is the index
 ├── docs/ORIGIN_WINDOW_BUDGET.md    # per-origin/per-block window accounting — D45's assertion target
 ├── src/                            # importable package; module inventory in USAGE.md §2
-├── tools/build_notebook.py         # generates notebooks/iTransformer.ipynb FROM src/ (D54)
+├── tools/build_notebook.py         # src/ -> notebook; carries outputs forward (D54, D86, D87)
+├── tools/notebook_to_src.py        # notebook -> src/; the return leg, verified byte-exact (D88)
 ├── tools/build_report.py           # generates paper/ FROM the artifacts on disk (D62a). CPU only
-├── notebooks/iTransformer.ipynb    # the launcher — self-contained, GENERATED, never hand-edited
+├── notebooks/iTransformer.ipynb    # THE deliverable — self-contained, generated, editable both ways
 ├── notebooks/logs-iTransformer.txt # the Kaggle session console stream — D60's evidence base
 ├── notebooks/outputs/artifacts/    # THE grid output (below)
 ├── paper/                          # manuscript + GENERATED deliverables (below)
@@ -1965,14 +2038,22 @@ The source specification's §6.2 purge snippet is pandas and must be **re-expres
 sha256 in every `meta/*.json` — the middle one because the first is `"unknown"` off-repo, which is
 every Kaggle session (§12).
 
-**Regenerating the notebook is part of editing `src/`.** After any change under
-`src/itransformer_btc/`, run `python tools/build_notebook.py` and commit the notebook with the same
-change; skipping it fails the suite rather than shipping a launcher that runs last week's code.
-Adding a module means adding it to `MODULE_ORDER` **and** giving it a `SECTION_MAP` entry — the
-generator refuses to run
-otherwise, because a silently omitted module leaves a name undefined deep in a twelve-hour session.
-**Never commit the Kaggle export over the generated notebook** (`D61`): it carries papermill metadata,
-execution counts and committed outputs, and turns the suite red.
+**The notebook and `src/` are one change, whichever side you edited (`D88`).** Editing `src/` means
+running `python tools/build_notebook.py` before committing; editing a notebook cell means **saving
+the notebook first**, then running `python tools/notebook_to_src.py`, which reads the file on disk
+and not the live kernel. Either way both files go in the same commit. Skipping the step fails the
+suite rather than shipping a notebook that runs last week's code. Adding a module means adding it to
+`MODULE_ORDER` **and** giving it a `SECTION_MAP` entry — the generator refuses to run otherwise,
+because a silently omitted module leaves a name undefined deep in a twelve-hour session. Adding a
+*step* means giving it a slug and a `reads`/`writes` manifest (`D87`); a producing cell with neither
+is invisible in the artefact map and fails `tests/test_artifact_map.py`.
+
+**Never commit the Kaggle export over the generated notebook** (`D61`): it carries papermill
+metadata and execution counts, and turns the suite red. **Its outputs are worth keeping, and there is
+now a way that does not break the rule** (`D86`): save the export somewhere under
+`notebooks/outputs/`, then
+`python tools/build_notebook.py --preserve-outputs <that file>`. Outputs land only on byte-identical
+cells; everything else is dropped and counted in the build log. `--no-preserve-outputs` builds clean.
 
 **Before any long run.** Overfit a single batch: if the model cannot drive loss to ~0 on 8 samples in
 200 steps, the plumbing is broken. **Run it with `dropout=0.0`** (`D52d`) — with the configured 0.1

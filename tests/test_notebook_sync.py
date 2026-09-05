@@ -621,8 +621,38 @@ def test_notebook_is_valid_nbformat_with_gpu_metadata(notebook: dict) -> None:
         assert cell["cell_type"] in {"code", "markdown"}
         assert isinstance(cell["source"], list)
         assert "id" in cell
-        if cell["cell_type"] == "code":
-            assert cell["outputs"] == [], "committed outputs go stale; strip them"
+
+
+def test_committed_outputs_are_evidence_and_never_stale(notebook: dict) -> None:
+    """Outputs may be committed, under `D86`'s conditions and no others.
+
+    This replaces a flat ``outputs == []``. That rule was right about the
+    hazard — an output describing code that has since changed is a lie an
+    examiner cannot detect — and wrong about the remedy, because it left the
+    artefact root §15 calls *evidence* carrying none at all for the whole life
+    of the project. `D86` keeps the guarantee and drops the cost: the generator
+    carries an output forward only onto a **byte-identical** cell, so an output
+    that survives regeneration provably describes the code above it.
+
+    Two things make that checkable here rather than taken on trust.
+    ``test_notebook_is_not_stale`` runs ``--check``, which rebuilds and compares
+    byte for byte, so an output on a cell whose source had moved would have been
+    dropped by that rebuild and the files would differ. And definition cells are
+    held to the old rule outright: they define, they return nothing, and the one
+    thing they can emit is their own docstring echoed back.
+    """
+    offenders: list[tuple[int, str]] = []
+    for index, cell in enumerate(notebook["cells"]):
+        if cell["cell_type"] != "code" or not cell.get("outputs"):
+            continue
+        tag = cell.get("metadata", {}).get("itbtc", {})
+        if tag.get("role") == "module":
+            offenders.append((index, f"{tag.get('module')}:{tag.get('section')}"))
+    assert not offenders, (
+        "definition cells carry outputs. A module cell defines and returns "
+        "nothing, so its only possible output is the module docstring echoed "
+        f"back as an execute_result -- noise under a heading: {offenders}"
+    )
 
 
 def test_notebook_is_not_stale() -> None:

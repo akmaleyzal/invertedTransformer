@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import dataclasses
 import hashlib
 import json
@@ -779,12 +780,59 @@ class Step:
     lists its modules first and its steps second, which is the order they have
     to run in anyway: a call above the definition it needs fails on Kaggle at
     cell N rather than in a test here (`D59`).
+
+    **A step declares what it reads and what it writes (`D87`).** Until it did,
+    the 144 definition cells carried ``metadata.itbtc`` and the seventeen cells
+    that actually *produce* something carried nothing at all — so the question a
+    reader opens this notebook to ask, *which cell makes the figures and which
+    one writes the metric parquets*, had no answer short of reading 354 cells in
+    order. The manifest is what the artefact map at the top is generated from
+    and what ``tests/test_notebook_cells.py`` asserts against the cell body, so
+    a step cannot claim an artefact its code does not write.
+
+    Attributes:
+        md: The ``###`` banner above the cell. Never ``None`` for a step that
+            writes something — a producing cell without a heading is exactly
+            what `D87` was raised for.
+        code: Cell body, or a ``{placeholder}`` :func:`build` expands.
+        guard: Wrap the body in `D54e`'s ``GRID_COMPLETE`` guard under this name.
+        meta: Extra ``cell.metadata``, merged under whatever this step declares.
+        step: Stable slug. The artefact map and every test address a cell by
+            this, never by index, so inserting a phase renumbers nothing.
+        reads: Path globs the cell consumes, relative to the working directory.
+        writes: Path globs the cell produces. Empty means the cell only prints —
+            which is a claim in itself, and the tests hold it to it.
     """
 
     md: str | None
     code: str
     guard: str | None = None
     meta: dict | None = None
+    step: str = ""
+    reads: tuple[str, ...] = ()
+    writes: tuple[str, ...] = ()
+
+    def cell_metadata(self) -> dict | None:
+        """``cell.metadata`` for this step's code cell, or ``None``.
+
+        Explicit ``meta`` wins nothing here — it is merged *under* the manifest,
+        so the library cell keeps the role it declares for itself while a step
+        that declares both gets a single coherent block. One source, read by the
+        notebook and by the tests alike.
+        """
+        if not self.step:
+            return self.meta
+        itbtc: dict = {"role": "step", "step": self.step}
+        if self.reads:
+            itbtc["reads"] = list(self.reads)
+        if self.writes:
+            itbtc["writes"] = list(self.writes)
+        if self.guard is not None:
+            itbtc["guarded_on"] = "GRID_COMPLETE"
+        merged = {"itbtc": itbtc}
+        if self.meta:
+            merged = {**self.meta, **merged}
+        return merged
 
 
 @dataclasses.dataclass(frozen=True)
@@ -880,6 +928,72 @@ def _html_step(emoji: str, title: str, blurb: str, theme: str) -> str:
         f"{emoji} {title}</h3>\n"
         f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">{blurb}</p>\n'
         f"</div>"
+    )
+
+
+#: Emoji per artefact kind, keyed by the suffix a declared glob ends with.
+#:
+#: The point is that a reader scanning the outline sorts cells by *what comes
+#: out of them* before reading a word: a chart, a table, a data file, a trained
+#: run. Keep this small — a legend nobody can hold in their head is a legend
+#: that gets ignored, and the label beside it carries the real meaning anyway.
+ARTIFACT_ICON: dict[str, str] = {
+    ".pdf": "🖼️",
+    ".png": "🖼️",
+    ".tex": "📄",
+    ".parquet": "🧊",
+    ".json": "🧾",
+}
+
+
+def _artifact_icon(pattern: str) -> str:
+    for suffix, icon in ARTIFACT_ICON.items():
+        if pattern.endswith(suffix):
+            return icon
+    return "📁"
+
+
+def _html_artifacts(step: "Step") -> str:
+    """The **Menulis / Membaca** strip under a step's banner (`D87`).
+
+    Rendered from :attr:`Step.writes` and :attr:`Step.reads`, the same tuples
+    the artefact map and the tests read, so the three cannot disagree. A step
+    that produces nothing gets no strip at all rather than an empty one: a
+    reader scanning for producers should see *fewer* marks, not more.
+
+    Deliberately a separate ``<div>`` appended to the banner's own markdown cell
+    rather than a cell of its own. An extra cell per step would add seventeen
+    cells to an artefact `D63` already cut for readability, and would put a
+    heading and its own subtitle on either side of a cell boundary.
+    """
+    if not (step.writes or step.reads):
+        return ""
+    rows = []
+    if step.writes:
+        items = " &nbsp; ".join(
+            f"{_artifact_icon(w)} <code>{w}</code>" for w in step.writes
+        )
+        rows.append(
+            '<div style="margin-top: 8px;">'
+            '<span style="color:#ffd166; font-weight:600; font-size:0.84em;">'
+            "MENULIS</span> "
+            f'<span style="color:#dcdcdc; font-size:0.84em;">{items}</span></div>'
+        )
+    if step.reads:
+        items = " &nbsp; ".join(
+            f"{_artifact_icon(r)} <code>{r}</code>" for r in step.reads
+        )
+        rows.append(
+            '<div style="margin-top: 4px;">'
+            '<span style="color:#9ec5fe; font-weight:600; font-size:0.84em;">'
+            "MEMBACA</span> "
+            f'<span style="color:#b8b8b8; font-size:0.84em;">{items}</span></div>'
+        )
+    return (
+        '\n\n<div style="background:#0e0e12; border-left:4px solid #6c757d; '
+        'border-radius:0 8px 8px 0; padding:10px 22px; margin-top:-6px;">\n'
+        + "\n".join(rows)
+        + "\n</div>"
     )
 
 
@@ -1258,22 +1372,25 @@ _STATUS_NOTE = {
     "own": "no upstream code exists; implemented here from the paper",
 }
 
-print("SOURCE PROVENANCE — 16 algorithms")
+print(f"SOURCE PROVENANCE — {len(SOURCE_PROVENANCE)} algorithms")
 print("=" * 78)
-for _row in SOURCE_PROVENANCE:
+# ``_prov``, never ``_row``: in a flattened notebook every module shares one
+# kernel namespace, and ``efficiency._row`` is a function three phases below.
+# `D65` is that collision having already cost a twelve-hour session once.
+for _prov in SOURCE_PROVENANCE:
     print()
-    print(f"{_row.component}")
-    print(f"  in         {_row.module}")
-    print(f"  status     {_row.status} ({_STATUS_NOTE[_row.status]})")
-    print(f"  reference  {_row.reference}")
-    if _row.repo:
-        _seen = "verified" if _row.verified else "NOT yet verified (root 13.3)"
-        print(f"  code       {_row.repo}")
-        print(f"             {_row.licence}, accessed {_row.accessed} — {_seen}")
+    print(f"{_prov.component}")
+    print(f"  in         {_prov.module}")
+    print(f"  status     {_prov.status} ({_STATUS_NOTE[_prov.status]})")
+    print(f"  reference  {_prov.reference}")
+    if _prov.repo:
+        _seen = "verified" if _prov.verified else "NOT yet verified (root 13.3)"
+        print(f"  code       {_prov.repo}")
+        print(f"             {_prov.licence}, accessed {_prov.accessed} — {_seen}")
     else:
         print("  code       no upstream implementation")
-    if _row.adapted:
-        print(f"  adapted    {_row.adapted}")
+    if _prov.adapted:
+        print(f"  adapted    {_prov.adapted}")
 
 _by_status = {s: sum(1 for r in SOURCE_PROVENANCE if r.status == s)
               for s in _STATUS_NOTE}
@@ -1912,6 +2029,61 @@ def _lines(text: str) -> list[str]:
     return text.splitlines(keepends=True)
 
 
+def artifact_map_cell(cells: list[dict]) -> str:
+    """The index of producing cells, built from the cells actually emitted.
+
+    Read off ``cell.metadata.itbtc`` **after** the notebook has been laid out,
+    never from :data:`PHASES` — so the numbers it prints are the numbers a
+    reader will actually scroll to, and a step that stops declaring an artefact
+    disappears from the map by construction rather than by anyone remembering.
+
+    Printed rather than rendered as markdown for one reason: it is *evidence*.
+    A saved notebook carries its output, so the map travels with the artefact an
+    examiner opens (root §15). The literal table is embedded because the
+    notebook has no access to this generator at run time.
+    """
+    rows: list[tuple[int, str, list[str], list[str]]] = []
+    for index, cell in enumerate(cells):
+        tag = cell.get("metadata", {}).get("itbtc", {})
+        if tag.get("role") != "step":
+            continue
+        rows.append((index, tag.get("step", "?"),
+                     list(tag.get("writes", [])), list(tag.get("reads", []))))
+    literal = "".join(
+        f"    ({i}, {slug!r}, {w!r}, {r!r}),\n" for i, slug, w, r in rows
+    )
+    return (
+        "# PETA ARTEFAK — sel mana memproduksi apa (`D87`).\n"
+        "#\n"
+        "# Dibangun dari metadata sel yang benar-benar dipancarkan generator,\n"
+        "# bukan dari daftar yang ditulis tangan, jadi ia tidak bisa mengklaim\n"
+        "# sel yang tidak ada. Nomor sel nol-indeks, sama seperti yang dipakai\n"
+        "# Jupyter di sisi kiri.\n"
+        "_ARTIFACT_MAP = [\n"
+        f"{literal}"
+        "]\n"
+        "\n"
+        "_produsen = [r for r in _ARTIFACT_MAP if r[2]]\n"
+        'print("PETA ARTEFAK — " + str(len(_produsen)) + " sel produsen dari "\n'
+        '      + str(len(_ARTIFACT_MAP)) + " sel orkestrasi")\n'
+        'print("=" * 78)\n'
+        "for _i, _slug, _w, _r in _ARTIFACT_MAP:\n"
+        "    if not _w:\n"
+        "        continue\n"
+        '    print()\n'
+        '    print("  sel " + str(_i).rjust(3) + "  [" + _slug + "]")\n'
+        "    for _p in _w:\n"
+        '        print("        menulis  " + _p)\n'
+        "    for _p in _r:\n"
+        '        print("        membaca  " + _p)\n'
+        "\n"
+        'print()\n'
+        'print("=" * 78)\n'
+        'print("Sel yang hanya membaca dan mencetak, tanpa menulis artefak:")\n'
+        'print("  " + ", ".join(r[1] for r in _ARTIFACT_MAP if not r[2]))\n'
+    )
+
+
 def _markdown(index: int, text: str) -> dict:
     return {
         "id": f"md-{index:02d}",
@@ -1968,6 +2140,136 @@ MD_STEP_KEFF = _html_step(
     "keff.py",
 )
 
+# Tujuh step di bawah ini sebelumnya berjalan tanpa heading sama sekali dan
+# hanya mengandalkan banner fase di atasnya (`D87`). Dua di antaranya — "Simpan
+# angka" dan "Tabel & figure" — adalah satu-satunya sel yang menulis panel
+# metrik dan seluruh figure, yaitu persis dua sel yang paling dicari pembaca.
+
+MD_STEP_SYNC = _html_step(
+    "🔁",
+    "Sinkron balik ke src/ — nonaktif, aktifkan sendiri",
+    "Notebook ini adalah tempat kamu mengetik; <code>src/</code> adalah proyeksi "
+    "yang diuji. Sel di bawah menulis balik <code>src/itransformer_btc/</code> "
+    "dari sel-sel di atas, dan ia <strong>dikomentari penuh</strong> — di Kaggle "
+    "tidak ada <code>src/</code> maupun <code>tools/</code>, dan sel aktif di sana "
+    "akan gagal atau menulis sampah. Hapus <code>#</code> hanya di checkout lokal, "
+    "setelah menyimpan notebook (<code>D88</code>).",
+    "__init__.py",
+)
+
+CODE_SYNC = r'''# ============================================================================
+# SINKRON BALIK — NONAKTIF. Hapus '# ' pada empat baris terakhir untuk memakai.
+# ============================================================================
+#
+# Apa yang dilakukannya
+#   Mengumpulkan setiap sel definisi di notebook ini lewat metadata `itbtc`,
+#   menggabungkannya per modul, menyisipkan kembali blok impor yang dibuang
+#   flattening, lalu menulis src/itransformer_btc/. Setelah menulis ia
+#   mem-flatten ulang hasilnya dan menuntut byte-identik dengan sel-sel tadi;
+#   kalau tidak, berkasnya dikembalikan dan tidak ada yang berubah.
+#
+# Kapan dipakai
+#   Setelah kamu menyunting sel definisi di notebook dan ingin perubahan itu
+#   sampai ke paket yang diuji pytest dan di-hash oleh code_sha256.
+#
+# Syarat
+#   1. SIMPAN notebook lebih dulu. Skrip membaca berkas .ipynb di disk,
+#      bukan kernel yang sedang jalan.
+#   2. Jalankan dari checkout lokal. Di Kaggle tidak ada tools/ maupun src/.
+#   3. Impor baru TIDAK bisa ditambahkan dari sel. Impor hidup di sel Library
+#      yang digenerate *dari* modul (`D66`), jadi sel tidak punya baris impor
+#      untuk disunting. Skrip menolak dan menyebut src/ sebagai tempatnya.
+#
+# Sesudahnya
+#   python tools/build_notebook.py --check
+#   lalu commit src/ dan notebook bersama-sama — keduanya satu perubahan.
+#
+# import subprocess, sys
+# _sync = subprocess.run([sys.executable, "tools/notebook_to_src.py",
+#                         "notebooks/iTransformer.ipynb"],
+#                        capture_output=True, text=True)
+# print(_sync.stdout or _sync.stderr)
+'''
+
+MD_STEP_MAP = _html_step(
+    "🗺️",
+    "Peta artefak — sel mana memproduksi apa",
+    "Notebook ini punya 350-an sel dan hanya belasan di antaranya menghasilkan "
+    "sesuatu. Sel ini mencetak indeksnya: nomor sel, apa yang ditulis, apa yang "
+    "dibaca — sehingga <em>di mana figure dibuat</em> dan <em>di mana panel "
+    "metrik ditulis</em> terjawab sebelum satu sel pun dibuka. Indeksnya "
+    "dibangun dari metadata sel yang benar-benar dipancarkan, jadi ia tidak bisa "
+    "menyebut sel yang tidak ada (<code>D87</code>).",
+    "budget.py",
+)
+
+MD_STEP_SETUP = _html_step(
+    "🧰",
+    "Siapkan sesi",
+    "Cap <code>SESSION_T0</code>, laporkan perangkat yang terlihat, dan temukan "
+    "parquet input di kedalaman berapa pun lalu <strong>periksa ia benar-benar "
+    "parquet</strong> — mencocokkan nama tidak memverifikasi apa pun "
+    "(<code>D71</code>, <code>D72</code>).",
+    "train.py",
+)
+
+MD_STEP_LIBRARY = _html_step(
+    "📚",
+    "Library — satu-satunya sel yang mengimpor",
+    "Setiap impor yang paket ini pakai, dimuat sekali. Sel definisi di bawahnya "
+    "tidak membawa satu impor pun, termasuk <code>from __future__ import "
+    "annotations</code>: IPython mengakumulasi flag <code>__future__</code> "
+    "lintas sel (<code>D66</code>, <code>D67</code>).",
+    "__init__.py",
+)
+
+MD_STEP_INVARIANTS = _html_step(
+    "🛠️",
+    "Jalankan Stage 4 — tiga invarian pra-terbang",
+    "Invariansi skala <code>MSE(c·x)/c² == MSE(x)</code>, overfit satu batch pada "
+    "<code>dropout=0.0</code>, lalu Naive-RW dihitung lebih dulu sebelum satu "
+    "model pun latih. Ketiganya gagal saat pertama kali dijalankan.",
+    "efficiency.py",
+)
+
+MD_STEP_PILOT = _html_step(
+    "🛡️",
+    "Jalankan gerbang Stage 5 — pada validasi, bukan uji",
+    "Origin 1, 4 K × 3 seed, dinilai pada sub-blok validasi supaya blok uji tetap "
+    "tertutup sampai desain beku (<code>D27</code>). Statistiknya Clark–West, "
+    "karena pasangannya nested (<code>D29</code>).",
+    "comparisons.py",
+)
+
+MD_STEP_GRID = _html_step(
+    "🚀",
+    "Jalankan grid — 1.620 run, dua T4",
+    "Satu worker per device dari satu antrean bersama; seeding di-scope per "
+    "device sehingga sebuah run menghasilkan byte yang sama entah ia berjalan "
+    "sendiri atau berdampingan (<code>D68</code>). Resume lewat glob, tanpa slug "
+    "yang di-hardcode (<code>D54</code>).",
+    "runner.py",
+)
+
+MD_STEP_SAVE = _html_step(
+    "🧊",
+    "Simpan panel metrik — enam parquet plus paper_numbers.json",
+    "Inilah sel yang <strong>menulis hasil metrik dalam bentuk parquet</strong>. "
+    "Setiap panel diturunkan dari <code>preds/</code> mentah, bukan dari angka "
+    "yang disalin: root §12 menuntut tiap angka bisa diregenerasi.",
+    "metrics.py",
+)
+
+MD_STEP_REPORT = _html_step(
+    "🖼️",
+    "Render deliverable — sepuluh tabel dan delapan figure",
+    "Inilah sel yang <strong>memproduksi seluruh figure</strong> dan seluruh "
+    "<code>.tex</code>. Semuanya di-render <em>dari</em> "
+    "<code>paper_numbers.json</code>, tidak pernah ditranskripsi tangan "
+    "(<code>D62a</code>).",
+    "report.py",
+)
+
 
 #: The notebook's outline, top to bottom (`D73`).
 #:
@@ -1991,7 +2293,15 @@ PHASES: tuple[Phase, ...] = (
             "Kandidat parquet dicocokkan lewat <strong>isi</strong>, bukan nama: <code>PAR1</code> di kedua ujung, diperiksa di titik pemilihan (<code>D72</code>). Pencariannya turun ke kedalaman berapa pun lewat <code>rglob</code>, karena path yang UI Kaggle berikan tiga tingkat dalam — satu tingkat lebih dalam dari pola terdalam yang lama (<code>D71</code>).",
             "Parquet <strong>tidak</strong> diunduh ulang di sini meski Stage 1 sanggup: unduhan baru adalah vintage baru, dan root &sect;12 melarang angka dari dua vintage berbagi satu tabel.",
         ),
-        steps=(Step(md=None, code=CODE_SETUP),),
+        steps=(
+            Step(md=MD_STEP_MAP, code="{artifact_map}", step="artifact_map"),
+            Step(
+                md=MD_STEP_SETUP,
+                code=CODE_SETUP,
+                step="setup",
+                reads=("data/raw/BTCUSDT_1h.parquet",),
+            ),
+        ),
     ),
     Phase(
         number="1",
@@ -2005,7 +2315,11 @@ PHASES: tuple[Phase, ...] = (
             "Satu-satunya sel lain yang mengimpor adalah Persiapan di atas, dan itu tak terhindarkan: ia yang <em>memasang</em> paket yang sel ini impor.",
         ),
         steps=(
-            Step(md=None, code="{library}", meta={"itbtc": {"role": "library"}}),
+            Step(
+                md=MD_STEP_LIBRARY,
+                code="{library}",
+                meta={"itbtc": {"role": "library"}},
+            ),
         ),
     ),
     Phase(
@@ -2020,7 +2334,9 @@ PHASES: tuple[Phase, ...] = (
             "<em>Save Version &rarr; Save &amp; Run All</em> menjalankannya berurutan, dan hanya urutan itu yang bekerja.",
         ),
         modules=("config.py", "__init__.py"),
-        steps=(Step(md=MD_UPSTREAM, code=CODE_UPSTREAM),),
+        steps=(
+            Step(md=MD_UPSTREAM, code=CODE_UPSTREAM, step="provenance_sources"),
+        ),
     ),
     Phase(
         number="3",
@@ -2034,7 +2350,14 @@ PHASES: tuple[Phase, ...] = (
             "Blok uji memuat <strong>720</strong> origin ramalan, bukan 601 (<code>D51b</code>): lookback jendela uji boleh menyeberang ke belakang, target jendela latih tidak boleh menyeberang ke depan.",
         ),
         modules=("segments.py", "windows.py", "budget.py"),
-        steps=(Step(md=MD_STEP_DATA, code=CODE_DATA),),
+        steps=(
+            Step(
+                md=MD_STEP_DATA,
+                code=CODE_DATA,
+                step="data",
+                reads=("data/raw/BTCUSDT_1h.parquet",),
+            ),
+        ),
     ),
     Phase(
         number="4",
@@ -2048,7 +2371,7 @@ PHASES: tuple[Phase, ...] = (
             "Rogers&ndash;Satchell <strong>tidak</strong> positif tegas: ia lenyap pada bar tanpa bayangan, dan 33 bar seperti itu ada. <code>log(RS + 1e-9)</code> menaruh <code>log &kappa; = &minus;20,7</code> di dalam support terukur, bukan sebagai 33 lonjakan di luar support (<code>D52a</code>).",
         ),
         modules=("features.py",),
-        steps=(Step(md=MD_STEP_FEATURES, code=CODE_FEATURES),),
+        steps=(Step(md=MD_STEP_FEATURES, code=CODE_FEATURES, step="features"),),
     ),
     Phase(
         number="5",
@@ -2087,7 +2410,14 @@ PHASES: tuple[Phase, ...] = (
             "Dilaporkan juga pada fitur <strong>ternormalisasi-jendela</strong> (<code>D04</code>) — <code>use_norm</code> mengupas <em>level</em> volatilitas, jadi rung 8&rarr;12 bisa mendatar karena sebab yang tak ada hubungannya dengan redundansi.",
         ),
         modules=("keff.py",),
-        steps=(Step(md=MD_STEP_KEFF, code=CODE_KEFF),),
+        steps=(
+            Step(
+                md=MD_STEP_KEFF,
+                code=CODE_KEFF,
+                step="keff",
+                writes=("artifacts/keff_table.parquet",),
+            ),
+        ),
     ),
     Phase(
         number="8",
@@ -2219,8 +2549,8 @@ PHASES: tuple[Phase, ...] = (
             "Sentinelnya satu per modul: sel yang terlewat meninggalkan <em>lubang</em>, bukan berkas basi, dan lubang itu baru muncul berjam-jam kemudian di tengah grid. Murah di sini, tak terbatas di sana.",
         ),
         steps=(
-            Step(md=MD_MODULE_NAMES, code="{module_names}"),
-            Step(md=MD_PROVENANCE, code=CODE_PROVENANCE),
+            Step(md=MD_MODULE_NAMES, code="{module_names}", step="module_names"),
+            Step(md=MD_PROVENANCE, code=CODE_PROVENANCE, step="code_digest"),
         ),
     ),
     Phase(
@@ -2234,7 +2564,9 @@ PHASES: tuple[Phase, ...] = (
             "Overfit satu batch dengan <strong><code>dropout=0.0</code></strong> (<code>D52d</code>). Dengan 0,1 yang terkonfigurasi masih menyala, loss-nya mentok di sekitar 7e-2 dan pembaca yang menuruti instruksinya secara harfiah menyimpulkan plumbing rusak padahal tidak.",
             "<strong>Naive-RW dihitung lebih dulu</strong>, sebelum satu model pun latih, dan ia <code>&#375;<sub>z</sub> = &minus;&mu;<sub>g</sub>/&sigma;<sub>g</sub></code> — tidak pernah 0 (<code>D31</code>), yang diam-diam akan menjadi model constant-drift yang memakai nama baseline EMH.",
         ),
-        steps=(Step(md=None, code=CODE_INVARIANTS),),
+        steps=(
+            Step(md=MD_STEP_INVARIANTS, code=CODE_INVARIANTS, step="invariants"),
+        ),
     ),
     Phase(
         number="19",
@@ -2249,8 +2581,18 @@ PHASES: tuple[Phase, ...] = (
             "<strong>Terukur: gerbang GAGAL.</strong> <code>S* = +0,8759, p = 0,1906</code> satu sisi. Judul direposisi ke varian deskriptif pada 2026-08-20, dan arm K=16 karenanya tidak dijalankan — klausa 1 gagal (<code>D60a</code>).",
         ),
         steps=(
-            Step(md=None, code=CODE_PILOT),
-            Step(md=MD_TUNE, code=CODE_TUNE),
+            Step(
+                md=MD_STEP_PILOT,
+                code=CODE_PILOT,
+                step="pilot",
+                writes=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+            ),
+            Step(
+                md=MD_TUNE,
+                code=CODE_TUNE,
+                step="tune",
+                writes=("artifacts/meta/tuning_selection.json",),
+            ),
         ),
     ),
     Phase(
@@ -2265,7 +2607,19 @@ PHASES: tuple[Phase, ...] = (
             "Baseline berjalan <em>setelah</em> tangga, jadi sesi yang pendek kehilangan komparator, bukan masukan RQ1&ndash;RQ3 — dan asersi keselarasan jendela <code>D45</code> tiap baseline menemukan pembandingnya sudah di disk.",
             "<strong>Evaluasi digerbangi kelengkapan grid.</strong> Panel parsial adalah panel tak seimbang, dan estimator root &sect;9.1 menolaknya secara desain. &beta;&#8321; setengah-panel adalah estimand yang berbeda, bukan yang lebih berderau (<code>D54e</code>).",
         ),
-        steps=(Step(md=None, code=CODE_GRID),),
+        steps=(
+            Step(
+                md=MD_STEP_GRID,
+                code=CODE_GRID,
+                step="grid",
+                reads=("data/raw/BTCUSDT_1h.parquet",),
+                writes=(
+                    "artifacts/preds/*.parquet",
+                    "artifacts/meta/*.json",
+                    "artifacts/attn/*.parquet",
+                ),
+            ),
+        ),
     ),
     Phase(
         number="21",
@@ -2279,9 +2633,18 @@ PHASES: tuple[Phase, ...] = (
             "Perbandingan lintas-origin apa pun dilakukan pada RelMSE atau <code>R&sup2;_oos</code>, <strong>tidak pernah</strong> pada MSE ruang-scaler: dua origin membawa &sigma;<sub>g</sub> berbeda, dan angka mentahnya 99,7% adalah drift scaler (<code>D60i</code>).",
         ),
         steps=(
-            Step(md=MD_RQ1, code=CODE_RQ1, guard="RQ1"),
-            Step(md=MD_RQ2, code=CODE_RQ2, guard="RQ2"),
-            Step(md=MD_RQ3, code=CODE_RQ3, guard="RQ3"),
+            Step(
+                md=MD_RQ1, code=CODE_RQ1, guard="RQ1", step="rq1",
+                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+            ),
+            Step(
+                md=MD_RQ2, code=CODE_RQ2, guard="RQ2", step="rq2",
+                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+            ),
+            Step(
+                md=MD_RQ3, code=CODE_RQ3, guard="RQ3", step="rq3",
+                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+            ),
         ),
     ),
     Phase(
@@ -2294,7 +2657,22 @@ PHASES: tuple[Phase, ...] = (
             "Angka yang dihasilkan di bawah hash artefak input yang berbeda tidak sebanding dan tidak boleh berbagi satu tabel, jadi digest parquet ikut bersamanya — begitu pula <code>code_sha256</code>, yang mengidentifikasi kode di luar repo.",
             "Angka yang tidak bisa diregenerasi adalah kegagalan yang terdokumentasi, bukan catatan kaki.",
         ),
-        steps=(Step(md=None, code=CODE_SAVE, guard="paper_numbers.json"),),
+        steps=(
+            Step(
+                md=MD_STEP_SAVE,
+                code=CODE_SAVE,
+                guard="paper_numbers.json",
+                step="save",
+                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+                writes=(
+                    "artifacts/paper_numbers.json",
+                    "artifacts/run_block_metrics.parquet",
+                    "artifacts/seed_averaged_cells.parquet",
+                    "artifacts/amplification_panel.parquet",
+                    "artifacts/decay_panel.parquet",
+                ),
+            ),
+        ),
     ),
     Phase(
         number="23",
@@ -2306,7 +2684,39 @@ PHASES: tuple[Phase, ...] = (
             "Tiga dari empat deliverable yang dulu tanpa masukan — matriks DM, evaluasi ekonomi, kurva ekuitas — dihitung di sini dari berkas prediksi yang sudah ada di disk.",
             "<strong>Figure 5 pengecualian</strong>: bobot attention tidak pernah dipersist oleh grid asli, jadi ia butuh arm <code>attention</code> dan dilewati <em>dengan disebut namanya</em> sampai arm itu jalan — sumbu kosong berlabel figure terbaca sebagai pengukuran atas ketiadaan.",
         ),
-        steps=(Step(md=None, code=CODE_REPORT, guard="tables and figures"),),
+        steps=(
+            Step(
+                md=MD_STEP_REPORT,
+                code=CODE_REPORT,
+                guard="tables and figures",
+                step="report",
+                reads=(
+                    "artifacts/paper_numbers.json",
+                    "artifacts/preds/*.parquet",
+                    "artifacts/attn/*.parquet",
+                ),
+                writes=(
+                    "paper/paper_numbers.json",
+                    "paper/tables/*.tex",
+                    "paper/figures/*.pdf",
+                    "paper/figures/*.png",
+                    "paper/panels/*.parquet",
+                ),
+            ),
+        ),
+    ),
+    Phase(
+        number="24",
+        title="Sinkron balik ke src/ — nonaktif",
+        emoji="🔁",
+        theme="__init__.py",
+        blurb="Notebook adalah tempat mengetik; <code>src/</code> adalah proyeksi yang diuji. Sel ini menutup arah baliknya, dan ia dikomentari penuh.",
+        bullets=(
+            "Sampai <code>D88</code>, mengedit sebuah sel berarti mengetik ulang perubahannya ke <code>src/</code> — dua salinan yang harus setuju tanpa ada yang memeriksa, yaitu <code>D54a</code> dan <code>D69</code> dengan kostum baru.",
+            "<strong>Dikomentari penuh dan tetap begitu.</strong> Di Kaggle tidak ada <code>tools/</code> maupun <code>src/</code>; sel aktif di sana akan gagal atau menulis sampah ke direktori kerja sesi. Aktivasi adalah keputusan sadar di checkout lokal.",
+            "Impor baru tidak bisa datang dari sel: impor hidup di sel Library yang digenerate <em>dari</em> modul (<code>D66</code>). Skripnya menolak dan menyebut <code>src/</code> sebagai tempatnya, bukan menebak.",
+        ),
+        steps=(Step(md=MD_STEP_SYNC, code=CODE_SYNC, step="sync_back"),),
     ),
 )
 
@@ -2328,6 +2738,7 @@ def build() -> dict:
 
     cells: list[dict] = []
     counter = 0
+    artifact_map_at: int | None = None
 
     def md(text: str) -> None:
         nonlocal counter
@@ -2349,20 +2760,38 @@ def build() -> dict:
             md(_html_module(name))
             for section, body in split_module_cells(name):
                 md(_html_section(name, section))
-                code(body, {"itbtc": {"module": name, "section": section.title}})
+                code(body, {"itbtc": {
+                    "role": "module", "module": name, "section": section.title}})
         for step in phase.steps:
             if step.md is not None:
-                md(step.md)
+                # The artefact strip rides in the banner's own markdown cell
+                # rather than one of its own — see :func:`_html_artifacts`.
+                md(step.md + _html_artifacts(step))
             body = step.code
             if body == "{library}":
                 body = library_cell()
             elif body == "{module_names}":
                 body = module_names
+            elif body == "{artifact_map}":
+                # Emitted as a placeholder and patched below, once the layout
+                # exists: the map names cell numbers, and those are not known
+                # until every later cell has been appended.
+                artifact_map_at = counter
+                body = "# placeholder — patched after layout\n"
             else:
                 body = body.replace("{digest}", package_digest())
             if step.guard is not None:
                 body = guarded(body, step.guard)
-            code(body, step.meta)
+            code(body, step.cell_metadata())
+
+    if artifact_map_at is None:
+        raise SystemExit(
+            "no phase declares the {artifact_map} step, so the notebook would "
+            "ship without the index of producing cells that `D87` added. A "
+            "reader would be back to reading 354 cells to find the one that "
+            "writes the figures."
+        )
+    cells[artifact_map_at]["source"] = _lines(artifact_map_cell(cells))
 
     return {
         "cells": cells,
@@ -2385,12 +2814,119 @@ def render(notebook: dict) -> str:
     return json.dumps(notebook, indent=1, ensure_ascii=False) + "\n"
 
 
+def _cell_key(cell: dict) -> tuple | None:
+    """Stable identity for a code cell, or ``None`` when it has none.
+
+    Identity is what the whole of `D86` rests on: outputs may only be carried
+    onto a cell that is *the same cell*, and cell **position** is not that —
+    inserting one phase would shift every index below it and hand a grid log to
+    a docstring. ``metadata.itbtc`` survives insertion, which is why `D87` put
+    an identity on the seventeen step cells that previously had none.
+    """
+    tag = cell.get("metadata", {}).get("itbtc")
+    if not tag:
+        return None
+    role = tag.get("role")
+    # ``role`` postdates `D87`; a notebook written before it tagged module cells
+    # with ``module``/``section`` and nothing else, and an export of one is
+    # exactly what this function has to read to recover the grid's evidence.
+    if role == "module" or (role is None and tag.get("module")):
+        return ("module", tag.get("module"), tag.get("section"))
+    if role == "step":
+        return ("step", tag.get("step"))
+    if role == "library":
+        return ("library",)
+    return None
+
+
+def carry_outputs(notebook: dict, previous: dict) -> tuple[int, int, int]:
+    """Carry executed outputs from ``previous`` onto ``notebook`` (`D86`).
+
+    Root §15 says outputs are evidence, and until now the committed notebook
+    carried **none**: `D61` forbids overwriting the generated file with the
+    Kaggle export, and the export is the only thing that has ever been run. The
+    rule was right and its cost was the evidence. This is the way out — the
+    generated source stays authoritative and the export's outputs ride along.
+
+    **Only onto a byte-identical cell.** A cell whose source moved on has an
+    output describing code that no longer exists, and §15 is explicit that
+    stale evidence is worse than none: those are dropped, and the count is
+    printed rather than swallowed so a reader of the build log can see how much
+    of the notebook is still backed by a real run.
+
+    Returns:
+        ``(carried, dropped_changed, dropped_missing)`` — inherited, dropped
+        because the source changed, and dropped because the cell is new here.
+    """
+    old: dict[tuple, dict] = {}
+    by_source: dict[str, list[dict]] = {}
+    for cell in previous.get("cells", []):
+        if cell.get("cell_type") != "code" or not cell.get("outputs"):
+            continue
+        key = _cell_key(cell)
+        if key is not None:
+            old[key] = cell
+        by_source.setdefault("".join(cell["source"]), []).append(cell)
+
+    # The seventeen orchestration cells carried **no** metadata before `D87`,
+    # and they are precisely the ones an executed notebook has outputs on — the
+    # grid log, the three RQ cells, the report. Identity cannot reach them in an
+    # older export, so fall back to matching on the source text itself. That is
+    # not a weaker test: carrying is gated on byte-identical source either way,
+    # so a source match proves exactly what the identity match was there to
+    # establish. Ambiguous sources are refused rather than guessed at.
+    carried = changed = missing = 0
+    for cell in notebook["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        key = _cell_key(cell)
+        # A definition cell has no evidence to carry: it defines and returns
+        # nothing. What it *does* emit is a docstring echoed back as an
+        # ``execute_result`` — the module docstring is the cell's last
+        # expression — which is several hundred lines of noise sitting under a
+        # heading in the artefact an examiner reads. Skipped on presentation
+        # grounds, and the skip is total so no definition cell can acquire one.
+        if key is not None and key[0] == "module":
+            continue
+        match = old.get(key) if key is not None else None
+        if match is not None and _lines("".join(match["source"])) != cell["source"]:
+            changed += 1
+            continue
+        if match is None:
+            same = by_source.get("".join(cell["source"]), [])
+            if len(same) == 1:
+                match = same[0]
+        if match is None:
+            missing += 1
+            continue
+        cell["outputs"] = copy.deepcopy(match["outputs"])
+        cell["execution_count"] = match.get("execution_count")
+        carried += 1
+    return carried, changed, missing
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build notebooks/iTransformer.ipynb")
     parser.add_argument(
         "--check",
         action="store_true",
         help="exit 1 if the committed notebook differs from what src/ implies",
+    )
+    parser.add_argument(
+        "--preserve-outputs",
+        metavar="NOTEBOOK",
+        default=None,
+        help=(
+            "carry executed outputs from this notebook onto byte-identical "
+            "cells (`D86`). Defaults to the committed notebook itself, so a "
+            "rebuild that changes nothing keeps its evidence and --check stays "
+            "meaningful."
+        ),
+    )
+    parser.add_argument(
+        "--no-preserve-outputs",
+        action="store_true",
+        help="build clean, discarding every output the committed notebook has",
     )
     args = parser.parse_args(argv)
 
@@ -2415,6 +2951,23 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     notebook = build()
+
+    source = None
+    if not args.no_preserve_outputs:
+        candidate = Path(args.preserve_outputs) if args.preserve_outputs else NOTEBOOK
+        if candidate.exists():
+            source = candidate
+        elif args.preserve_outputs:
+            raise SystemExit(f"--preserve-outputs: {candidate} does not exist")
+    if source is not None:
+        previous = json.loads(source.read_text(encoding="utf-8"))
+        carried, changed, missing = carry_outputs(notebook, previous)
+        if not args.check:
+            print(
+                f"outputs from {source}: {carried} carried, "
+                f"{changed} dropped (source changed), {missing} not present there"
+            )
+
     text = render(notebook)
 
     if args.check:
