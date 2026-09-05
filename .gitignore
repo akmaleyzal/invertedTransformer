@@ -248,3 +248,5 @@ notebooks/artifacts/
 
 *.png
 *.pdf
+
+.codex
