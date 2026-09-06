@@ -316,12 +316,18 @@ def parse_bib() -> list[dict]:
     for kind, key, body in _ENTRY.findall(text):
         rec = {"kind": kind, "key": key.strip()}
         for field in ("title", "journal", "booktitle", "year", "doi",
-                      "eprint", "note", "file", "author"):
+                      "eprint", "annote", "file", "author"):
             m = re.search(rf"\n\s*{field}\s*=\s*\{{(.*?)\}},?\s*\n\s*(?:\w+\s*=|$)",
                           body + "\n", re.S)
             if m:
                 rec[field] = " ".join(m.group(1).split())
-        note = rec.get("note", "")
+        # The provenance annotation lives in `annote`, NOT `note`: BibTeX
+        # styles print `note` into the reference list, and IEEEtran does, so a
+        # `note` field would typeset seventy paragraphs of internal audit
+        # trail into the manuscript. `annote` is ignored by every style this
+        # project uses. Renamed 2026-09-06 when paper/manuscript.tex was
+        # scaffolded and the leak became visible.
+        note = rec.get("annote", "")
         vm = re.search(r"verified=([a-z-]+)", note)
         rec["verified"] = vm.group(1) if vm else "unknown"
         rec["has_pdf"] = bool(rec.get("file"))

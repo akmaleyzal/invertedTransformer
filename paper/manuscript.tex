@@ -1,0 +1,612 @@
+% =====================================================================
+% manuscript.tex --- THE MANUSCRIPT. Hand-written prose.
+%
+% This file is NOT generated. `python tools/build_report.py` owns
+% tables/, figures/, panels/ and paper_numbers.json; it never touches this
+% file. The converse also holds, and it is the point of root CLAUDE.md 12:
+%
+%   NO NUMBER IS TYPED INTO THIS FILE.
+%
+% Every figure is \includegraphics'd and every table is \input'd from the
+% generated directories. Where a number is needed in prose, read it out of
+% paper/paper_numbers.json and cite the table it also appears in, so the two
+% cannot silently disagree. A number that appears here and nowhere else is a
+% defect, not a shortcut.
+%
+% Regenerate the inputs, then check nothing drifted:
+%     python tools/build_report.py
+%     python tools/build_report.py --check     -> "report is current"
+%
+% COMPILING. No LaTeX toolchain exists on the development machine, so this
+% file has never been compiled locally. Build it on Overleaf or any TeX Live
+% install:
+%     pdflatex manuscript && bibtex manuscript && pdflatex manuscript (x2)
+% IEEEtran.cls and IEEEtran.bst ship with TeX Live and with Overleaf.
+%
+% BUDGET. Root 13.1: 10-14 pages, 35-45 references, IMRaD, IEEE style,
+% Indonesian informatics journal (Sinta). Prose is ENGLISH: every generated
+% table, caption and footnote is already English and root 13.4 forbids
+% hand-editing them, so an Indonesian body would sit against English tables.
+% (Root D73's Indonesian rule is scoped to the NOTEBOOK, not to the paper.)
+%
+% COLUMN LAYOUT --- a real decision, deferred on purpose. The generated
+% tables are all single-column `table' floats, and tables 6, 8 and 9 carry
+% NINE columns while table 6 carries about 105 rows. None of those fits an
+% IEEEtran two-column measure. This scaffold therefore compiles ONE-COLUMN.
+% Moving to two columns is one word below AND a change to
+% src/itransformer_btc/report.py to emit `table*' for the wide ones --- never
+% a hand-edit of the .tex files, which the next generator run would revert.
+% Settle it when the venue template is known, not before.
+% =====================================================================
+
+\documentclass[onecolumn,journal,a4paper,11pt]{IEEEtran}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs}     % toprule / midrule / bottomrule, used by every table
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}}
+
+\begin{document}
+
+% ---------------------------------------------------------------------
+% TITLE. Root 1, decision D60a (2026-08-20). The comparative title was
+% RETIRED when the Stage 5 gate failed (Clark-West S* = +0.8759,
+% p = 0.1906): it poses a question whose premise is that added variates buy
+% accuracy, and at every rung R^2_oos is negative, so the question has no
+% numerator. Do not restore it. The superseded title is kept in root 1 for
+% provenance, not for use.
+% ---------------------------------------------------------------------
+\title{A Pre-Registered Walk-Forward Evaluation of iTransformer and Linear
+Baselines for Hourly Bitcoin Return Forecasting: No Out-of-Sample Skill at
+Any Variate Count}
+
+\author{Akmaley~Zal%
+\thanks{The author is with Universitas Negeri Surabaya, Surabaya, Indonesia
+(e-mail: akmal.23078@mhs.unesa.ac.id).
+% TODO-CONFIRM: department/faculty line, and whether a supervisor is a
+% co-author. The affiliation is inferred from the e-mail domain --- confirm
+% it before submission rather than shipping an inference.
+}}
+
+\maketitle
+
+% =====================================================================
+\begin{abstract}
+% TODO. 200-250 words. Root 13.1: an abstract without numbers reads as a
+% proposal, not a result. It MUST carry concrete figures. Required content,
+% each with the paper_numbers.json key that supplies it:
+%
+%   - the headline: no model beats Naive-RW at any rung or any K.
+%     Mean R^2_oos: ridge -0.0006, lstm-K8 -0.0016, PatchTST -0.0163,
+%     itr-K8 -0.0180, itr-K1 -0.0205, DLinear -0.0262.   [main_results]
+%   - beta_1 = +0.000256 with its MDE -0.000920 BESIDE it, and the word
+%     "descriptive".                                     [rq2]
+%   - the matched-K contrast, +0.001241 RelMSE, t = +6.27, 14 of 15
+%     origins.                                           [contrasts]
+%   - RQ3: that the decay estimand is UNDEFINED under non-positive
+%     out-of-sample skill.                               [rq3]
+%
+% A TENSION TO RESOLVE HERE, NOT TO PAPER OVER. Root 13.1 requires the
+% abstract to carry "the recommended cadence" with its interval. There is no
+% recommended cadence: D60b establishes that b* is UNDEFINED at all four tau,
+% because D(i,b) is a proportion of skill lost and no arm has skill to lose a
+% proportion of. The abstract must say so in D60b's fixed wording --- "the
+% decay estimand is undefined under non-positive out-of-sample skill" --- and
+% must NEVER say "no decay detected within 180 days", which is the
+% right-censored phrasing pre-registered for a situation that did not occur.
+\end{abstract}
+
+\begin{IEEEkeywords}
+% TODO. Candidates: time series forecasting, transformer, cryptocurrency,
+% walk-forward validation, out-of-sample evaluation, model decay, effective
+% dimensionality.
+\end{IEEEkeywords}
+
+% =====================================================================
+\section{Introduction}
+\label{sec:intro}
+% ---------------------------------------------------------------------
+% Numbers: [main_results], [runs_complete]. Argument: root 1 and root 3.
+% Cites: liu2024itransformer, zeng2023dlinear, nie2023patchtst,
+%        han2024capacity, urquhart2016inefficiency, lo2004adaptive,
+%        makridakis2018concerns.
+%
+% Must contain:
+%   - the three research questions AS PRE-REGISTERED (root 3), stated as
+%     questions, with their hypotheses;
+%   - the three claimed contributions (root 3), with contribution (1) hedged
+%     "to the best of our knowledge" (root 13.2) and its search protocol
+%     promised in Section II;
+%   - the scope limit stated up front: spot-only, single-asset,
+%     feature-based, Binance BTCUSDT 1h. No futures, no second asset, no
+%     macro, on-chain or sentiment data.
+%
+% Do NOT open on the null. Open on the question; the null is the answer and
+% belongs in Section IV.
+% ---------------------------------------------------------------------
+% TODO
+
+% =====================================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Transformer architectures for long-sequence forecasting}
+% Cites: vaswani2017attention, liu2024itransformer, nie2023patchtst,
+%        wu2023timesnet, zeng2023dlinear, kim2022revin.
+% TODO
+
+\subsection{The channel-independence debate}
+% Root 13.2: this is where DLinear-K8's and PatchTST-K8's K label must be
+% explained --- TRAINED ON eight channels through shared weights, predicting
+% the target from its own history alone (D56). Left unstated, a reader takes
+% them for multivariate predictors in the sense ridge and iTransformer are,
+% and this pillar loses the distinction it exists to draw.
+% Cites: han2024capacity, kim2024selfattn, nie2023patchtst,
+%        nochumsohn2025mtlinear.
+% TODO
+
+\subsection{Deep learning for cryptocurrency forecasting}
+% paper/CLAUDE.md refusal 2: critique PRACTICE, never named authors. The
+% pattern to name: price-level targets, single chronological splits, no naive
+% baseline, MAPE on price, gaps unacknowledged.
+% One sentence on why MinMaxScaler is a correctness defect here (root 6.3),
+% and one on why the Lewis (1982) MAPE thresholds common in Indonesian
+% journals do not apply to log-returns (root 9.1).
+% Cites: makarov2020trading, briola2022dependency, btcwalkforward2026,
+%        btcmemory2026, cryptostress2022.
+% TODO
+
+\subsection{Evaluation protocols}
+% ARGUMENT ALREADY WRITTEN: docs/WALK_FORWARD_FOUNDATION.md, whole file.
+% Section 5 of that document is a drafted paragraph for Section III-F with
+% every citation key in place --- do not re-derive it here.
+%
+% This subsection carries the part that is a CONTRIBUTION rather than a
+% defence (that document, section 4.2): the recent finance-ML case against
+% walk-forward (arian2024backtest) rests on a SINGLE-PATH, UNPURGED
+% implementation of it --- n_splits=4, no times=, no embargo= --- twenty-four
+% years after tashman2000outofsample deprecated single-origin evaluation, and
+% cerqueira2020evaluating makes the identical criticism, in the opposite
+% direction, of the studies that favoured cross-validation. State it once,
+% with the section numbers, and let it stand.
+% Cites: tashman2000outofsample, bergmeir2012use, bergmeir2018note,
+%        cerqueira2020evaluating, bergmeir2014directional, hyndman2021fpp,
+%        lopezdeprado2018advances, arian2024backtest, arnott2019protocol,
+%        giacomini2006conditional, pesaran2007selection, inoue2017rolling,
+%        rossi2013instability, hansen2015equivalence, kaufman2012leakage,
+%        gama2014survey, lu2019conceptdrift, zliobaite2015evaluation.
+% TODO
+
+\subsection{Preprocessing practice}
+% Root 4.2: why forward-fill is not merely risky here but WRONG, and why
+% Rubin's taxonomy is cited in order to argue that it does NOT apply.
+% Cites: rubin1976inference, brownlees2006financial.
+% TODO
+
+\subsection{Gap synthesis and search protocol}
+% Root 13.2 requires this: databases queried, EXACT query strings, search
+% date, inclusion criteria, hits screened. Without it, contribution (1) is
+% refutable by a single search hit. With it, the weight sits on the
+% substantive contribution instead.
+% TODO
+
+% =====================================================================
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Data provenance and segmentation}
+% Numbers: [dataset], [coverage]. Argument: root 4.1-4.4.
+% Must state: the analysis window is END-EXCLUSIVE; gaps split the series and
+% are never imputed; zero-volume and H==L bars are segment breaks; windows
+% are validated by TIMESTAMP, never by positional index.
+% TODO
+
+\subsection{Variates and effective dimensionality}
+% Argument: root 5.1-5.4. Root 13.2 requires here:
+%   - the K=12 rung's deliberate redundancy as a designed CONTRAST;
+%   - signed_flow's dependence on two other K=8 members;
+%   - Rogers-Satchell's log(RS + 1e-9) floor and why kappa is fixed (D52a);
+%   - the instance-normalisation confound on F2 and RQ1 (D04).
+% TODO
+
+\subsection{Market-efficiency tests}
+% Numbers: [efficiency]. paper/CLAUDE.md: do NOT claim the market is
+% efficient. State that the evidence is mixed and time-varying, then report
+% the numbers for THIS period and THIS granularity.
+% Cites: lo1988stock, urquhart2016inefficiency, lo2004adaptive.
+% TODO
+
+\subsection{Architecture}
+% Numbers: [architecture]. Argument: root 6.1-6.3. Root 13.2 requires here:
+%   - the K=1 attention degeneracy as a DESIGNED CONTROL, not a bug (D50);
+%   - hyperparameter provenance: adopted from liu2024itransformer, NOT tuned,
+%     identical at every rung, d_model reduced from 512 to 128 for the
+%     sample-size reason (D38, D25);
+%   - the loss is MSE on the TARGET CHANNEL ONLY, at every rung (D39);
+%   - use_norm=True and the corrected scale-invariance test (D03).
+\input{tables/table3_architecture}
+% Table 3 carries measured columns (epochs-to-stop, at-cap count per arm).
+% D78: the cap binds for DLinear (56 of 75) and PatchTST (39 of 75) and NOT
+% for iTransformer at H=24 (0 of 300) --- so "DLinear is the worst model" is
+% confounded with "DLinear is the most truncated model" unless the at-cap
+% count is read beside it. Say that where the table appears.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure2_architecture}
+  \caption{Inverted tokenization. Each variate's whole $L=96$ lookback is one
+  token, so attention runs over $N \le 12$ variate tokens rather than over
+  $96$ timesteps. Every tensor shape is read from a live configuration
+  object, so the figure cannot drift from the model that ran.}
+  \label{fig:architecture}
+\end{figure}
+% The caption must also carry: no causal mask appears, because the axis
+% attention runs over is contemporaneous, and causality is enforced upstream
+% in the features and the windowing (root 6.1).
+
+\subsection{Baselines}
+% Argument: root 7. Every baseline carries an EXPLICIT K (D40). Must state:
+%   - Naive-RW forecasts yhat_raw = 0, mapped into scaler space as
+%     yhat_z = -mu_g/sigma_g (D31) --- never yhat_z = 0;
+%   - what "K = 8" means for DLinear and PatchTST versus for LSTM and ridge
+%     (D56, D64), and that their best_val_mse is an ALL-CHANNEL figure and is
+%     not comparable to the ladder's;
+%   - DLinear's internal centred moving average, confined to the 96-bar
+%     lookback, and why root 8.3 survives it;
+%   - ARIMA's deferral WITH its written reason: AIC selection lands at or
+%     near order (0,0,0), which is the naive baseline.
+% Cites: zeng2023dlinear, nie2023patchtst, hochreiter1997long, hoerl1970ridge.
+% TODO
+
+\subsection{Walk-forward protocol and purging}
+% ARGUMENT ALREADY DRAFTED: docs/WALK_FORWARD_FOUNDATION.md section 5 is a
+% paragraph for this subsection with every citation key in place. Start from
+% it. Section 4.1 of that document answers Tashman's recalibration objection
+% and section 4.2 answers the CPCV one.
+%
+% Root 13.2 also requires here: the training-window overlap between origins
+% (79.2 percent at stride 1, 58.3 / 37.5 / 16.7 at strides 2-4) and the
+% effective cluster count bounded near four.
+\input{tables/table1_dataset}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure1_walkforward}
+  \caption{The walk-forward scheme. Upper panel: fifteen origins on a
+  calendar axis, showing the rolling---not expanding---24-month window, the
+  5-month spacing, and the training overlap between consecutive origins.
+  Lower panel: one origin resolved in days, where the $H$-step purge at both
+  boundaries becomes visible; the purge bands are drawn wider than 24 hours
+  and the panel title says so.}
+  \label{fig:walkforward}
+\end{figure}
+
+% ROOT 8.4 --- THIS PARAGRAPH IS MANDATORY AND APPEARS VERBATIM. Copy it from
+% root CLAUDE.md 8.4 unchanged, then follow it with the answer to
+% arian2024backtest built from that paper's own methods section (root 8.4's
+% commentary; long form in docs/WALK_FORWARD_FOUNDATION.md section 4.2).
+% TODO
+
+\subsection{Metrics and clustered inference}
+% Argument: root 9.1-9.2. Root 13.2 requires here:
+%   - statistical power: the MDE and the PRE-REGISTERED interpretation of a
+%     null. Omitting it is the most damaging gap on root 13.2's list;
+%   - which tests are CONFIRMATORY (beta_1 at tau = 5 percent) and which are
+%     EXPLORATORY (tau sensitivities, horizon sweep, per-rung DM cells, the
+%     D62 and D70 arms);
+%   - the rectangular (not Bartlett) long-run variance estimator with
+%     truncation lag h-1 = 23, and why (D34);
+%   - Clark-West for nested pairs, DM with the HLN correction for non-nested
+%     ones, naming which statistic each pair carries (D29);
+%   - the wild cluster bootstrap recipe in full: WCR with the null imposed,
+%     bootstrapping the cluster-robust t, B = 99,999, cluster = origin,
+%     one-sided, referred to t(G-1) (D42);
+%   - that no cross-origin comparison is ever made on scaler-space MSE
+%     (D60i).
+% Cites: diebold1995comparing, harvey1997testing, clark2007approximately,
+%        clark2001tests, mccracken2007asymptotics, romano2005stepwise,
+%        hansen2011model, cameron2008bootstrap, mackinnon2023cluster,
+%        pesaran1992simple, newey1987simple, bailey2014deflated.
+% TODO
+
+% =====================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Data and market efficiency}
+% Numbers: [dataset], [efficiency], [coverage].
+\input{tables/table2_efficiency}
+% Report the full sample AND each origin's 21-month training sub-block: the
+% claim root 4.5 requires is about VARIATION, and one row cannot exhibit it.
+
+\subsection{Effective dimensionality}
+% Numbers: [keff], [keff_rolling]. Report corr(K, K_eff) FIRST --- a reader
+% is entitled to know it before the horse race (D32). Root 8.5: the Stage 3b
+% gate did NOT pass (PR at K=8 = 4.393 < 5.0) and the action taken was
+% DISCLOSURE, not a re-cut. Report the divergence from root 5.2's reasoned
+% 1 / 3.5 / 6.5 / 7, and note that K=12's PR sits BELOW K=8's, so the rung is
+% more redundant than designed and the control is stronger than expected.
+\input{tables/table2b_keff}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure2b_rolling}
+  \caption{Rolling participation ratio and rolling OLS $R^2$ over the full
+  sample. \emph{Descriptive only}: neither informed any design decision, and
+  the gating measurement used the pre-first-origin span alone.}
+  \label{fig:rolling}
+\end{figure}
+
+\subsection{Model ordering and RQ1}
+% ORDER OF EXPOSITION --- deliberate, and root 13.2 already demands the first
+% half of it: the baseline ordering goes BEFORE RQ1. Extend that. Open this
+% subsection with the three findings that have a direction, then take RQ1. A
+% subsection that opens "RQ1 was not shown equivalent" reads as a failed
+% project; the same content in the order below reads as a set of findings
+% that happens to include a null. This is exposition, not analysis: nothing
+% pre-registered changes.
+%
+%   (i)  THE ORDERING INVERTS THE PREMISE (D60c). Mean R^2_oos: ridge
+%        -0.0006, lstm-K8 -0.0016, PatchTST -0.0163, itr-K8 -0.0180,
+%        itr-K1 -0.0205, DLinear -0.0262. The Model Confidence Set at 90 AND
+%        75 percent contains Naive-RW, all four ridge rungs, and lstm-K8.
+%        ONE deep model is in the set; it wins at 15 of 15 origins paired
+%        against itr-K8 and is indistinguishable from ridge (paired
+%        p = 0.114). So the honest claim is that THE ATTENTION-BASED
+%        LONG-SEQUENCE ARCHITECTURES fail here, not that deep learning does.
+%                                                        [main_results]
+%   (ii) THE MATCHED-K CONTRAST IS RQ1's ONLY DIRECT EVIDENCE. Same K = 8,
+%        same target, same seeds, participation ratio 5.011 against 3.609,
+%        either side of the ladder's own K=8 rung at 4.668. Redundant minus
+%        orthogonal = +0.001241 RelMSE, t = +6.27, orthogonal ahead at 14 of
+%        15 origins. The ladder can only INFER this through a panel at
+%        corr(K, K_eff) = 0.828; this measures it.        [contrasts]
+%  (iii) TWO ORDINARY DESIGN CHOICES DOMINATE IT. Against the main grid at
+%        K = 8, lookback L = 192 gives paired -0.00351 (p = 0.0041) and the
+%        tuned arm -0.00490 (p = 0.0000) --- each three to four times the
+%        matched-K effect and roughly twenty times the whole nominal-K ladder
+%        from K=1 to K=8. Both remain negative and both remain worse than
+%        ridge. Report them with Table 9's own caveat attached: these arms
+%        are post-hoc and uncorrected for multiplicity.    [robustness]
+%
+% THEN RQ1 as pre-registered: Delta-MSE 4->8 = +0.000636, 8->12 = -0.000437;
+% TOST against Delta_eq = +/-0.000159 gives p = (0.9734, 0.0002), so the
+% 8->12 rung is NOT shown equivalent --- it is worse. J-test: K augmented by
+% K_eff gives t = +3.293, p = 0.0011; K_eff augmented by K gives t = -0.348,
+% p = 0.7281. H1 survives its own horse race on a ladder where every rung has
+% negative skill, and that final clause is not optional.            [rq1]
+\input{tables/table4_main}
+\input{tables/table6_dm}
+% D62a / D79: report the RAW Clark-West column AND the Romano-Wolf adjusted
+% one. Raw rejects for 8 of 11 models against Naive-RW; the all-pairs stepdown
+% leaves NONE, adjusted p >= 0.336. Reporting the raw column alone would claim
+% eight results this study does not have. Within the declared claim families
+% the picture is legible again --- `vs-naive' rejects nothing under either
+% correction, so the headline is robust to the choice of correction, while the
+% ladder keeps K=1 against K=4/8/12 and loses the 8->12 rung, which is the
+% designed contrast behaving as designed.
+%
+% D62a: explain why Clark-West is POSITIVE where R^2_oos is negative
+% (t = +2.198 for Naive-RW versus itr-K8, whose R^2_oos is -0.0180). The
+% statistic credits the larger model for the estimation noise the null
+% imposes, so the joint reading is that any population-level edge is smaller
+% than the estimation error required to exploit it.
+%
+% TABLE 6 IS ABOUT 105 ROWS AND WILL NOT FIT A 10-14 PAGE PAPER. Decide in
+% Phase 3 whether the body prints the declared claim families only, with the
+% full matrix in an appendix or as supplementary material. If so, the
+% SELECTION is made in report.py --- never by deleting rows from the .tex.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure4_relmse}
+  \caption{RelMSE per test block, all models. Upper panel: the full range, in
+  which the two naive comparators sit near $2.0$. Lower panel: the
+  data-derived zoom in which every model the paper argues about lies, hue by
+  model family and dash by rung.}
+  \label{fig:relmse}
+\end{figure}
+
+\subsection{RQ2 --- does the multivariate gap narrow with model age?}
+% THE CORE OF THE PAPER by root 13.1, and it is REPORTED AS DESCRIPTIVE under
+% root 9.2 requirement 6. Numbers: [rq2], [falsification].
+%
+% State beta_1 = +0.000256 and the MDE = -0.000920 TOGETHER, in these terms:
+% the design could not have detected a decay smaller than -0.00092, and the
+% estimate points the other way. Reporting either alone lets a reader infer
+% power that does not exist. Supporting figures: t = +0.717, cluster
+% SE 0.000358, WCR one-sided p = 0.7381 (Rademacher) / 0.7346 (Webb),
+% B = 99,999, G = 15, N = 90. The five training-disjoint triples (G = 3 each)
+% return beta_1 from -0.000926 to +0.001625 and p from 0.0761 to 0.9322 ---
+% inconclusive in both directions, which bounds what the full-panel p-value
+% can honestly claim.
+%
+% D80: report the coverage-covariate re-estimate beside it --- beta_1 =
+% +0.000250, p = 0.7305 --- because root 9.2 asks for a covariate OR a
+% restriction to well-covered blocks, and only the covariate could be built.
+%
+% D60i / D62e / D62f: the falsification arm is reported on RelMSE and NEVER
+% on scaler-space MSE. mean(aged - fresh) on RelMSE = +0.000828, in H2's
+% predicted direction, at a magnitude whose sign is NOT stable --- it flips at
+% 6 of 15 origins, two of them within 5e-5 of zero. Verdict: uninformative at
+% this effect size, which is what the MDE already says.
+% D50: the uniform-attention decomposition gives beta_1 = -0.000006,
+% p = 0.3387 --- attention neither decays nor helps.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure3_decay}
+  \caption{Decay curve $A(i,b)$ against block index $b$: fifteen per-origin
+  lines with the fitted $\alpha_i + \beta_1 b$ and its bootstrap band, and the
+  minimum detectable $\beta_1$ drawn beside the fit. One series, not four:
+  $A$ is defined only for the $K{=}1$ versus $K{=}8$ pair.}
+  \label{fig:decay}
+\end{figure}
+% D36: never plot A(b) for four K. It is identically zero at K=1 and undefined
+% at K=4 and K=12, so doing so would invent a different estimand from the one
+% beta_1 is regressed on, and would reintroduce the redundant K=12 rung into a
+% decay comparison root 3 forbids.
+
+\subsection{RQ3 --- retraining cadence}
+% Numbers: [rq3]. THE WORDING IS FIXED AND NOT INTERCHANGEABLE (D60b).
+% Report: "the decay estimand is undefined under non-positive out-of-sample
+% skill". NEVER "no decay detected within 180 days" --- that is the
+% right-censored phrasing pre-registered for a different situation and it
+% asserts an edge the data does not contain.
+%
+% All 15 of 15 origins have mean R^2_oos <= 0 and are excluded BY NAME;
+% decay_panel.parquet has zero rows; b* is UNDEFINED at all four tau; the
+% log-rank test is unavailable because neither arm has a surviving origin, so
+% H3 is UNTESTABLE rather than rejected. Say plainly that the guard is not an
+% edge case here --- it is the only case.
+\input{tables/table5_decay}
+
+\subsection{Horizons and exploratory arms}
+% DEVIATION FROM ROOT 13.1, STATED SO THAT IT IS A DECISION AND NOT A DRIFT:
+% root 13.1 lists 4.5 as "horizons" and gives Table 9 no home. The exploratory
+% arms are placed here because they are sensitivity analyses of the same kind.
+% The matched-K pair is the exception and is reported in Section IV-C, because
+% root 13.4 makes it RQ1 evidence by contrast rather than robustness.
+% Numbers: [horizons], [robustness].
+\input{tables/table7_horizons}
+% Restricted to the four named sweep origins at EVERY horizon, so that the
+% columns share a sample.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure6_horizons}
+  \caption{Horizon sensitivity across $H \in \{1, 3, 24, 168\}$.}
+  \label{fig:horizons}
+\end{figure}
+
+\input{tables/table9_robustness}
+% Root 13.2: these arms were declared before running and are reported
+% WHATEVER they show. State in writing that neither the long-schedule nor the
+% capacity arm was run to rescue the null --- an arm reported only when it
+% agrees with the headline is not a robustness arm, and a reader is entitled
+% to that commitment before the numbers appear.
+% D62c / D78: "you under-trained" is answered by the LEARNING-RATE SCHEDULE,
+% not by the epoch budget --- 0 of 300 iTransformer runs reach the cap at
+% H = 24, so raising max_epochs alone is a provable no-op.
+
+\subsection{Attention}
+% Root 13.2: ATTENTION IS NOT EXPLANATION. The maps are descriptive evidence
+% of variate reliance, validated for seed stability, and never causal. The
+% minimum bar is seed-stability reporting PLUS the uniform-attention ablation.
+% Note also that the Jain-Wallace / Wiegreffe-Pinter debate is scoped to
+% RNN-era NLP and that its transfer to variate-level attention in LTSF is
+% genuinely open --- that openness is itself a limitation sentence, not a gap
+% to paper over.
+% D62d: the attention arm reproduces the main grid BIT-FOR-BIT. That is the
+% reproducibility statement the paper would otherwise lack, and it is what
+% licenses reading these maps as maps of the model whose numbers are reported.
+% Cites: jain2019attention, wiegreffe2019attention.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure5_attention}
+  \caption{Variate-level attention in calm and stressed regimes, defined as
+  the bottom and top terciles of realised volatility across all test blocks.
+  Diverging colour map centred on $1/N$ with shared limits, axes labelled by
+  variate name.}
+  \label{fig:attention}
+\end{figure}
+
+\subsection{Economic evaluation}
+% Numbers: [economics], [directional_accuracy]. Argument: root 13.5.
+% Root 13.2 requires the three numbers TOGETHER, or the first alone reads as
+% skill: +20.6 percent net against buy-and-hold's +29.0 percent, annualised
+% Sharpe +0.377, DSR 0.173 --- falling to +12.5 percent and Sharpe +0.104 at
+% the top of the slippage band, with ridge at -1.02. A positive P&L under a
+% negative R^2_oos is not a contradiction: MSE and directional P&L are
+% different objectives, and a sample dominated by BTC's 2020-2026 rise pays a
+% mostly-long position for the drift, not for the forecast.
+%
+% Must also state: positions open at 00:00 UTC, one of 24 admissible
+% alignments, fixed in advance; holding returns are defined PER SEGMENT and
+% any period containing a break is SKIPPED, so the strategy is flat precisely
+% across outages, which cluster on stress, so the reported MDD is optimistic
+% by an amount the reader cannot otherwise bound; a 0.04 percent taker fee per
+% side plus the pre-registered 0.02 / 0.05 / 0.10 percent slippage band, with
+% the table reporting all three.
+% D77: lstm-K8 is the only deep model in the MCS and the WORST strategy in
+% Figure 7 at every slippage level. Say it --- that is MSE and directional P&L
+% being different objectives, measured rather than asserted.
+\input{tables/table8_economics}
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\linewidth]{figure7_equity}
+  \caption{Net equity multiple ($1.0 =$ break-even) before and after costs at
+  three slippage levels, with buy-and-hold drawn from the same position series
+  Table~\ref{tab:economics} uses. Every curve is truncated at the shortest
+  series, so each plotted day averages all fifteen origins.}
+  \label{fig:equity}
+\end{figure}
+% D83: the truncation is not cosmetic. Averaging each day over whatever
+% origins still had data made the first drop-out render as a near-vertical
+% seven-point fall at day 146 --- read as a crash, in the figure the economic
+% claim rests on.
+
+\subsection{Limitations}
+% ROOT 13.2's REMAINING MANDATORY DISCLOSURES LAND HERE. Check every one off;
+% each is a place a reviewer will otherwise find a hole.
+%   - revised-vintage data, not real-time vintage;
+%   - single-venue, single-pair scope: everything is Binance BTCUSDT, so the
+%     microstructure variates are VENUE-SPECIFIC. This is an external-validity
+%     limit distinct from revised vintage;
+%   - the future-conditioned exclusion of test windows near outages (D45):
+%     whether a forecast issued at s is evaluated depends on whether the next
+%     120 hours contain an outage, and Binance outages cluster on stress, so
+%     the dropped targets are systematically the high-volatility ones;
+%   - the training-window overlap between origins and the effective cluster
+%     count bounded near four, stated numerically and never as "calendar
+%     adjacency";
+%   - the K=16 arm's failed run condition, BY CLAUSE NUMBER: clause 1 (D60a);
+%   - the Stage 5 pilot as a SELECTION EVENT, separate from the DSR trial
+%     count, and the note that it FIRED --- the gate failed and the title was
+%     repositioned, so this paper's framing is downstream of it;
+%   - the full development trial count, reported separately from the DSR's N
+%     and discussed here: concealing it is selection bias, but it is not N;
+%   - that window LENGTH is a free parameter this study fixes rather than
+%     estimates (inoue2017rolling).
+% TODO
+
+% =====================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+% Root 13.1: answer ALL THREE research questions WITH NUMBERS. Not a summary
+% of the paper --- three answers.
+% TODO
+
+% =====================================================================
+\bibliographystyle{IEEEtran}
+\bibliography{references/references}
+
+% ---------------------------------------------------------------------
+% BIBLIOGRAPHY --- one hazard, found while scaffolding this file and closed.
+%
+% Every entry in references.bib carries a provenance annotation. Those
+% annotations used to sit in a `note' field, which IEEEtran.bst PRINTS: the
+% reference list would have become seventy paragraphs of internal audit trail,
+% and the first compile is where anyone would have noticed. All 70 were
+% renamed to `annote' on 2026-09-06 --- ignored by every style this project
+% uses --- and tools/fetch_references.py now reads `annote' and nothing else.
+% KEEP IT THAT WAY: a new entry written with `note' will silently print.
+%
+% CITATION DEBT --- the largest remaining task in the project, and none of it
+% is computational. Root 13.3: no citation enters the manuscript without a
+% verified DOI AND THE SOURCE READ. As of 2026-09-06 the library holds 70
+% entries at 8 `read' / 52 `doi-resolved' / 8 `artifact' / 2 `screened', with
+% 52 PDFs on disk. Root 13.1 budgets 35-45 references. Every key cited above
+% must reach `read' first; paper/CLAUDE.md's first refusal is that a citation
+% you cannot summarise is a citation you delete.
+% Current tiers: python tools/fetch_references.py --index
+% ---------------------------------------------------------------------
+
+\end{document}

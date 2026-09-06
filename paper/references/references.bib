@@ -3,7 +3,14 @@
 %
 % CLAUDE.md 13.3: no citation enters the manuscript without a verified DOI AND
 % the source read. This file closes the FIRST half only. The `verified` key in
-% each note says exactly how far each entry got:
+% each entry's `annote` says exactly how far that entry got:
+%
+% WHY `annote` AND NEVER `note`: BibTeX styles PRINT the `note` field into the
+% reference list, and IEEEtran.bst does. With the annotations below sitting in
+% `note`, paper/manuscript.tex would typeset seventy paragraphs of internal
+% audit trail as part of its bibliography. `annote` is ignored by every style
+% this project uses, so the provenance stays in the file and out of the paper.
+% Renamed 2026-09-06; tools/fetch_references.py reads `annote` and nothing else.
 %
 %   read          the source was read end to end. Only entries whose
 %                 SOURCE_PROVENANCE row in src/itransformer_btc/config.py
@@ -44,7 +51,7 @@
   year      = {2024},
   eprint    = {2310.06625},
   archiveprefix = {arXiv},
-  note      = {verified=read. The primary model. Page 1 of the local copy reads
+  annote    = {verified=read. The primary model. Page 1 of the local copy reads
                "Published as a conference paper at ICLR 2024". Spotlight.
                Official code: https://github.com/thuml/iTransformer (MIT).},
   file      = {transformer-based/ICLR-2024-itransformer-inverted-transformers-are-effective-for-time-series-forecasting-Paper-Conference.pdf}
@@ -59,7 +66,7 @@
   year      = {2023},
   eprint    = {2211.14730},
   archiveprefix = {arXiv},
-  note      = {verified=read. Mandatory baseline and lead proponent of channel
+  annote    = {verified=read. Mandatory baseline and lead proponent of channel
                independence. arXiv id read off page 1 of the local copy.
                Official code: https://github.com/yuqinie98/PatchTST (Apache-2.0).},
   file      = {transformer-based/A-Time-Series-is-Worth-64-Words-long-term-forecasting-with-transformer (PatchTST).pdf}
@@ -74,7 +81,7 @@
   year      = {2017},
   eprint    = {1706.03762},
   archiveprefix = {arXiv},
-  note      = {verified=artifact. Local copy is the NIPS 2017 proceedings PDF;
+  annote    = {verified=artifact. Local copy is the NIPS 2017 proceedings PDF;
                it carries no arXiv stamp or DOI. Foundational attention
                citation for Methodology 3.4.},
   file      = {transformer-based/NIPS-2017-attention-is-all-you-need-Paper.pdf}
@@ -92,7 +99,7 @@
   doi       = {10.1109/TKDE.2024.3400008},
   eprint    = {2304.05206},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. THE theoretical statement of H2:
+  annote    = {verified=doi-resolved. THE theoretical statement of H2:
                channel-dependent strategies have higher capacity but lack
                robustness under distribution drift. CLAUDE.md 3 mechanism.
                The local file is the arXiv preprint; the TKDE version of record
@@ -110,7 +117,7 @@
   year      = {2024},
   eprint    = {2405.16877},
   archiveprefix = {arXiv},
-  note      = {verified=artifact. Author list read off page 1 of the local
+  annote    = {verified=artifact. Author list read off page 1 of the local
                proceedings PDF. The strongest sceptical position on attention
                in LTSF; Related Work must engage it.},
   file      = {transformer-based/NeurIPS-2024-are-self-attentions-effective-for-time-series-forecasting-Paper-Conference.pdf}
@@ -125,7 +132,7 @@
   year      = {2023},
   eprint    = {2210.02186},
   archiveprefix = {arXiv},
-  note      = {verified=artifact. arXiv id and ICLR 2023 line read off page 1.
+  annote    = {verified=artifact. arXiv id and ICLR 2023 line read off page 1.
                Also the source of Time-Series-Library, the standard LTSF
                benchmarking codebase.},
   file      = {transformer-based/TimesNet-Temporal-2D-variation-modeling-for-general-time-series-analysis.pdf}
@@ -138,7 +145,7 @@
   year      = {2025},
   eprint    = {2505.12917},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
+  annote    = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
   file      = {transformer-based/Temporal Query Network for Efficient Multivariate Time Series Forecasting (TQNet, 2025).pdf}
 }
 
@@ -149,7 +156,7 @@
   year      = {2025},
   eprint    = {2410.04442},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
+  annote    = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
   file      = {transformer-based/TimeBridge - Non-Stationarity Matters for Long-term Time Series Forecasting (2025).pdf}
 }
 
@@ -162,7 +169,7 @@
   eprint    = {1902.10186},
   archiveprefix = {arXiv},
   doi       = {10.48550/arXiv.1902.10186},
-  note      = {verified=doi-resolved. CLAUDE.md 13.2 mandatory disclosure:
+  annote    = {verified=doi-resolved. CLAUDE.md 13.2 mandatory disclosure:
                attention maps are descriptive evidence of variate reliance,
                never causal explanation.},
   file      = {transformer-based/Attention Is Not Explanation (Jain and Wallace, NAACL 2019). arXiv 1902.10186.pdf}
@@ -177,7 +184,7 @@
   eprint    = {1908.04626},
   archiveprefix = {arXiv},
   doi       = {10.48550/arXiv.1908.04626},
-  note      = {verified=doi-resolved. The rebuttal, and the source of the test
+  annote    = {verified=doi-resolved. The rebuttal, and the source of the test
                battery this study actually implements: a uniform-attention
                baseline (arm itru) plus seed-variance calibration.},
   file      = {transformer-based/Attention Is Not Not Explanation (Wiegreffe and Pinter, EMNLP 2019). arXiv 1908.04626.pdf}
@@ -202,7 +209,7 @@
   doi       = {10.1609/aaai.v37i9.26317},
   eprint    = {2205.13504},
   archiveprefix = {arXiv},
-  note      = {verified=read. DLinear. Mandatory baseline -- a missing DLinear
+  annote    = {verified=read. DLinear. Mandatory baseline -- a missing DLinear
                is the first thing an LTSF-literate reviewer flags. Its internal
                centred moving average is confined to the 96-bar lookback, so
                CLAUDE.md 8.3's no-embargo argument survives it.
@@ -217,7 +224,7 @@
   year      = {2025},
   eprint    = {2502.03571},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. Authors read off page 1; arXiv id confirmed by exact-title match against the arXiv API. Crossref plain search returned an unrelated paper for this title -- see D89.},
+  annote    = {verified=doi-resolved. Authors read off page 1; arXiv id confirmed by exact-title match against the arXiv API. Crossref plain search returned an unrelated paper for this title -- see D89.},
   file      = {baselines-and-components/A Multi-Task Learning Approach to Linear Multivariate Forecasting (MTLinear, 2025).pdf}
 }
 
@@ -228,7 +235,7 @@
   year      = {2026},
   eprint    = {2510.14814},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. Page 1 reads "Published as a conference paper at ICLR 2026"; arXiv id confirmed by exact-title match. Relevant to RQ3. Crossref returned Cogra (AAAI 2019) for this title -- discarded, D89.},
+  annote    = {verified=doi-resolved. Page 1 reads "Published as a conference paper at ICLR 2026"; arXiv id confirmed by exact-title match. Relevant to RQ3. Crossref returned Cogra (AAAI 2019) for this title -- discarded, D89.},
   file      = {baselines-and-components/Tackling Time-Series Forecasting Generalization via Mitigating Concept Drift (ShifTS, 2026).pdf}
 }
 
@@ -243,7 +250,7 @@
   pages     = {293--319},
   year      = {2020},
   doi       = {10.1016/j.jfineco.2019.07.001},
-  note      = {verified=doi-resolved. CLAUDE.md 5.1: the theoretical
+  annote    = {verified=doi-resolved. CLAUDE.md 5.1: the theoretical
                justification for variate family F4. A common component in order
                flow explains much of the common component in returns across
                Bitcoin exchanges -- without this, a reviewer asks why
@@ -258,7 +265,7 @@
   title     = {Order Flow and Cryptocurrency Returns},
   year      = {2024},
   doi       = {10.2139/ssrn.5020002},
-  note      = {verified=doi-resolved. SSRN working paper; the DOI resolves to the same five authors, of whom page 1 of the local copy shows the first three. The reference library asserts "International Review of Financial Analysis (2026), DOI 10.1016/j.irfa.2026.100029" -- that DOI is still NOT confirmed and the artifact does not support it. See D89.},
+  annote    = {verified=doi-resolved. SSRN working paper; the DOI resolves to the same five authors, of whom page 1 of the local copy shows the first three. The reference library asserts "International Review of Financial Analysis (2026), DOI 10.1016/j.irfa.2026.100029" -- that DOI is still NOT confirmed and the artifact does not support it. See D89.},
   file      = {crypto-market/Order Flow and Cryptocurrency Returns (2026).pdf}
 }
 
@@ -274,7 +281,7 @@
   doi       = {10.3390/e24111548},
   eprint    = {2206.03386},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. Citation block on page 1 names Briola and
+  annote    = {verified=doi-resolved. Citation block on page 1 names Briola and
                Aste, matching the Crossref record.},
   file      = {crypto-market/Dependency Structures in Cryptocurrency Market from High to Low Frequency. 2206.03386v3.pdf}
 }
@@ -285,7 +292,7 @@
   year      = {2026},
   eprint    = {2606.00060},
   archiveprefix = {arXiv},
-  note      = {verified=artifact. THE closest prior art: hourly BTC/USDT,
+  annote    = {verified=artifact. THE closest prior art: hourly BTC/USDT,
                Binance, 27 walk-forward folds, XGBoost/LSTM/iTransformer,
                ~104 features. It reports no R2_oos against a random walk, no
                decay measurement, no K/K_eff separation, and is not
@@ -302,7 +309,7 @@
   number    = {1},
   year      = {2026},
   doi       = {10.32065/CJEF.2026.01.03},
-  note      = {verified=artifact. Journal, volume and DOI read off page 1 of
+  annote    = {verified=artifact. Journal, volume and DOI read off page 1 of
                the local copy. Crossref plain search returned an unrelated
                IRJMETS LSTM paper for this title -- discarded. See D89.},
   file      = {crypto-market/Forecasting Bitcoin Price Movements - Memory Path Dependence and Persistence (2026).pdf}
@@ -314,7 +321,7 @@
   journal   = {Decisions in Economics and Finance},
   year      = {2026},
   doi       = {10.1007/s10203-026-00570-z},
-  note      = {verified=artifact. Journal and DOI printed in the page-1 header
+  annote    = {verified=artifact. Journal and DOI printed in the page-1 header
                of the local copy and independently matched by Crossref.},
   file      = {crypto-market/Forecasting Bitcoin Price Movements Using Multivariate Hawkes Processes and Limit Order Book Data (2026).pdf}
 }
@@ -325,7 +332,7 @@
   journal   = {Applied Economics Letters},
   year      = {2022},
   doi       = {10.1080/13504851.2022.2141436},
-  note      = {verified=artifact. Taylor and Francis header and DOI read off
+  annote    = {verified=artifact. Taylor and Francis header and DOI read off
                page 1. Crossref returned only the SSRN preprint
                (10.2139/ssrn.4081871); the artifact is the published version.},
   file      = {crypto-market/Forecasting cryptocurrencies price with the financial stress index a graph neural network.pdf}
@@ -337,7 +344,7 @@
   journal   = {Financial Innovation},
   year      = {2025},
   doi       = {10.1186/s40854-025-00768-x},
-  note      = {verified=doi-resolved. Open access; DOI agrees with the
+  annote    = {verified=doi-resolved. Open access; DOI agrees with the
                filename, the page-1 header and Crossref.},
   file      = {crypto-market/Forecasting cryptocurrency volatility a novel framework based on the evolving multiscale graph neural network. s40854-025-00768-x.pdf}
 }
@@ -347,7 +354,7 @@
   year      = {2025},
   eprint    = {2505.20508},
   archiveprefix = {arXiv},
-  note      = {verified=artifact. Page 1 stamp reads "arXiv:2505.20508v1
+  annote    = {verified=artifact. Page 1 stamp reads "arXiv:2505.20508v1
                [econ.EM] 26 May 2025" -- the local FILENAME says 2026 and is
                WRONG. Crossref offered a Journal of Forecasting DOI
                (10.1002/for.70127) which the artifact does not support. See D89.},
@@ -364,7 +371,7 @@
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2022},
   url       = {https://openreview.net/forum?id=cGDAkQo1C0p},
-  note      = {verified=read. CLAUDE.md 6.3: the origin of the
+  annote    = {verified=read. CLAUDE.md 6.3: the origin of the
                use_norm instance normalisation this study runs with, and the
                reason the outer StandardScaler cancels algebraically. ICLR
                mints no DOI, so OpenReview is the version of record.
@@ -382,7 +389,7 @@
   eprint    = {1412.6980},
   archiveprefix = {arXiv},
   doi       = {10.48550/arXiv.1412.6980},
-  note      = {verified=doi-resolved. The optimiser train_one uses, at lr 1e-4
+  annote    = {verified=doi-resolved. The optimiser train_one uses, at lr 1e-4
                with a StepLR halving every 4 epochs (D47). Page 1 of the local
                copy reads "Published as a conference paper at ICLR 2015", so
                the common "2014" year is the arXiv posting, not the venue.},
@@ -403,7 +410,7 @@
   doi       = {10.1103/PhysRevLett.83.1467},
   eprint    = {cond-mat/9810255},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. CLAUDE.md 5.4: random matrix theory is
+  annote    = {verified=doi-resolved. CLAUDE.md 5.4: random matrix theory is
                what licenses treating a correlation matrix's eigenvalue
                spectrum, not its dimension, as the carrier of information --
                the provenance K_eff needs so it is not an invented statistic.},
@@ -423,7 +430,7 @@
   doi       = {10.1103/PhysRevE.65.066126},
   eprint    = {cond-mat/0108023},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. Source of the participation ratio,
+  annote    = {verified=doi-resolved. Source of the participation ratio,
                RQ1's regressor. Companion to laloux1999noise.},
   file      = {feature-construction/A Random Matrix Approach to Cross-Correlations in Financial Data (Plerou, PRE 2002). arXiv cond-mat 0108023.pdf}
 }
@@ -440,7 +447,7 @@
   pages     = {1--37},
   year      = {2014},
   doi       = {10.1145/2523813},
-  note      = {verified=doi-resolved. Source of the blind (periodic) versus
+  annote    = {verified=doi-resolved. Source of the blind (periodic) versus
                informed (drift-triggered) retraining distinction that RQ3 maps
                onto directly. The local Bournemouth copy is the accepted
                manuscript and carries a placeholder DOI
@@ -466,7 +473,7 @@
   pages   = {437--450},
   year    = {2000},
   doi     = {10.1016/S0169-2070(00)00065-0},
-  note    = {verified=read (2026-09-06, 14 pp). The canonical statement of
+  annote  = {verified=read (2026-09-06, 14 pp). The canonical statement of
              ROLLING-ORIGIN evaluation and the source of the vocabulary
              CLAUDE.md 8 uses: fixed-origin vs rolling-origin, updating vs
              RECALIBRATION, fixed vs rolling window, single vs multiple test
@@ -509,7 +516,7 @@
   pages   = {70--83},
   year    = {2018},
   doi     = {10.1016/j.csda.2017.11.003},
-  note    = {verified=read (2026-09-06, 18 pp). Cited AGAINST the easy version
+  annote  = {verified=read (2026-09-06, 18 pp). Cited AGAINST the easy version
              of our own argument, and read so the scope of its result can be
              stated exactly rather than gestured at. Theorem 1 gives
              PE_hat ->p PE under three assumptions: A1, the series is a
@@ -543,7 +550,7 @@
   pages   = {1997--2028},
   year    = {2020},
   doi     = {10.1007/s10994-020-05910-7},
-  note    = {verified=read (2026-09-06, 28 pp, arXiv v1). The empirical
+  annote  = {verified=read (2026-09-06, 28 pp, arXiv v1). The empirical
              counterpart to bergmeir2018note, and the stronger citation of the
              two because its design is the one this study runs. Eleven
              estimators (four cross-validation variants, seven
@@ -579,7 +586,7 @@
   pages   = {132--143},
   year    = {2014},
   doi     = {10.1016/j.csda.2014.02.001},
-  note    = {verified=doi-resolved, pdf=none. Extends the estimation-scheme
+  annote  = {verified=doi-resolved, pdf=none. Extends the estimation-scheme
              question to DIRECTIONAL accuracy specifically, which CLAUDE.md 9.1
              reports at h=1, at h=24 and on the cumulative 24-hour return.}
 }
@@ -593,7 +600,7 @@
   pages   = {1545--1578},
   year    = {2006},
   doi     = {10.1111/j.1468-0262.2006.00718.x},
-  note    = {verified=doi-resolved, pdf=none. The formal reason the training
+  annote  = {verified=doi-resolved, pdf=none. The formal reason the training
              window is ROLLING and FIXED-LENGTH rather than expanding: their
              asymptotic framework treats a forecast as the output of a method
              estimated on a finite, non-growing window, so parameter-estimation
@@ -613,7 +620,7 @@
   pages   = {134--161},
   year    = {2007},
   doi     = {10.1016/j.jeconom.2006.03.010},
-  note    = {verified=doi-resolved, pdf=none. Why a FINITE window is the right
+  annote  = {verified=doi-resolved, pdf=none. Why a FINITE window is the right
              answer at all under structural breaks: window length trades bias
              against variance and the optimum is finite once the
              data-generating process moves. The premise RQ2 and RQ3 are built
@@ -630,7 +637,7 @@
   pages   = {55--67},
   year    = {2017},
   doi     = {10.1016/j.jeconom.2016.03.006},
-  note    = {verified=doi-resolved, pdf=none. The companion admission: window
+  annote  = {verified=doi-resolved, pdf=none. The companion admission: window
              LENGTH is a free parameter with real consequences, and 24 months
              here is a convention adopted for sample-budget reasons, not an
              optimum. Cite it in Limitations rather than pretend the choice was
@@ -646,7 +653,7 @@
   publisher = {Elsevier},
   year      = {2013},
   doi       = {10.1016/B978-0-444-62731-5.00021-X},
-  note      = {verified=doi-resolved, pdf=none. Survey of forecasting under
+  annote    = {verified=doi-resolved, pdf=none. Survey of forecasting under
                parameter instability: rolling windows, break tests, and the
                fact that out-of-sample performance is itself time-varying --
                which is RQ2's hypothesis restated as an established regularity
@@ -663,7 +670,7 @@
   pages   = {2485--2505},
   year    = {2015},
   doi     = {10.3982/ECTA10581},
-  note    = {verified=doi-resolved, pdf=none. The sample-split ratio is not
+  annote  = {verified=doi-resolved, pdf=none. The sample-split ratio is not
              innocuous: the power of an out-of-sample comparison depends on
              where the split is placed, and a small evaluation sample is a
              low-power test rather than a neutral one. Grounds the 21/3 split
@@ -681,7 +688,7 @@
   pages   = {1--21},
   year    = {2012},
   doi     = {10.1145/2382577.2382579},
-  note    = {verified=doi-resolved, pdf=none. The general taxonomy behind
+  annote  = {verified=doi-resolved, pdf=none. The general taxonomy behind
              CLAUDE.md 11's boundary x channel grid: leakage in features versus
              leakage in training EXAMPLES. The H-step purge closes the second
              class -- a training window whose target overlaps the evaluation
@@ -698,7 +705,7 @@
   pages   = {112477},
   year    = {2024},
   doi     = {10.1016/j.knosys.2024.112477},
-  note    = {verified=read (2026-09-06, 27 pp). THE paper CLAUDE.md 8.4 must
+  annote  = {verified=read (2026-09-06, 27 pp). THE paper CLAUDE.md 8.4 must
              answer rather than ignore: it concludes CPCV beats walk-forward on
              probability of backtest overfitting, over 28 strategy trials in a
              synthetic environment (Heston, Merton jump-diffusion, drift-burst,
@@ -736,7 +743,7 @@
   pages   = {64--74},
   year    = {2019},
   doi     = {10.3905/jfds.2019.1.064},
-  note    = {verified=doi-resolved, pdf=none. The protocol-level authority for
+  annote  = {verified=doi-resolved, pdf=none. The protocol-level authority for
              pre-registration, for holding the test period out until the design
              is frozen, and for reporting the full trial count rather than only
              the surviving configuration. Grounds CLAUDE.md 8.5's Stage 5 gate
@@ -753,7 +760,7 @@
   pages   = {78--92},
   year    = {2019},
   doi     = {10.1016/j.frl.2019.04.023},
-  note    = {verified=doi-resolved, pdf=none. Documents calendar effects in
+  annote  = {verified=doi-resolved, pdf=none. Documents calendar effects in
              BITCOIN specifically, which is what turns D26's collinearity
              argument from a hypothetical into a live confound: at 6-month
              origin spacing the test-block index b is a deterministic function
@@ -772,7 +779,7 @@
   pages   = {455--478},
   year    = {2019},
   doi     = {10.1108/CFRI-12-2018-0158},
-  note    = {verified=doi-resolved, pdf=none. A second, independent measurement
+  annote  = {verified=doi-resolved, pdf=none. A second, independent measurement
              of the same class of effect as baur2019calendar. Two independent
              sources are what stop D26's spacing argument reading as an
              anecdote.}
@@ -788,7 +795,7 @@
   pages   = {2346--2363},
   year    = {2019},
   doi     = {10.1109/TKDE.2018.2876857},
-  note    = {verified=doi-resolved, pdf=none. The recent review beside
+  annote  = {verified=doi-resolved, pdf=none. The recent review beside
              gama2014survey. Together they license the design decision that a
              model is NOT retrained inside its six test blocks: that is
              periodic (blind) retraining evaluated at a fixed cadence, and RQ3
@@ -806,7 +813,7 @@
   pages   = {455--482},
   year    = {2014},
   doi     = {10.1007/s10994-014-5441-4},
-  note    = {verified=doi-resolved, pdf=none. Why a naive persistence-style
+  annote  = {verified=doi-resolved, pdf=none. Why a naive persistence-style
              baseline must be reported alongside any streaming evaluation, and
              why accuracy under temporal dependence is misleading without one.
              The streaming-literature counterpart of CLAUDE.md 7's Naive-RW
@@ -821,7 +828,7 @@
   address   = {Melbourne, Australia},
   year      = {2021},
   url       = {https://otexts.com/fpp3/},
-  note      = {verified=screened, pdf=none. Section 5.10, evaluation on a
+  annote    = {verified=screened, pdf=none. Section 5.10, evaluation on a
                rolling forecasting origin, is the textbook statement of the
                scheme Figure 1 draws, and the reference an examiner is most
                likely to already know. Freely readable online; a book, so no
@@ -839,7 +846,7 @@
   pages   = {e0194889},
   year    = {2018},
   doi     = {10.1371/journal.pone.0194889},
-  note    = {verified=doi-resolved, pdf=none. Machine-learning methods
+  annote  = {verified=doi-resolved, pdf=none. Machine-learning methods
              underperforming simple statistical benchmarks out of sample, under
              a rolling-origin protocol, over a large series collection. The
              prior that makes this study's headline -- no model beats Naive-RW
@@ -859,7 +866,7 @@
   pages     = {85--110},
   year      = {2001},
   doi       = {10.1016/S0304-4076(01)00071-9},
-  note      = {verified=doi-resolved. CLAUDE.md 9.2: why standard
+  annote    = {verified=doi-resolved. CLAUDE.md 9.2: why standard
                Diebold-Mariano is invalid on nested pairs, which is every
                comparison that carries this paper -- the K ladder is
                cumulative and Naive-RW is nested inside every model. Local file
@@ -876,7 +883,7 @@
   pages     = {1237--1282},
   year      = {2005},
   doi       = {10.1111/j.1468-0262.2005.00615.x},
-  note      = {verified=doi-resolved. The FWER stepdown behind Table 6. Its
+  annote    = {verified=doi-resolved. The FWER stepdown behind Table 6. Its
                effect here is the headline: it removes ALL 90 raw rejections
                across the 15-model family (D79). Page 1 of the local copy reads
                "Econometrica, Vol. 73, No. 4 (July, 2005), 1237-1282", so this
@@ -896,7 +903,7 @@
   doi       = {10.1016/j.jeconom.2022.04.001},
   eprint    = {2205.03285},
   archiveprefix = {arXiv},
-  note      = {verified=doi-resolved. CLAUDE.md 9.2 requirement 3: why the wild
+  annote    = {verified=doi-resolved. CLAUDE.md 9.2 requirement 3: why the wild
                cluster bootstrap must be RESTRICTED (WCR, null imposed) rather
                than unrestricted at G = 15. NOTE: the reference library lists
                "MacKinnon and Webb 2017, J. Applied Econometrics 32(2)" here --
@@ -916,7 +923,7 @@
   pages     = {504--512},
   year      = {1991},
   doi       = {10.1214/aoap/1177005835},
-  note      = {verified=doi-resolved. CLAUDE.md 5.1: the one F2 estimator that
+  annote    = {verified=doi-resolved. CLAUDE.md 5.1: the one F2 estimator that
                is NOT strictly positive -- it vanishes on shadowless (marubozu)
                bars, 33 of 75,091 usable ones, which is why the implementation
                uses log(RS + 1e-9) with kappa fixed (D52a). Local copy is the
@@ -939,7 +946,7 @@
   pages   = {80--82},
   year    = {2016},
   doi     = {10.1016/j.econlet.2016.09.019},
-  note    = {verified=doi-resolved. CLAUDE.md 4.5: efficiency is
+  annote  = {verified=doi-resolved. CLAUDE.md 4.5: efficiency is
              reported as a finding, never assumed. Unpaywall reports this OA in
              the Elsevier open archive, but ScienceDirect returns 403 to a
              script -- free to read in a browser, not fetchable by one.
@@ -956,7 +963,7 @@
   pages   = {253--263},
   year    = {1995},
   doi     = {10.1080/07350015.1995.10524599},
-  note    = {verified=doi-resolved. The base test, used for the
+  annote  = {verified=doi-resolved. The base test, used for the
              NON-nested pairs only (iTransformer vs DLinear vs PatchTST vs
              LSTM). CLAUDE.md 9.2 also requires taking a position on Diebold
              (2015), which argues DM stays valid when forecasts rather than
@@ -973,7 +980,7 @@
   pages   = {281--291},
   year    = {1997},
   doi     = {10.1016/S0169-2070(96)00719-4},
-  note    = {verified=doi-resolved. The HLN small-sample correction.
+  annote  = {verified=doi-resolved. The HLN small-sample correction.
              CLAUDE.md 9.2 requires asserting the factor is positive before
              applying it -- at h = 24 it is exactly 0 at T = 24.},
   file      = {statistical-tests/Testing the equality of prediction mean squared errors. harvey1997.pdf}
@@ -989,7 +996,7 @@
   pages   = {291--311},
   year    = {2007},
   doi     = {10.1016/j.jeconom.2006.05.023},
-  note    = {verified=doi-resolved. THE headline statistic of this
+  annote  = {verified=doi-resolved. THE headline statistic of this
              study: every nested comparison -- the K ladder, any model against
              Naive-RW, Ridge-K1 against Ridge-K8 -- is Clark-West, not DM.
              It decided the Stage 5 gate (S* = +0.8759, p = 0.1906) and hence
@@ -1009,7 +1016,7 @@
   pages   = {719--752},
   year    = {2007},
   doi     = {10.1016/j.jeconom.2006.07.020},
-  note    = {verified=doi-resolved. Non-standard critical values for
+  annote  = {verified=doi-resolved. Non-standard critical values for
              nested out-of-sample tests. CLAUDE.md 9.2 names it beside
              clark2001tests. Not in the reference library. See D89.},
   file      = {statistical-tests/Asymptotics for out of sample tests of Granger causality. mccracken2007.pdf}
@@ -1024,7 +1031,7 @@
   pages   = {453--497},
   year    = {2011},
   doi     = {10.3982/ECTA5771},
-  note    = {verified=doi-resolved. The MCS membership column in
+  annote  = {verified=doi-resolved. The MCS membership column in
              Table 6. At 90% and 75% the set contains Naive-RW, all four ridge
              rungs and lstm-K8 -- and no other deep model. Not in the reference
              library. See D89.},
@@ -1040,7 +1047,7 @@
   pages   = {1097--1126},
   year    = {2000},
   doi     = {10.1111/1468-0262.00152},
-  note    = {verified=doi-resolved. CLAUDE.md 9.2 retains SPA and the
+  annote  = {verified=doi-resolved. CLAUDE.md 9.2 retains SPA and the
              Reality Check ONLY where the paper poses a genuine one-against-many
              null, and rejects them for the pairwise matrix -- state which
              question each answers.},
@@ -1057,7 +1064,7 @@
   pages   = {703--708},
   year    = {1987},
   doi     = {10.2307/1913610},
-  note    = {verified=doi-resolved. Cited as the estimator this study
+  annote  = {verified=doi-resolved. Cited as the estimator this study
              REJECTS: under the DM null h-step errors are MA(h-1), so all
              autocovariances to lag 23 are genuinely nonzero and Bartlett
              weights shrink gamma-22 by ~92%. The rectangular truncated
@@ -1074,7 +1081,7 @@
   pages   = {414--427},
   year    = {2008},
   doi     = {10.1162/rest.90.3.414},
-  note    = {verified=doi-resolved. The wild cluster bootstrap, and
+  annote  = {verified=doi-resolved. The wild cluster bootstrap, and
              the reason this study bootstraps the cluster-robust t-statistic
              rather than beta-hat. Free preprint: NBER t0344, doi 10.3386/t0344
              (metadata page only).},
@@ -1090,7 +1097,7 @@
   pages   = {461--465},
   year    = {1992},
   doi     = {10.1080/07350015.1992.10509922},
-  note    = {verified=doi-resolved. Makes directional accuracy
+  annote  = {verified=doi-resolved. Makes directional accuracy
              testable. CLAUDE.md 9.1: valid at h = 1; at h = 24 and on the
              cumulative return it must run on NON-overlapping windows, since
              overlapping targets share 23 of 24 hours and PT over-rejects badly.},
@@ -1107,7 +1114,7 @@
   pages   = {41--66},
   year    = {1988},
   doi     = {10.1093/rfs/1.1.41},
-  note    = {verified=doi-resolved. The variance ratio test behind
+  annote  = {verified=doi-resolved. The variance ratio test behind
              efficiency_table (CLAUDE.md 4.5). Free preprint: NBER w2168.},
   file      = {statistical-tests/Stock Market Prices Do Not Follow Random Walks, Evidence from a Simple Specification Test. lo1988.pdf}
 }
@@ -1121,7 +1128,7 @@
   pages   = {192--213},
   year    = {2012},
   doi     = {10.1016/j.ins.2011.12.028},
-  note    = {verified=doi-resolved. The primary published
+  annote  = {verified=doi-resolved. The primary published
              justification for rolling-origin evaluation: it captures
              performance across differing conditions where a fixed origin
              cannot. Direct support for CLAUDE.md 8.1's fifteen origins.},
@@ -1138,7 +1145,7 @@
   pages   = {2232--2245},
   year    = {2006},
   doi     = {10.1016/j.csda.2006.09.030},
-  note    = {verified=doi-resolved, pdf=none. The canonical high-frequency
+  annote  = {verified=doi-resolved, pdf=none. The canonical high-frequency
              data-handling reference; licenses the segmentation and exclusion
              decisions in CLAUDE.md 4.2-4.3 rather than leaving them as
              unsupported house style.}
@@ -1154,7 +1161,7 @@
   pages   = {94--107},
   year    = {2014},
   doi     = {10.3905/jpm.2014.40.5.094},
-  note    = {verified=doi-resolved. CLAUDE.md 13.5 computes DSR PER
+  annote  = {verified=doi-resolved. CLAUDE.md 13.5 computes DSR PER
              ORIGIN from that origin's non-overlapping 24-hour returns, using
              the per-period Sharpe, not the annualised one. Measured DSR 0.173
              against a +20.6% net P&L -- report the two together.
@@ -1172,7 +1179,7 @@
   pages   = {15--29},
   year    = {2004},
   doi     = {10.3905/jpm.2004.442611},
-  note    = {verified=doi-resolved. Carries H2's ECONOMIC mechanism:
+  annote  = {verified=doi-resolved. Carries H2's ECONOMIC mechanism:
              if predictability itself evolves, a static model must decay.
              CLAUDE.md 3 pairs it with han2024capacity so the hypothesis has a
              finance-theoretic and an ML-theoretic argument for the same claim.},
@@ -1189,7 +1196,7 @@
   pages   = {61--65},
   year    = {1980},
   doi     = {10.1086/296071},
-  note    = {verified=doi-resolved. Variate family F2. Strictly
+  annote  = {verified=doi-resolved. Variate family F2. Strictly
              positive once H == L bars are excluded, unlike Rogers-Satchell.},
   file      = {feature-construction/The Extreme Value Method for Estimating the Variance of the Rate of Return (Parkinson, J Business 1980).pdf}
 }
@@ -1204,7 +1211,7 @@
   pages   = {67--78},
   year    = {1980},
   doi     = {10.1086/296072},
-  note    = {verified=doi-resolved, pdf=none. Variate family F2, bounded below
+  annote  = {verified=doi-resolved, pdf=none. Variate family F2, bounded below
              by 0.114 (ln H/L)^2.}
 }
 
@@ -1217,7 +1224,7 @@
   pages   = {55--67},
   year    = {1970},
   doi     = {10.1080/00401706.1970.10488634},
-  note    = {verified=doi-resolved. The ridge baseline, which is the
+  annote  = {verified=doi-resolved. The ridge baseline, which is the
              single most important comparator this study has: mean R2_oos
              -0.000568 against iTransformer-K8's -0.017993, i.e. it loses to
              Naive-RW by roughly thirty times less than any deep model.
@@ -1236,7 +1243,7 @@
   pages   = {1735--1780},
   year    = {1997},
   doi     = {10.1162/neco.1997.9.8.1735},
-  note    = {verified=doi-resolved. The LSTM baseline (arm lstm,
+  annote  = {verified=doi-resolved. The LSTM baseline (arm lstm,
              75 runs, multivariate, target-channel loss). It is the ONLY deep
              model in the Model Confidence Set, which is why CLAUDE.md 13.4's
              honest framing is "the attention-based long-sequence architectures
@@ -1253,7 +1260,7 @@
   pages   = {581--592},
   year    = {1976},
   doi     = {10.1093/biomet/63.3.581},
-  note    = {verified=doi-resolved, pdf=none. Cited in order to argue the
+  annote  = {verified=doi-resolved, pdf=none. Cited in order to argue the
              MCAR/MAR/MNAR taxonomy does NOT apply: it governs values that
              exist but went unobserved, and when the exchange is down no price
              forms, so imputation is undefined rather than merely risky
@@ -1267,7 +1274,7 @@
   address   = {Hoboken, NJ},
   year      = {2018},
   isbn      = {978-1-119-48208-6},
-  note      = {verified=screened, pdf=none. Source of purging, embargo and
+  annote    = {verified=screened, pdf=none. Source of purging, embargo and
                CPCV. Mandatory BOTH for adopting purging (chapter 7) and for
                rejecting CPCV (CLAUDE.md 8.4, which must appear verbatim).
                A book: no DOI. Chapter and page must be checked against a
