@@ -787,10 +787,21 @@ paragraph with the keys in place.
 > long-term time series forecasting literature, and still applies purging of H steps at every training
 > boundary.
 
-Answer the counter-argument rather than ignoring it: the Knowledge-Based Systems (2024)
-backtest-overfitting comparison concludes CPCV beats walk-forward. Its target is *strategy selection*
-among many candidates, where block shuffling is desirable; this is a *controlled architecture
-comparison* where time-since-training is the independent variable.
+Answer the counter-argument rather than ignoring it, and answer it **from its own methods section**
+(`arian2024backtest`, read 2026-09-06; long form in `docs/WALK_FORWARD_FOUNDATION.md` §4.2). Arian,
+Norouzi Mobarekeh & Seco (*Knowledge-Based Systems* 305, 2024) do conclude CPCV beats walk-forward.
+Their walk-forward is `CrossValidatorController('walkforward', n_splits=4)` — four sequential
+segments, which their own §2.4.7 calls "a single backtest path … it tests the strategy **only once**"
+— i.e. Tashman's *fixed-origin* design, deprecated in 2000, against this study's fifteen origins ×
+six blocks. Their `purgedkfold` and `combinatorialpurged` each receive `embargo=0.02` while their
+`walkforward` receives **no purge at all**, so the measured gap confounds *combinatorial* with
+*purged*; §8.2 purges at both boundaries. And their §2.4.2 endorses walk-forward for **model decay**
+specifically, to be used "alongside other methods like CPCV" rather than replaced. Read the effect
+sizes too: η² = 0.0102 on PBO, mean 0.4523 against 0.4005, and walk-forward versus K-Fold **p = 1.0**.
+The estimand argument — PBO and DSR measure *strategy-selection* overfitting among candidates
+competing on one return series, whereas this is a controlled architecture comparison — is stated
+**last**, because leading with it reads as special pleading while the two facts about their code do
+not.
 
 ### 8.5 Stage gates
 

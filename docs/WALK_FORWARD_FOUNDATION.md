@@ -52,7 +52,7 @@ quantity too small to see.
 | 8 | **Six 30-day test blocks, no retraining inside them** | This is *periodic (blind) retraining* evaluated at a fixed cadence. RQ3 asks what the cadence should be, which requires observing performance as a function of block index. | `gama2014survey` — source of the blind (periodic) vs informed (drift-triggered) retraining distinction that RQ3 maps onto directly. `lu2019conceptdrift` — the recent review beside it. `zliobaite2015evaluation` — evaluation under temporal dependence is misleading without a persistence-style baseline, which is why §7 makes Naive-RW mandatory. |
 | 9 | **Out-of-sample = everything right of `o`** | There is no fourth split. A forecaster at `o` has seen everything before it and nothing after. | `tashman2000outofsample` — the definition of out-of-sample under rolling origins; the shaded span in the lower panel is that definition drawn. |
 | 10 | **Errors clustered by origin, not pooled as 90 independent cells** | Consecutive origins share 79.2 % of their training data (58.3 / 37.5 / 16.7 % at strides 2–4), so `A(i,b)` series are dependent by construction. | The dependence argument is **this study's own**, from `D28`'s overlap arithmetic — Tashman does *not* state that rolling-origin errors are statistically dependent, and citing him for it would be citing what he did not write. What he *does* supply is §6.3: Fildes et al. (1998), over 263 series, found the relative **ranking** of methods changed appreciably as the origin varied, which "should discourage forecasters from using a single forecasting origin" — the ground for reporting per-origin and for `D30`'s origin-level dispersion. `cameron2008bootstrap`, `mackinnon2023cluster` supply the inference; §9.2 bounds effective independent training sets near 4. |
-| 11 | **CPCV considered and rejected** | CPCV reorders blocks non-chronologically, which leaves time-since-training undefined; it also assumes DGP stability across blocks, which is the assumption this study tests. | `lopezdeprado2018advances` (source of CPCV) and `arian2024backtest` — the *Knowledge-Based Systems* 2024 paper that concludes **CPCV beats walk-forward** on probability of backtest overfitting. **Cite it and answer it**: its target is *strategy selection among many candidates*, where block shuffling is desirable; this is a controlled architecture comparison. Ignoring it is the reviewable failure. |
+| 11 | **CPCV considered and rejected** | CPCV reorders blocks non-chronologically, which leaves time-since-training undefined; it also assumes DGP stability across blocks, which is the assumption this study tests. | `lopezdeprado2018advances` (source of CPCV) and `arian2024backtest` — the *Knowledge-Based Systems* 2024 paper that concludes **CPCV beats walk-forward**. **Cite it and answer it**; §4.2 gives the answer out of that paper's own methods section. Ignoring it is the reviewable failure. |
 | 12 | **Test period opened once, after the design is frozen** | The Stage 5 gate that repositioned the title ran on **validation**, not on test (`D27`). | `arnott2019protocol` — the protocol-level authority for pre-registration, held-out test periods and reporting the full trial count. `bailey2014deflated` (already in the library) for the trial-count consequence. |
 | 13 | **The result — no model beats Naive-RW** | Read in the frame the protocol establishes, this is a replication, not a bug. | `makridakis2018concerns` — ML methods underperforming simple statistical benchmarks out of sample, under a rolling-origin protocol, over a large series collection. |
 
@@ -148,7 +148,7 @@ occurred — see `D60b`; the estimand turned out undefined for a different reaso
 | Objection | Answer | Citation |
 |---|---|---|
 | "Why not K-fold cross-validation? It is more sample-efficient." | Valid only under conditions this study does not meet, and it destroys RQ2's independent variable outright. | `bergmeir2018note` (states the conditions), `cerqueira2020evaluating` (shows the empirical reversal on real data) |
-| "CPCV is the modern standard and beats walk-forward." | True for strategy selection among many candidates. Not applicable when time-since-training is the independent variable. §8.4's paragraph appears verbatim. | `arian2024backtest`, `lopezdeprado2018advances` |
+| "CPCV is the modern standard and beats walk-forward." | The paper that shows this measured a **single-path, unpurged** walk-forward. §4.2 works through its methods section. | `arian2024backtest`, `lopezdeprado2018advances` |
 | "Your fifteen origins are not fifteen independent observations." | Correct, and stated numerically rather than as "calendar adjacency": 79.2 % overlap at stride 1; effective independent training sets bounded near 4; training-disjoint re-estimate at G = 3 reported with its spread. | `tashman2000outofsample`, `cameron2008bootstrap`, `mackinnon2023cluster` |
 | "An expanding window would use more data." | It would also make model age inseparable from training volume, and it leaves the estimation-error framework the comparison relies on. | `tashman2000outofsample` §4.4, `giacomini2006conditional`, `pesaran2007selection` |
 | **"Tashman says you must recalibrate as the origin rolls. You did not."** | Correct, and deliberate — see §4.1 below. The handicap he warns about is RQ3's estimand. | `tashman2000outofsample` §4.2 |
@@ -184,7 +184,54 @@ Three things separate the two cases, and all three belong in the manuscript.
 Say all three. Saying only the third invites the reader to ask why the interior of the test span was
 left alone.
 
-### 4.2 What Tashman also settles about the metrics
+### 4.2 The CPCV objection, answered from the objecting paper's own methods
+
+`arian2024backtest` is the strongest recent case against this protocol, and §8.4 promises an answer.
+Reading it supplies one that a referee can check line by line, because the answer is in that paper's
+**methods section**, not in a difference of opinion about aims.
+
+**What it found.** Over 28 strategy trials in a synthetic environment (Heston stochastic volatility,
+Merton jump-diffusion, drift-burst, regime-switching Markov) plus S&P 500 data, Combinatorial Purged
+CV attains the lowest Probability of Backtest Overfitting, and Walk-Forward the lowest best-trial
+Deflated Sharpe Ratio and the least stable PBO over time. Take that seriously: it is a real result
+about a real deficiency.
+
+**What its Walk-Forward actually is.** Three facts from the paper, in its own words and code.
+
+1. **Single path.** §3.4.2 configures `CrossValidatorController('walkforward', n_splits=4)` — four
+   sequential segments. §2.4.7 states the consequence plainly: WF "creates a single backtest path …
+   it tests the strategy **only once**, providing limited insight into its robustness under different
+   market conditions." That is Tashman's **fixed-origin** design, whose three defects he named in 2000
+   (§2 row 1 above), and it is what `cerqueira2020evaluating` independently faults the earlier
+   CV-favourable comparisons for. This study runs **fifteen origins × six blocks**.
+2. **Unpurged.** In the same section, `purgedkfold` and `combinatorialpurged` each receive `times=`
+   and `embargo=0.02`; `walkforward` receives **neither**, and §2.4.2 defines WFCV with no purge at
+   all. Their measured gap therefore confounds *combinatorial* with *purged* — the very mechanism
+   their §2.4.3 credits for preventing look-ahead bias. This study's walk-forward is purged at **both**
+   boundaries (§8.2, `D24`).
+3. **They endorse it for this study's purpose.** §2.4.2: WFCV "is particularly pertinent in financial
+   machine learning due to its ability to mitigate overfitting and **model decay** risks", and should
+   be employed "alongside other methods like CPCV" — not replaced by them. RQ2 and RQ3 *are* model
+   decay.
+
+**And read the effect sizes before repeating the abstract.** Kruskal–Wallis on PBO gives
+η² = 0.0102; mean PBO is 0.4523 for Walk-Forward against 0.4005 for CPCV; and **Walk-Forward versus
+K-Fold is p = 1.0** — indistinguishable. The deficits that are real in their data are the best-trial
+DSR (0.189 against ≈ 0.44) and the temporal stability of PBO, not the level of PBO.
+
+**The estimand argument still stands and is stated last, not first.** PBO and DSR measure
+*strategy-selection* overfitting among candidates competing on one return series. This study is a
+controlled architecture comparison in which time-since-training is the independent variable, and
+CPCV's non-chronological block ordering leaves that variable undefined. Leading with this reads as
+special pleading; leading with (1) and (2) does not, because they are facts about their code.
+
+**This is Related Work material, not only a defensive paragraph.** The recent finance-ML case against
+walk-forward rests on a single-path, unpurged implementation of it, twenty-four years after the
+forecasting literature deprecated single-origin evaluation — and `cerqueira2020evaluating` made the
+identical criticism, in the opposite direction, of the studies that favoured cross-validation. Stating
+that once, with the section numbers, is a contribution the paper can make cheaply.
+
+### 4.3 What Tashman also settles about the metrics
 
 Not a Figure 1 element, but it grounds two rules the manuscript otherwise asserts on its own
 authority. §6.2.1 tells forecasters to **avoid scale-dependent error measures** such as RMSE and MAD
@@ -240,19 +287,21 @@ of them have since been read end to end.
 | `bergmeir2018note` | **read** (18 pp) | The strongest published case *for* K-fold CV on time series. §2.1 checks its A1–A3 against this study. | Monash working-paper copy on disk. **Not** the CSDA version of record — the text is the July 2017 preprint, the page numbers in the entry are the journal's. |
 | `cerqueira2020evaluating` | **read** (28 pp) | The empirical half, on half-hourly/hourly/daily data. Supplies the direction-of-bias finding. | arXiv v1 on disk. |
 | `tashman2000outofsample` | **read** (14 pp) | THE canonical citation of rolling-origin evaluation. §3.1, §4.3, §4.4 and §6.2.1 all carry weight; §4.2 raises the objection §4.1 above answers. | Journal PDF on disk. Supplied by hand 2026-09-06 after Unpaywall returned `closed`. |
-| `arian2024backtest` | doi-resolved | Argues CPCV **beats** walk-forward; §8.4 promises an answer to it. | **Not obtainable free.** Unpaywall, 2026-09-06: closed, no arXiv preprint. DOI `10.1016/j.knosys.2024.112477`, ScienceDirect PII `S0950705124011110` — needs institutional access. |
+| `arian2024backtest` | **read** (27 pp) | Argues CPCV **beats** walk-forward; §8.4 promises an answer, and §4.2 gives one from its own methods section. | Journal PDF on disk. Supplied by hand 2026-09-06 through institutional access after Unpaywall returned `closed`. |
 
-**One entry still cannot be cited as it stands.** `arian2024backtest` carries the CPCV rebuttal, and
-a paper this study argues *against* and has not read is the specific failure `paper/CLAUDE.md`'s
-first refusal names. It is registered in `tools/fetch_references.py`'s `PAYWALLED` list with the
-Unpaywall verdict, the date and the PII, so the gap is recorded rather than quietly carried.
+**All four are now read, and `tools/fetch_references.py`'s `PAYWALLED` list is empty.** The remaining
+citation debt is elsewhere: of 70 bib entries, **8 are `read`**, 53 `doi-resolved`, 8 `artifact`,
+2 `screened`. §13.3 needs `read` for every entry the manuscript cites, and §13.1 budgets 35–45
+references — so this is the largest single piece of work left in the project, and no part of it is
+computational.
 
-**Reading Tashman changed the document rather than only its `verified` flag**, which is the argument
-for §13.3's second half. Three things moved: §2 row 3 gained his §4.4 sentence, which states this
-study's rolling-window rationale better than the econometric citations do; §2 row 10 **lost** a claim
-that he establishes the dependence of rolling-origin errors, which he does not; and §4.1 exists at
-all, because his §4.2 is an objection to this design that no summary of the paper would have
-surfaced.
+**Reading these four changed the document rather than only its `verified` flags**, which is the whole
+argument for §13.3's second half. Four things moved that a summary would not have surfaced: §2 row 3
+gained Tashman's §4.4 sentence, which states this study's rolling-window rationale better than the
+econometric citations do; §2 row 10 **lost** a claim that he establishes the dependence of
+rolling-origin errors, which he does not; §4.1 exists because his §4.2 is a live objection to this
+design; and §4.2 exists because `arian2024backtest`'s walk-forward turns out to be `n_splits=4`,
+single-path and unpurged — a fact available only from its methods section.
 
 `tools/fetch_references.py` downloads only what is legally free; entries whose `note` says `pdf=none`
 have a resolved DOI standing in for a file, never a fabricated one.

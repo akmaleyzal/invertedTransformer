@@ -698,13 +698,33 @@
   pages   = {112477},
   year    = {2024},
   doi     = {10.1016/j.knosys.2024.112477},
-  note    = {verified=doi-resolved, pdf=none. THE paper CLAUDE.md 8.4 must
+  note    = {verified=read (2026-09-06, 27 pp). THE paper CLAUDE.md 8.4 must
              answer rather than ignore: it concludes CPCV beats walk-forward on
-             probability of backtest overfitting. Its target is STRATEGY
-             SELECTION among many candidates, where block shuffling is
-             desirable; this study is a controlled architecture comparison in
-             which time-since-training is the independent variable, and
-             non-chronological block ordering leaves that variable undefined.}
+             probability of backtest overfitting, over 28 strategy trials in a
+             synthetic environment (Heston, Merton jump-diffusion, drift-burst,
+             regime-switching Markov) plus SP 500 data. Reading its METHODS
+             section is what turns the rebuttal from a preference into a
+             checkable claim, and three facts do the work. (1) Section 3.4.2:
+             their walk-forward is CrossValidatorController('walkforward',
+             n_splits=4) -- four sequential segments -- and section 2.4.7 says
+             it "creates a single backtest path ... it tests the strategy only
+             once". That is Tashman's FIXED-ORIGIN design, deprecated in 2000;
+             this study runs 15 origins x 6 blocks. (2) The same calls show
+             purgedkfold and combinatorialpurged both receive times= and
+             embargo=0.02 while walkforward receives NEITHER, and section 2.4.2
+             defines WFCV with no purge at all -- so their measured gap
+             confounds "combinatorial" with "purged", while CLAUDE.md 8.2's
+             walk-forward is purged at both boundaries. (3) Their own section
+             2.4.2 endorses WFCV for this study's exact purpose: it "is
+             particularly pertinent in financial machine learning due to its
+             ability to mitigate overfitting and MODEL DECAY risks", and should
+             be used "alongside other methods like CPCV" rather than replaced.
+             Read the effect sizes too: Kruskal-Wallis on PBO gives eta^2 =
+             0.0102, mean PBO 0.4523 (WF) against 0.4005 (CPCV), and WF versus
+             K-Fold is p = 1.0. WF's real deficits in their data are the lowest
+             best-trial DSR (0.189 against ~0.44) and the least stable PBO over
+             time, not a higher PBO level.},
+  file    = {evaluation-protocol/Backtest overfitting in the machine learning era, A comparison of out-of-sample testing methods in a synthetic controlled environments. 1-s2.0-S0950705124011110-main.pdf}
 }
 
 @article{arnott2019protocol,

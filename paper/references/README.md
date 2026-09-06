@@ -6,12 +6,12 @@
 
 | Tier | Meaning | Count |
 |---|---|---|
-| `read` | read in full | 7 |
-| `doi-resolved` | DOI resolved | 53 |
+| `read` | read in full | 8 |
+| `doi-resolved` | DOI resolved | 52 |
 | `artifact` | identity from the PDF itself | 8 |
 | `screened` | search result only | 2 |
 
-**70 entries — 51 with a PDF on disk, 19 metadata-only.**
+**70 entries — 52 with a PDF on disk, 18 metadata-only.**
 
 ## Transformer based
 
@@ -72,7 +72,7 @@
 
 *How out-of-sample performance is measured: rolling-origin evaluation, concept drift, backtest overfitting*
 
-`paper/references/evaluation-protocol/` — 6 entries
+`paper/references/evaluation-protocol/` — 7 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
@@ -82,6 +82,7 @@
 | `gama2014survey` | A survey on concept drift adaptation — *ACM Computing Surveys* | 2014 | `10.1145/2523813` | `doi-resolved` |
 | `bergmeir2018note` | A note on the validity of cross-validation for evaluating autoregressive time series prediction — *Computational Statistics & Data Analysis* | 2018 | `10.1016/j.csda.2017.11.003` | `read` |
 | `cerqueira2020evaluating` | Evaluating time series forecasting models: an empirical study on performance estimation methods — *Machine Learning* | 2020 | `10.1007/s10994-020-05910-7` | `read` |
+| `arian2024backtest` | Backtest overfitting in the machine learning era: A comparison of out-of-sample testing methods in a synthetic controlled environment — *Knowledge-Based Systems* | 2024 | `10.1016/j.knosys.2024.112477` | `read` |
 
 ## Statistical tests
 
@@ -122,7 +123,7 @@
 
 *Resolved DOI, no legal free full text found. Obtain through the UNESA library or the DOI — never cite one of these without reading it first (§13.3).*
 
-19 entries
+18 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
@@ -144,7 +145,6 @@
 | `lu2019conceptdrift` | Learning under Concept Drift: A Review — *IEEE Transactions on Knowledge and Data Engineering* | 2019 | `10.1109/TKDE.2018.2876857` | `doi-resolved` |
 | `ma2019dayofweek` | On the day-of-the-week effects of Bitcoin markets: international evidence — *China Finance Review International* | 2019 | `10.1108/CFRI-12-2018-0158` | `doi-resolved` |
 | `hyndman2021fpp` | Forecasting: Principles and Practice | 2021 | — | `screened` |
-| `arian2024backtest` | Backtest overfitting in the machine learning era: A comparison of out-of-sample testing methods in a synthetic controlled environment — *Knowledge-Based Systems* | 2024 | `10.1016/j.knosys.2024.112477` | `doi-resolved` |
 
 ## Free to read, but not fetchable by script
 
