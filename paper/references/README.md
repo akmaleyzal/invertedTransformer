@@ -6,12 +6,12 @@
 
 | Tier | Meaning | Count |
 |---|---|---|
-| `read` | read in full | 6 |
-| `doi-resolved` | DOI resolved | 54 |
+| `read` | read in full | 7 |
+| `doi-resolved` | DOI resolved | 53 |
 | `artifact` | identity from the PDF itself | 8 |
 | `screened` | search result only | 2 |
 
-**70 entries — 50 with a PDF on disk, 20 metadata-only.**
+**70 entries — 51 with a PDF on disk, 19 metadata-only.**
 
 ## Transformer based
 
@@ -72,10 +72,11 @@
 
 *How out-of-sample performance is measured: rolling-origin evaluation, concept drift, backtest overfitting*
 
-`paper/references/evaluation-protocol/` — 5 entries
+`paper/references/evaluation-protocol/` — 6 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
+| `tashman2000outofsample` | Out-of-sample tests of forecasting accuracy: an analysis and review — *International Journal of Forecasting* | 2000 | `10.1016/S0169-2070(00)00065-0` | `read` |
 | `bergmeir2012use` | On the use of cross-validation for time series predictor evaluation — *Information Sciences* | 2012 | `10.1016/j.ins.2011.12.028` | `doi-resolved` |
 | `bailey2014deflated` | The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality — *The Journal of Portfolio Management* | 2014 | `10.3905/jpm.2014.40.5.094` | `doi-resolved` |
 | `gama2014survey` | A survey on concept drift adaptation — *ACM Computing Surveys* | 2014 | `10.1145/2523813` | `doi-resolved` |
@@ -121,13 +122,12 @@
 
 *Resolved DOI, no legal free full text found. Obtain through the UNESA library or the DOI — never cite one of these without reading it first (§13.3).*
 
-20 entries
+19 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
 | `rubin1976inference` | Inference and missing data — *Biometrika* | 1976 | `10.1093/biomet/63.3.581` | `doi-resolved` |
 | `garman1980estimation` | On the Estimation of Security Price Volatilities from Historical Data — *The Journal of Business* | 1980 | `10.1086/296072` | `doi-resolved` |
-| `tashman2000outofsample` | Out-of-sample tests of forecasting accuracy: an analysis and review — *International Journal of Forecasting* | 2000 | `10.1016/S0169-2070(00)00065-0` | `doi-resolved` |
 | `brownlees2006financial` | Financial econometric analysis at ultra-high frequency: Data handling concerns — *Computational Statistics & Data Analysis* | 2006 | `10.1016/j.csda.2006.09.030` | `doi-resolved` |
 | `giacomini2006conditional` | Tests of Conditional Predictive Ability — *Econometrica* | 2006 | `10.1111/j.1468-0262.2006.00718.x` | `doi-resolved` |
 | `pesaran2007selection` | Selection of estimation window in the presence of breaks — *Journal of Econometrics* | 2007 | `10.1016/j.jeconom.2006.03.010` | `doi-resolved` |

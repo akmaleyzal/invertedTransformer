@@ -217,16 +217,17 @@ PAYWALLED: list[tuple[str, str, str]] = [
      "10.1093/biomet/63.3.581", "CLAUDE.md 4.2 -- cited to argue it does NOT apply"),
     ("Lopez de Prado 2018, Advances in Financial Machine Learning (Wiley)",
      "book, ISBN 978-1-119-48208-6", "CLAUDE.md 8.2 purging, 8.4 CPCV rejection"),
-    ("Tashman 2000, IJF 16(4):437-450",
-     "10.1016/S0169-2070(00)00065-0",
-     "CLAUDE.md 8.1 rolling-origin -- THE canonical citation of the protocol. "
-     "Unpaywall 2026-09-06: is_oa=false, oa_status=closed, no OA location. "
-     "Obtain through a library; it carries too much weight to cite unread"),
     ("Arian, Norouzi Mobarekeh & Seco 2024, KBS 305:112477",
      "10.1016/j.knosys.2024.112477",
      "CLAUDE.md 8.4 -- the CPCV-beats-walk-forward paper the methodology "
-     "promises to answer. Unpaywall 2026-09-06: closed, no arXiv preprint"),
+     "promises to answer. Unpaywall 2026-09-06: closed, no arXiv preprint. "
+     "ScienceDirect PII S0950705124011110, for institutional access"),
 ]
+
+# Tashman 2000 was listed here on 2026-09-06 on an Unpaywall verdict of
+# closed, which was correct: the file was not on disk at the time. It was
+# supplied by hand later the same day and now carries a file= field in the
+# bib, so check_bib() links it and this list must not claim it is missing.
 
 _STOP = {"a", "an", "the", "of", "for", "and", "on", "in", "to", "with", "is",
          "are", "from", "against", "not"}

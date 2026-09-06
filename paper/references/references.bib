@@ -466,14 +466,38 @@
   pages   = {437--450},
   year    = {2000},
   doi     = {10.1016/S0169-2070(00)00065-0},
-  note    = {verified=doi-resolved, pdf=none. The canonical statement of
-             ROLLING-ORIGIN evaluation and the source of the fixed-origin /
-             rolling-origin and fixed-window / expanding-window vocabulary
-             CLAUDE.md 8.1 uses. Grounds three separate choices: that a single
-             train/test split is not an out-of-sample test at all, that
-             accuracy must be averaged over multiple origins, and that
-             rolling-origin errors are DEPENDENT -- which is why 9.2 clusters
-             by origin instead of treating 90 cells as 90 draws.}
+  note    = {verified=read (2026-09-06, 14 pp). The canonical statement of
+             ROLLING-ORIGIN evaluation and the source of the vocabulary
+             CLAUDE.md 8 uses: fixed-origin vs rolling-origin, updating vs
+             RECALIBRATION, fixed vs rolling window, single vs multiple test
+             periods. Four sections carry weight here. Section 3.1 names the
+             three defects of a single fixed origin -- one error per lead time,
+             susceptibility to "occurrences unique to that origin", and summary
+             measures that average across lead times into a "melange". Section
+             4.4 gives the exact reason this study's window is FIXED-LENGTH and
+             rolling: "the principal purpose of a rolling window is to level
+             the playing field in a multiperiod comparison ... The comparison
+             would be confounded if the second fit period were longer than the
+             first" -- CLAUDE.md 8.1's own argument, published in 2000. Section
+             4.3 grounds the multiple test periods, with Pack's (1990) MAPE
+             moving 3.1% to 5.8% at one lead time across test periods and
+             Schnaars's (1986) finding that accuracy is worse at cyclical
+             turning points. Section 6.2.1 is the ancestor of RelMSE: avoid
+             scale-dependent measures when averaging over series of differing
+             volatility, and prefer a ratio to a naive method (Collopy and
+             Armstrong's RAE), which "standardize[s] the component series for
+             degree of change and, hence, degree of forecasting difficulty" --
+             the D05 and D60i arguments, thirty years early. CAUTION, and the
+             reason this entry was rewritten after reading: section 4.2 says
+             "recalibration is the preferred procedure" and that failing to
+             recalibrate "imposes an arbitrary handicap". This study holds
+             weights fixed across each 180-day test span BY DESIGN, because
+             that handicap is RQ3's estimand -- see
+             docs/WALK_FORWARD_FOUNDATION.md 4. He does NOT anywhere state that
+             rolling-origin errors are statistically dependent; an earlier
+             draft of this note claimed he did. The clustering argument in
+             CLAUDE.md 9.2 rests on D28's overlap arithmetic, not on Tashman.},
+  file    = {evaluation-protocol/Out-of-sample tests of forecasting accuracy, an analysis and review. tashman2000.pdf}
 }
 
 @article{bergmeir2018note,

@@ -42,16 +42,16 @@ quantity too small to see.
 
 | # | Element of Figure 1 | Why it is there | Published grounding |
 |---|---|---|---|
-| 1 | **Multiple origins, not one train/test split** | A single split estimates accuracy at one point in one regime; its error is an estimate with a sample size of one origin. | `tashman2000outofsample` — the canonical treatment; defines *fixed-origin* vs *rolling-origin* and argues a single fixed origin is not an out-of-sample test of a method. `bergmeir2012use` — rolling-origin captures performance across differing conditions where a fixed origin cannot. `hyndman2021fpp` §5.10 — the textbook statement, "evaluation on a rolling forecasting origin". |
+| 1 | **Multiple origins, not one train/test split** | A single split estimates accuracy at one point in one regime; its error is an estimate with a sample size of one origin. | `tashman2000outofsample` §3.1 names the three defects of a fixed origin: one error per lead time, susceptibility to "occurrences unique to that origin", and summary measures that blend lead times into a "mélange". §4.3 adds the calendar argument — a test period "marks a single calendar interval … likely to reflect a single phase of the business cycle", so **multiple test periods** are required; Pack (1990) measured one method's MAPE at lead 4 moving 3.1 % → 5.8 % across test periods. `bergmeir2012use` — rolling-origin captures performance across differing conditions. `hyndman2021fpp` §5.10 — the textbook statement. |
 | 2 | **Chronological ordering preserved; no K-fold, no shuffling** | RQ2's independent variable is *time since training*. Any scheme that reorders blocks leaves it undefined. | `bergmeir2018note` is cited **against** us and is the stronger move: it *proves* K-fold CV valid for a purely autoregressive model with uncorrelated errors. Its three assumptions fail here, and §2.1 works through them one at a time. `cerqueira2020evaluating` is the empirical half: on real-world non-stationary series, out-of-sample estimators dominate CV variants, and CV's error is **optimistically** biased. |
-| 3 | **Rolling 24-month window, *not* expanding** | With an expanding window, training-set size grows with each origin, so *model age* cannot be separated from *training data volume* — and RQ2 is a claim about age. | `giacomini2006conditional` — their framework treats the forecast as the output of a *method* estimated on a finite, non-growing window, so estimation error does not vanish asymptotically; an expanding window sits outside it. `pesaran2007selection` — under structural breaks the optimal estimation window is *finite*, trading bias against variance. `rossi2013instability` — survey: out-of-sample performance in macro-financial forecasting is itself time-varying. |
+| 3 | **Rolling 24-month window, *not* expanding** | With an expanding window, training-set size grows with each origin, so *model age* cannot be separated from *training data volume* — and RQ2 is a claim about age. | **`tashman2000outofsample` §4.4 states this study's exact argument, in 2000**: "the principal purpose of a rolling window is to level the playing field in a multiperiod comparison of forecasting accuracy. We might analyze whether a particular method's performance deteriorates between an earlier and later test period. **The comparison would be confounded if the second fit period were longer than the first.**" That is the evaluation-design reason. `giacomini2006conditional` is the econometric one — their framework treats a forecast as the output of a *method* estimated on a finite, non-growing window, so estimation error does not vanish; an expanding window sits outside it. `pesaran2007selection` — under structural breaks the optimal window is *finite*. `rossi2013instability` — out-of-sample performance is itself time-varying. |
 | 4 | **Window length = 24 months** | Sample budget: 13,545–15,217 training windows on the feature frame against 12 × 96 input dimensions (`D25`, `docs/ORIGIN_WINDOW_BUDGET.md`). | `inoue2017rolling` — window length is a *free parameter with real consequences* and is estimable. **This study does not estimate it.** Cite the paper in Limitations; do not imply the 24 months were optimised. |
 | 5 | **21 / 3 train–validation split inside the window** | Early stopping and ridge α are selected somewhere, and that somewhere must be inside the training window and before the origin. | `hansen2015equivalence` — the sample-split ratio is not innocuous: the power of an out-of-sample comparison depends on where the split falls, so a split chosen after seeing results is a researcher degree of freedom. `arnott2019protocol` — the split, like every protocol element, is declared before the test period is opened. |
 | 6 | **H-step purge at *both* boundaries** (train→val and train→test) | A training window whose 24-step target reaches past the boundary carries post-boundary observations into training. At the train→val boundary the contaminated split is the one governing **model selection** (`D24`). | `lopezdeprado2018advances` ch. 7 — purging, the source of the technique in a financial-ML setting. `kaufman2012leakage` — the general taxonomy: leakage in *features* versus leakage in *training examples*; the purge closes the second class, and §5.3's no-rolling-feature property closes the first. |
 | 7 | **No embargo** | An embargo guards the *reverse* channel: a test-period bar influencing a training-set feature value. Here no feature uses a rolling window (§5.3), so that channel does not exist. | `lopezdeprado2018advances` ch. 7 defines the embargo and what it protects against; §8.3's argument is that the protected-against path is structurally absent. `kaufman2012leakage` supplies the vocabulary that makes "structurally absent" checkable rather than asserted. **The argument is conditional on §5.3 and must be re-derived if any rolling feature is added.** |
 | 8 | **Six 30-day test blocks, no retraining inside them** | This is *periodic (blind) retraining* evaluated at a fixed cadence. RQ3 asks what the cadence should be, which requires observing performance as a function of block index. | `gama2014survey` — source of the blind (periodic) vs informed (drift-triggered) retraining distinction that RQ3 maps onto directly. `lu2019conceptdrift` — the recent review beside it. `zliobaite2015evaluation` — evaluation under temporal dependence is misleading without a persistence-style baseline, which is why §7 makes Naive-RW mandatory. |
 | 9 | **Out-of-sample = everything right of `o`** | There is no fourth split. A forecaster at `o` has seen everything before it and nothing after. | `tashman2000outofsample` — the definition of out-of-sample under rolling origins; the shaded span in the lower panel is that definition drawn. |
-| 10 | **Errors clustered by origin, not pooled as 90 independent cells** | Consecutive origins share 79.2 % of their training data (58.3 / 37.5 / 16.7 % at strides 2–4), so `A(i,b)` series are dependent by construction. | `tashman2000outofsample` — rolling-origin errors are *dependent*; averaging across origins is required but the resulting error bars are not i.i.d. `cameron2008bootstrap`, `mackinnon2023cluster` (already in the library) supply the inference. §9.2 states the effective independent-training-set count is bounded near 4. |
+| 10 | **Errors clustered by origin, not pooled as 90 independent cells** | Consecutive origins share 79.2 % of their training data (58.3 / 37.5 / 16.7 % at strides 2–4), so `A(i,b)` series are dependent by construction. | The dependence argument is **this study's own**, from `D28`'s overlap arithmetic — Tashman does *not* state that rolling-origin errors are statistically dependent, and citing him for it would be citing what he did not write. What he *does* supply is §6.3: Fildes et al. (1998), over 263 series, found the relative **ranking** of methods changed appreciably as the origin varied, which "should discourage forecasters from using a single forecasting origin" — the ground for reporting per-origin and for `D30`'s origin-level dispersion. `cameron2008bootstrap`, `mackinnon2023cluster` supply the inference; §9.2 bounds effective independent training sets near 4. |
 | 11 | **CPCV considered and rejected** | CPCV reorders blocks non-chronologically, which leaves time-since-training undefined; it also assumes DGP stability across blocks, which is the assumption this study tests. | `lopezdeprado2018advances` (source of CPCV) and `arian2024backtest` — the *Knowledge-Based Systems* 2024 paper that concludes **CPCV beats walk-forward** on probability of backtest overfitting. **Cite it and answer it**: its target is *strategy selection among many candidates*, where block shuffling is desirable; this is a controlled architecture comparison. Ignoring it is the reviewable failure. |
 | 12 | **Test period opened once, after the design is frozen** | The Stage 5 gate that repositioned the title ran on **validation**, not on test (`D27`). | `arnott2019protocol` — the protocol-level authority for pre-registration, held-out test periods and reporting the full trial count. `bailey2014deflated` (already in the library) for the trial-count consequence. |
 | 13 | **The result — no model beats Naive-RW** | Read in the frame the protocol establishes, this is a replication, not a bug. | `makridakis2018concerns` — ML methods underperforming simple statistical benchmarks out of sample, under a rolling-origin protocol, over a large series collection. |
@@ -150,7 +150,53 @@ occurred — see `D60b`; the estimand turned out undefined for a different reaso
 | "Why not K-fold cross-validation? It is more sample-efficient." | Valid only under conditions this study does not meet, and it destroys RQ2's independent variable outright. | `bergmeir2018note` (states the conditions), `cerqueira2020evaluating` (shows the empirical reversal on real data) |
 | "CPCV is the modern standard and beats walk-forward." | True for strategy selection among many candidates. Not applicable when time-since-training is the independent variable. §8.4's paragraph appears verbatim. | `arian2024backtest`, `lopezdeprado2018advances` |
 | "Your fifteen origins are not fifteen independent observations." | Correct, and stated numerically rather than as "calendar adjacency": 79.2 % overlap at stride 1; effective independent training sets bounded near 4; training-disjoint re-estimate at G = 3 reported with its spread. | `tashman2000outofsample`, `cameron2008bootstrap`, `mackinnon2023cluster` |
-| "An expanding window would use more data." | It would also make model age inseparable from training volume, and it leaves the estimation-error framework the comparison relies on. | `giacomini2006conditional`, `pesaran2007selection` |
+| "An expanding window would use more data." | It would also make model age inseparable from training volume, and it leaves the estimation-error framework the comparison relies on. | `tashman2000outofsample` §4.4, `giacomini2006conditional`, `pesaran2007selection` |
+| **"Tashman says you must recalibrate as the origin rolls. You did not."** | Correct, and deliberate — see §4.1 below. The handicap he warns about is RQ3's estimand. | `tashman2000outofsample` §4.2 |
+
+### 4.1 The recalibration objection, in full
+
+This is the sharpest objection a referee who has actually read Tashman will raise, and it was found
+by reading him rather than by citing him. §4.2 of that paper says:
+
+> Recalibration is the preferred procedure. Updating without recalibrating imposes an arbitrary
+> handicap on the forecasting method. […] When it is a (causal) regression model under evaluation,
+> failure to recalibrate transforms a rolling-origin evaluation into a fixed-origin evaluation at one
+> step ahead and into meaningless figures at longer horizons.
+
+Read carelessly, that condemns this design: weights are frozen for the whole 180-day test span.
+Three things separate the two cases, and all three belong in the manuscript.
+
+1. **The degeneracy he names does not occur here, and his own sentence says why.** His mechanism is
+   that "the addition of a new data point changes neither the inputs to nor the coefficients of the
+   forecasting equation" — a static regression on exogenous predictors. Here the **inputs move**: at
+   every forecast origin inside a test block the 96-bar lookback rolls forward, so each of the 720
+   forecasts per block is issued from a different input window. Only the *weights* are fixed.
+2. **The frozen weights are the measurement, not an omission.** Tashman is optimising an estimate of a
+   method's accuracy; RQ3 asks what accuracy *costs* when a model is left in place — the difference
+   between the two is the whole point of the study. Reporting a recalibrated-at-every-step number
+   would answer a question no one in this paper asked.
+3. **Recalibration does happen, at a stated cadence.** Every one of the fifteen origins is a complete
+   refit on its own 24-month window: this is recalibration every five months, with the decay in
+   between measured rather than assumed. And the **falsification arm** — a model trained fresh at
+   `o + 90 d` and scored on the same blocks 4–6 — is precisely the recalibrated comparator Tashman
+   asks for, run at one interior point.
+
+Say all three. Saying only the third invites the reader to ask why the interior of the test span was
+left alone.
+
+### 4.2 What Tashman also settles about the metrics
+
+Not a Figure 1 element, but it grounds two rules the manuscript otherwise asserts on its own
+authority. §6.2.1 tells forecasters to **avoid scale-dependent error measures** such as RMSE and MAD
+when averaging over series that differ in scale or volatility, and to use a **ratio against a naive
+method** instead — Collopy and Armstrong's relative absolute error, which "standardize[s] the
+component series for degree of change and, hence, degree of forecasting difficulty."
+
+`RelMSE = MSE_model / MSE_naive` is the squared-error analogue of that statistic, and the phrase
+*degree of forecasting difficulty* is `D05`'s argument for normalising by the block's own naive
+baseline, written in 2000. `D60i` — no cross-origin comparison on scaler-space MSE, because each
+origin carries its own `σ_g` — is the same rule reached the hard way, by a units artefact that made a
+falsification-arm number read backwards. Cite §6.2.1 at both places.
 
 ---
 
@@ -193,14 +239,20 @@ of them have since been read end to end.
 |---|---|---|---|
 | `bergmeir2018note` | **read** (18 pp) | The strongest published case *for* K-fold CV on time series. §2.1 checks its A1–A3 against this study. | Monash working-paper copy on disk. **Not** the CSDA version of record — the text is the July 2017 preprint, the page numbers in the entry are the journal's. |
 | `cerqueira2020evaluating` | **read** (28 pp) | The empirical half, on half-hourly/hourly/daily data. Supplies the direction-of-bias finding. | arXiv v1 on disk. |
-| `tashman2000outofsample` | doi-resolved | THE canonical citation of rolling-origin evaluation, and the source of the dependence caveat §9.2's clustering rests on. | **Not obtainable.** Unpaywall, 2026-09-06: `is_oa=false`, `oa_status=closed`, no OA location. Needs library access. |
-| `arian2024backtest` | doi-resolved | Argues CPCV **beats** walk-forward; §8.4 promises an answer to it. | **Not obtainable.** Unpaywall, 2026-09-06: closed, and no arXiv preprint exists. |
+| `tashman2000outofsample` | **read** (14 pp) | THE canonical citation of rolling-origin evaluation. §3.1, §4.3, §4.4 and §6.2.1 all carry weight; §4.2 raises the objection §4.1 above answers. | Journal PDF on disk. Supplied by hand 2026-09-06 after Unpaywall returned `closed`. |
+| `arian2024backtest` | doi-resolved | Argues CPCV **beats** walk-forward; §8.4 promises an answer to it. | **Not obtainable free.** Unpaywall, 2026-09-06: closed, no arXiv preprint. DOI `10.1016/j.knosys.2024.112477`, ScienceDirect PII `S0950705124011110` — needs institutional access. |
 
-**The two unread ones are the two that cannot be cited as they stand.** `tashman2000outofsample`
-appears at five places in §2 and `arian2024backtest` carries the CPCV rebuttal — a paper this study
-argues against and has not read is the specific failure `paper/CLAUDE.md`'s first refusal names.
-Both are registered in `tools/fetch_references.py`'s `PAYWALLED` list with the Unpaywall verdict and
-the date, so the gap is recorded rather than quietly carried.
+**One entry still cannot be cited as it stands.** `arian2024backtest` carries the CPCV rebuttal, and
+a paper this study argues *against* and has not read is the specific failure `paper/CLAUDE.md`'s
+first refusal names. It is registered in `tools/fetch_references.py`'s `PAYWALLED` list with the
+Unpaywall verdict, the date and the PII, so the gap is recorded rather than quietly carried.
+
+**Reading Tashman changed the document rather than only its `verified` flag**, which is the argument
+for §13.3's second half. Three things moved: §2 row 3 gained his §4.4 sentence, which states this
+study's rolling-window rationale better than the econometric citations do; §2 row 10 **lost** a claim
+that he establishes the dependence of rolling-origin errors, which he does not; and §4.1 exists at
+all, because his §4.2 is an objection to this design that no summary of the paper would have
+surfaced.
 
 `tools/fetch_references.py` downloads only what is legally free; entries whose `note` says `pdf=none`
 have a resolved DOI standing in for a file, never a fabricated one.
