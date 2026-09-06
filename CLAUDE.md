@@ -765,6 +765,18 @@ The remaining train→test channel is the model weights themselves, which is the
 no embargo. This argument depends on §5.3 and must be re-examined if any rolling feature is ever
 introduced.
 
+**Every element of §8 has a citation, and they are indexed in one place.**
+`docs/WALK_FORWARD_FOUNDATION.md` maps Figure 1 element by element to the published work that licenses
+it — rolling origins (`tashman2000outofsample`, `bergmeir2012use`, `hyndman2021fpp`), the *fixed*
+rolling window (`giacomini2006conditional`, `pesaran2007selection`, `rossi2013instability`), chronology
+over K-fold with the counter-argument cited against us (`bergmeir2018note`, `cerqueira2020evaluating`),
+purging (`lopezdeprado2018advances`, `kaufman2012leakage`), the split ratio (`hansen2015equivalence`),
+periodic retraining (`gama2014survey`, `lu2019conceptdrift`, `zliobaite2015evaluation`) and the CPCV
+counter-argument by name (`arian2024backtest`). It also names the **three elements no paper prescribes**
+— the 5-month spacing, the falsification arm and the 180-day span — which must be presented as reasoned
+choices with stated consequences, never as borrowed protocol. Its §5 is a draft of the methodology
+paragraph with the keys in place.
+
 ### 8.4 Rejecting CPCV — include this paragraph in the methodology
 
 > Combinatorial Purged Cross-Validation (López de Prado, 2018) was considered but not adopted. CPCV
@@ -1819,7 +1831,31 @@ at no cost. A manuscript's companion artefact cannot: an examiner who cannot fin
 produced has no way to check that it was produced the way the methodology says, and §12's whole
 contract is that every number resolves to something regenerable. Unfindable is unverifiable.
 
-**New contradictions found later take IDs D89+. Absorbing one silently is the exact failure this
+### D89 — defect found by *resolving every citation the study actually depends on*
+
+The fifteenth pass (2026-09-05) audited `reference_library_itransformer_btc.md` against Crossref,
+Unpaywall and page 1 of every PDF in `paper/references/`. It expected bad metadata, because the file
+declares itself "assembled from search results" and `D16` had already found two mis-dated entries.
+
+| ID | Sev | Defect | Resolution | § |
+|---|---|---|---|---|
+| D89 | **C** | The library's metadata is **sound** — 27 references resolved and every stated venue/volume/pages was right, Han, Ye & Zhan's *TKDE* 36(11):7129–7142 included (arXiv carries no journal-ref; that is not a contradiction). The real defect is **omission**: five statistics the code runs are **absent entirely** — `grep -ci clark` and `grep -ci romano` both return **0**. Missing are **Clark & West 2007** (`clark_west_test`, the *headline* statistic for every nested pair, and the test that decided the Stage 5 gate and hence the title), Clark & McCracken 2001, McCracken 2007, **Romano & Wolf 2005** (`romano_wolf`, which removes all 90 raw rejections), and **Hansen, Lunde & Nason 2011** (`model_confidence_set`). §E instead lists Hansen 2005 SPA and White 2000 — the two `D35` examined and **rejected** for a pairwise matrix. It also lists MacKinnon & Webb 2017 where §9.2 cites **MacKinnon, Nielsen & Webb 2023**: overlapping authors, different paper. A wrong volume is caught by whoever follows the DOI; **a missing citation is caught by nobody, because nothing points at the hole** | `paper/references/references.bib` — 52 entries, each carrying `verified=` (`read` / `doi-resolved` / `artifact` / `screened`); `paper/references/README.md` generated from it; `tools/fetch_references.py` downloads only what is legally free, refuses any filename matching an existing one at ratio ≥ 0.75, and records paywalled entries with a resolved DOI rather than a fabricated PDF. 12 PDFs added to the 18 already present, then **regrouped 2026-09-05** into six category folders by same-volume rename with a table that refused to run until it accounted for every file; 18 more supplied by hand. **48 PDFs, duplicate audit 0 pairs, 50 of 52 entries carry a resolved DOI or arXiv id** | 9.2, 13.3 |
+
+**A second rule, about the resolution method.** Crossref's plain relevance search returned a
+**different paper** for **9 of the 18** pre-existing PDFs — PatchTST as an LSTM book chapter, TimesNet
+as a small-area health-analysis chapter, iTransformer as a peer-review record for a wind-energy
+article. Constraining by `container-title` and year rescued the econometrics look-ups; nothing rescues
+a conference paper with no DOI. **An automated resolver is a search engine, not an oracle**, and a
+plausible top hit for a famous title is exactly what a wrong answer looks like. Where a filename, a
+search result and page 1 of the PDF disagree, **page 1 wins** — that is the artifact the study cites.
+Doing so corrected three filenames of its own: the "Intraday Functional PCA … (2026)" file is
+`arXiv:2505.20508`, dated **May 2025**.
+
+**This closes half of §13.3, and says so.** A resolved DOI is not a source read. `SOURCE_PROVENANCE`'s
+`verified` flags are deliberately **untouched**, because conflating the two retires the distinction
+§13.3 exists to enforce.
+
+**New contradictions found later take IDs D90+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---
@@ -1877,6 +1913,7 @@ invertedTransformer/
 ├── USAGE.md                        # operational companion: commands, stages, schemas, expected numbers
 ├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D62; §14 is the index
 ├── docs/ORIGIN_WINDOW_BUDGET.md    # per-origin/per-block window accounting — D45's assertion target
+├── docs/WALK_FORWARD_FOUNDATION.md # §8's protocol mapped element-by-element to verified citations
 ├── src/                            # importable package; module inventory in USAGE.md §2
 ├── tools/build_notebook.py         # src/ -> notebook; carries outputs forward (D54, D86, D87)
 ├── tools/notebook_to_src.py        # notebook -> src/; the return leg, verified byte-exact (D88)

@@ -1,0 +1,1201 @@
+% ============================================================================
+% Reference library for the iTransformer / BTCUSDT walk-forward study.
+%
+% CLAUDE.md 13.3: no citation enters the manuscript without a verified DOI AND
+% the source read. This file closes the FIRST half only. The `verified` key in
+% each note says exactly how far each entry got:
+%
+%   read          the source was read end to end. Only entries whose
+%                 SOURCE_PROVENANCE row in src/itransformer_btc/config.py
+%                 carries verified=True may claim this.
+%   doi-resolved  identifier confirmed against Crossref or the publisher of
+%                 record. Metadata is trustworthy; the paper is NOT yet read.
+%   artifact      identity read off page 1 of the PDF in this directory. The
+%                 strongest evidence available for items with no DOI, and the
+%                 tiebreaker wherever a filename and a search result disagree.
+%   screened      title and venue from a search result only. Weakest tier.
+%                 Never cite from this tier.
+%
+% `file` is relative to paper/references/. `pdf = none` means no legal free
+% full text was found; the DOI plus an acquisition route stands in its place,
+% and no file was ever fabricated to fill the gap.
+%
+% Provenance of the metadata itself: Crossref REST (version of record),
+% Unpaywall (free-full-text status), and pypdf page-1 extraction (artifact
+% tier). Where Crossref plain-relevance search returned a DIFFERENT paper --
+% it did so for 9 of the 18 pre-existing PDFs -- the artifact tier wins and the
+% Crossref answer was discarded. See D89 in docs/DIVERGENCE_REGISTER.md.
+%
+% Regenerate the human-readable index with:
+%     python tools/fetch_references.py --index
+% ============================================================================
+
+
+% ============================================================================
+% TRANSFORMER-BASED -- architectures, and the debates about them
+% ============================================================================
+
+@inproceedings{liu2024itransformer,
+  author    = {Liu, Yong and Hu, Tengge and Zhang, Haoran and Wu, Haixu and
+               Wang, Shiyu and Ma, Lintao and Long, Mingsheng},
+  title     = {{iTransformer}: Inverted Transformers Are Effective for Time
+               Series Forecasting},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  eprint    = {2310.06625},
+  archiveprefix = {arXiv},
+  note      = {verified=read. The primary model. Page 1 of the local copy reads
+               "Published as a conference paper at ICLR 2024". Spotlight.
+               Official code: https://github.com/thuml/iTransformer (MIT).},
+  file      = {transformer-based/ICLR-2024-itransformer-inverted-transformers-are-effective-for-time-series-forecasting-Paper-Conference.pdf}
+}
+
+@inproceedings{nie2023patchtst,
+  author    = {Nie, Yuqi and Nguyen, Nam H. and Sinthong, Phanwadee and
+               Kalagnanam, Jayant},
+  title     = {A Time Series is Worth 64 Words: Long-term Forecasting with
+               Transformers},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023},
+  eprint    = {2211.14730},
+  archiveprefix = {arXiv},
+  note      = {verified=read. Mandatory baseline and lead proponent of channel
+               independence. arXiv id read off page 1 of the local copy.
+               Official code: https://github.com/yuqinie98/PatchTST (Apache-2.0).},
+  file      = {transformer-based/A-Time-Series-is-Worth-64-Words-long-term-forecasting-with-transformer (PatchTST).pdf}
+}
+
+@inproceedings{vaswani2017attention,
+  author    = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and
+               Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N. and
+               Kaiser, {\L}ukasz and Polosukhin, Illia},
+  title     = {Attention Is All You Need},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  year      = {2017},
+  eprint    = {1706.03762},
+  archiveprefix = {arXiv},
+  note      = {verified=artifact. Local copy is the NIPS 2017 proceedings PDF;
+               it carries no arXiv stamp or DOI. Foundational attention
+               citation for Methodology 3.4.},
+  file      = {transformer-based/NIPS-2017-attention-is-all-you-need-Paper.pdf}
+}
+
+@article{han2024capacity,
+  author    = {Han, Lu and Ye, Han-Jia and Zhan, De-Chuan},
+  title     = {The Capacity and Robustness Trade-off: Revisiting the Channel
+               Independent Strategy for Multivariate Time Series Forecasting},
+  journal   = {IEEE Transactions on Knowledge and Data Engineering},
+  volume    = {36},
+  number    = {11},
+  pages     = {7129--7142},
+  year      = {2024},
+  doi       = {10.1109/TKDE.2024.3400008},
+  eprint    = {2304.05206},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. THE theoretical statement of H2:
+               channel-dependent strategies have higher capacity but lack
+               robustness under distribution drift. CLAUDE.md 3 mechanism.
+               The local file is the arXiv preprint; the TKDE version of record
+               is paywalled and pagination may differ. Note that arxiv.org/abs
+               carries no journal-ref -- the TKDE placement was confirmed
+               against Crossref, and the reference library was RIGHT about it.},
+  file      = {transformer-based/The Capacity and Robustness Trade-off, Revisiting the Channel Independent Strategy (Han, TKDE 2024). arXiv 2304.05206.pdf}
+}
+
+@inproceedings{kim2024selfattn,
+  author    = {Kim, Dongbin and Park, Jinseong and Lee, Jaewook and Kim, Hoki},
+  title     = {Are Self-Attentions Effective for Time Series Forecasting?},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {37},
+  year      = {2024},
+  eprint    = {2405.16877},
+  archiveprefix = {arXiv},
+  note      = {verified=artifact. Author list read off page 1 of the local
+               proceedings PDF. The strongest sceptical position on attention
+               in LTSF; Related Work must engage it.},
+  file      = {transformer-based/NeurIPS-2024-are-self-attentions-effective-for-time-series-forecasting-Paper-Conference.pdf}
+}
+
+@inproceedings{wu2023timesnet,
+  author    = {Wu, Haixu and Hu, Tengge and Liu, Yong and Zhou, Hang and
+               Wang, Jianmin and Long, Mingsheng},
+  title     = {{TimesNet}: Temporal 2D-Variation Modeling for General Time
+               Series Analysis},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2023},
+  eprint    = {2210.02186},
+  archiveprefix = {arXiv},
+  note      = {verified=artifact. arXiv id and ICLR 2023 line read off page 1.
+               Also the source of Time-Series-Library, the standard LTSF
+               benchmarking codebase.},
+  file      = {transformer-based/TimesNet-Temporal-2D-variation-modeling-for-general-time-series-analysis.pdf}
+}
+
+@inproceedings{lin2025tqnet,
+  author    = {Lin, Shengsheng and others},
+  title     = {Temporal Query Network for Efficient Multivariate Time Series
+               Forecasting},
+  year      = {2025},
+  eprint    = {2505.12917},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
+  file      = {transformer-based/Temporal Query Network for Efficient Multivariate Time Series Forecasting (TQNet, 2025).pdf}
+}
+
+@inproceedings{liu2025timebridge,
+  author    = {Liu, Peiyuan and others},
+  title     = {{TimeBridge}: Non-Stationarity Matters for Long-term Time Series
+               Forecasting},
+  year      = {2025},
+  eprint    = {2410.04442},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. arXiv id confirmed by exact-title match against the arXiv API; the local PDF carries no stamp. Peer-reviewed venue not established -- cite as a preprint until it is.},
+  file      = {transformer-based/TimeBridge - Non-Stationarity Matters for Long-term Time Series Forecasting (2025).pdf}
+}
+
+@inproceedings{jain2019attention,
+  author    = {Jain, Sarthak and Wallace, Byron C.},
+  title     = {Attention is not Explanation},
+  booktitle = {Proc. NAACL-HLT},
+  pages     = {3543--3556},
+  year      = {2019},
+  eprint    = {1902.10186},
+  archiveprefix = {arXiv},
+  doi       = {10.48550/arXiv.1902.10186},
+  note      = {verified=doi-resolved. CLAUDE.md 13.2 mandatory disclosure:
+               attention maps are descriptive evidence of variate reliance,
+               never causal explanation.},
+  file      = {transformer-based/Attention Is Not Explanation (Jain and Wallace, NAACL 2019). arXiv 1902.10186.pdf}
+}
+
+@inproceedings{wiegreffe2019attention,
+  author    = {Wiegreffe, Sarah and Pinter, Yuval},
+  title     = {Attention is not not Explanation},
+  booktitle = {Proc. EMNLP-IJCNLP},
+  pages     = {11--20},
+  year      = {2019},
+  eprint    = {1908.04626},
+  archiveprefix = {arXiv},
+  doi       = {10.48550/arXiv.1908.04626},
+  note      = {verified=doi-resolved. The rebuttal, and the source of the test
+               battery this study actually implements: a uniform-attention
+               baseline (arm itru) plus seed-variance calibration.},
+  file      = {transformer-based/Attention Is Not Not Explanation (Wiegreffe and Pinter, EMNLP 2019). arXiv 1908.04626.pdf}
+}
+
+
+% ============================================================================
+% GENERAL -- non-transformer forecasting, crypto finance, econometrics,
+%            evaluation protocol, and the estimators the code implements
+% ============================================================================
+
+% ---- Non-transformer forecasting baselines ---------------------------------
+
+@article{zeng2023dlinear,
+  author    = {Zeng, Ailing and Chen, Muxi and Zhang, Lei and Xu, Qiang},
+  title     = {Are Transformers Effective for Time Series Forecasting?},
+  journal   = {Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume    = {37},
+  number    = {9},
+  pages     = {11121--11128},
+  year      = {2023},
+  doi       = {10.1609/aaai.v37i9.26317},
+  eprint    = {2205.13504},
+  archiveprefix = {arXiv},
+  note      = {verified=read. DLinear. Mandatory baseline -- a missing DLinear
+               is the first thing an LTSF-literate reviewer flags. Its internal
+               centred moving average is confined to the 96-bar lookback, so
+               CLAUDE.md 8.3's no-embargo argument survives it.
+               Official code: https://github.com/cure-lab/LTSF-Linear (Apache-2.0).},
+  file      = {baselines-and-components/DLinear, Are Transformers Effective for Time Series Forecasting. 2205.13504v3.pdf}
+}
+
+@inproceedings{nochumsohn2025mtlinear,
+  author    = {Nochumsohn, Liran and Zisling, Hedi and others},
+  title     = {A Multi-Task Learning Approach to Linear Multivariate
+               Forecasting},
+  year      = {2025},
+  eprint    = {2502.03571},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. Authors read off page 1; arXiv id confirmed by exact-title match against the arXiv API. Crossref plain search returned an unrelated paper for this title -- see D89.},
+  file      = {baselines-and-components/A Multi-Task Learning Approach to Linear Multivariate Forecasting (MTLinear, 2025).pdf}
+}
+
+@inproceedings{shifts2026,
+  title     = {Tackling Time-Series Forecasting Generalization via Mitigating
+               Concept Drift},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  eprint    = {2510.14814},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. Page 1 reads "Published as a conference paper at ICLR 2026"; arXiv id confirmed by exact-title match. Relevant to RQ3. Crossref returned Cogra (AAAI 2019) for this title -- discarded, D89.},
+  file      = {baselines-and-components/Tackling Time-Series Forecasting Generalization via Mitigating Concept Drift (ShifTS, 2026).pdf}
+}
+
+% ---- Crypto forecasting and market structure -------------------------------
+
+@article{makarov2020trading,
+  author    = {Makarov, Igor and Schoar, Antoinette},
+  title     = {Trading and arbitrage in cryptocurrency markets},
+  journal   = {Journal of Financial Economics},
+  volume    = {135},
+  number    = {2},
+  pages     = {293--319},
+  year      = {2020},
+  doi       = {10.1016/j.jfineco.2019.07.001},
+  note      = {verified=doi-resolved. CLAUDE.md 5.1: the theoretical
+               justification for variate family F4. A common component in order
+               flow explains much of the common component in returns across
+               Bitcoin exchanges -- without this, a reviewer asks why
+               taker_buy_ratio should carry information at all. Local file is
+               the LSE accepted manuscript; pagination differs from JFE.},
+  file      = {crypto-market/Trading and Arbitrage in Cryptocurrency Markets (Makarov and Schoar, JFE 2020).pdf}
+}
+
+@techreport{anastasopoulos2024orderflow,
+  author    = {Anastasopoulos, Alexia and Gradojevic, Nikola and Liu, Fred and
+               Maynard, Alex and Tsiakas, Ilias},
+  title     = {Order Flow and Cryptocurrency Returns},
+  year      = {2024},
+  doi       = {10.2139/ssrn.5020002},
+  note      = {verified=doi-resolved. SSRN working paper; the DOI resolves to the same five authors, of whom page 1 of the local copy shows the first three. The reference library asserts "International Review of Financial Analysis (2026), DOI 10.1016/j.irfa.2026.100029" -- that DOI is still NOT confirmed and the artifact does not support it. See D89.},
+  file      = {crypto-market/Order Flow and Cryptocurrency Returns (2026).pdf}
+}
+
+@article{briola2022dependency,
+  author    = {Briola, Antonio and Aste, Tomaso},
+  title     = {Dependency Structures in Cryptocurrency Market from High to Low
+               Frequency},
+  journal   = {Entropy},
+  volume    = {24},
+  number    = {11},
+  pages     = {1548},
+  year      = {2022},
+  doi       = {10.3390/e24111548},
+  eprint    = {2206.03386},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. Citation block on page 1 names Briola and
+               Aste, matching the Crossref record.},
+  file      = {crypto-market/Dependency Structures in Cryptocurrency Market from High to Low Frequency. 2206.03386v3.pdf}
+}
+
+@article{btcwalkforward2026,
+  title     = {Machine Learning-Based Bitcoin Trading Under Transaction Costs:
+               Evidence From Walk-Forward Forecasting},
+  year      = {2026},
+  eprint    = {2606.00060},
+  archiveprefix = {arXiv},
+  note      = {verified=artifact. THE closest prior art: hourly BTC/USDT,
+               Binance, 27 walk-forward folds, XGBoost/LSTM/iTransformer,
+               ~104 features. It reports no R2_oos against a random walk, no
+               decay measurement, no K/K_eff separation, and is not
+               pre-registered -- which is the gap this study occupies. Cite in
+               Related Work and in the contribution statement.},
+  file      = {crypto-market/Machine Learning-Based Bitcoin Trading Under Transaction Costs - Evidence From Walk-Forward Forecasting 2606.00060v1.pdf}
+}
+
+@article{btcmemory2026,
+  title     = {Forecasting Bitcoin Price Movements: Memory, Path Dependence and
+               Persistence},
+  journal   = {Finance a \'uv\v{e}r -- Czech Journal of Economics and Finance},
+  volume    = {76},
+  number    = {1},
+  year      = {2026},
+  doi       = {10.32065/CJEF.2026.01.03},
+  note      = {verified=artifact. Journal, volume and DOI read off page 1 of
+               the local copy. Crossref plain search returned an unrelated
+               IRJMETS LSTM paper for this title -- discarded. See D89.},
+  file      = {crypto-market/Forecasting Bitcoin Price Movements - Memory Path Dependence and Persistence (2026).pdf}
+}
+
+@article{btchawkes2026,
+  title     = {Forecasting Bitcoin price movements using multivariate Hawkes
+               processes and limit order book data},
+  journal   = {Decisions in Economics and Finance},
+  year      = {2026},
+  doi       = {10.1007/s10203-026-00570-z},
+  note      = {verified=artifact. Journal and DOI printed in the page-1 header
+               of the local copy and independently matched by Crossref.},
+  file      = {crypto-market/Forecasting Bitcoin Price Movements Using Multivariate Hawkes Processes and Limit Order Book Data (2026).pdf}
+}
+
+@article{cryptostress2022,
+  title     = {Forecasting cryptocurrencies' price with the financial stress
+               index: a graph neural network prediction},
+  journal   = {Applied Economics Letters},
+  year      = {2022},
+  doi       = {10.1080/13504851.2022.2141436},
+  note      = {verified=artifact. Taylor and Francis header and DOI read off
+               page 1. Crossref returned only the SSRN preprint
+               (10.2139/ssrn.4081871); the artifact is the published version.},
+  file      = {crypto-market/Forecasting cryptocurrencies price with the financial stress index a graph neural network.pdf}
+}
+
+@article{cryptovolgnn2025,
+  title     = {Forecasting cryptocurrency volatility: a novel framework based on
+               the evolving multiscale graph neural network},
+  journal   = {Financial Innovation},
+  year      = {2025},
+  doi       = {10.1186/s40854-025-00768-x},
+  note      = {verified=doi-resolved. Open access; DOI agrees with the
+               filename, the page-1 header and Crossref.},
+  file      = {crypto-market/Forecasting cryptocurrency volatility a novel framework based on the evolving multiscale graph neural network. s40854-025-00768-x.pdf}
+}
+
+@article{fpca2025,
+  title     = {Intraday Functional {PCA} Forecasting of Cryptocurrency Returns},
+  year      = {2025},
+  eprint    = {2505.20508},
+  archiveprefix = {arXiv},
+  note      = {verified=artifact. Page 1 stamp reads "arXiv:2505.20508v1
+               [econ.EM] 26 May 2025" -- the local FILENAME says 2026 and is
+               WRONG. Crossref offered a Journal of Forecasting DOI
+               (10.1002/for.70127) which the artifact does not support. See D89.},
+  file      = {crypto-market/Intraday Functional PCA Forecasting of Cryptocurrency Returns (2026).pdf}
+}
+
+% ---- Normalisation and optimisation ----------------------------------------
+
+@inproceedings{kim2022revin,
+  author    = {Kim, Taesung and Kim, Jinhee and Tae, Yunwon and Park, Cheonbok
+               and Choi, Jang-Ho and Choo, Jaegul},
+  title     = {Reversible Instance Normalization for Accurate Time-Series
+               Forecasting against Distribution Shift},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2022},
+  url       = {https://openreview.net/forum?id=cGDAkQo1C0p},
+  note      = {verified=read. CLAUDE.md 6.3: the origin of the
+               use_norm instance normalisation this study runs with, and the
+               reason the outer StandardScaler cancels algebraically. ICLR
+               mints no DOI, so OpenReview is the version of record.
+               FREE TO READ but OpenReview refuses scripted download (bot
+               challenge, not a paywall) -- fetch by hand from the url above.
+               Official code: https://github.com/ts-kim/RevIN.},
+  file      = {baselines-and-components/RevIN, Reversible Instance Normalization against Distribution Shift (Kim, ICLR 2022).pdf}
+}
+
+@inproceedings{kingma2015adam,
+  author    = {Kingma, Diederik P. and Ba, Jimmy},
+  title     = {Adam: A Method for Stochastic Optimization},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2015},
+  eprint    = {1412.6980},
+  archiveprefix = {arXiv},
+  doi       = {10.48550/arXiv.1412.6980},
+  note      = {verified=doi-resolved. The optimiser train_one uses, at lr 1e-4
+               with a StepLR halving every 4 epochs (D47). Page 1 of the local
+               copy reads "Published as a conference paper at ICLR 2015", so
+               the common "2014" year is the arXiv posting, not the venue.},
+  file      = {baselines-and-components/Adam, A Method for Stochastic Optimization (Kingma and Ba, ICLR 2015). arXiv 1412.6980.pdf}
+}
+
+% ---- Effective dimensionality (K_eff) --------------------------------------
+
+@article{laloux1999noise,
+  author    = {Laloux, Laurent and Cizeau, Pierre and Bouchaud, Jean-Philippe
+               and Potters, Marc},
+  title     = {Noise Dressing of Financial Correlation Matrices},
+  journal   = {Physical Review Letters},
+  volume    = {83},
+  number    = {7},
+  pages     = {1467--1470},
+  year      = {1999},
+  doi       = {10.1103/PhysRevLett.83.1467},
+  eprint    = {cond-mat/9810255},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. CLAUDE.md 5.4: random matrix theory is
+               what licenses treating a correlation matrix's eigenvalue
+               spectrum, not its dimension, as the carrier of information --
+               the provenance K_eff needs so it is not an invented statistic.},
+  file      = {feature-construction/Noise Dressing of Financial Correlation Matrices (Laloux, PRL 1999). arXiv cond-mat 9810255.pdf}
+}
+
+@article{plerou2002random,
+  author    = {Plerou, Vasiliki and Gopikrishnan, Parameswaran and Rosenow,
+               Bernd and Amaral, Lu{\'i}s A. N. and Guhr, Thomas and
+               Stanley, H. Eugene},
+  title     = {Random matrix approach to cross correlations in financial data},
+  journal   = {Physical Review E},
+  volume    = {65},
+  number    = {6},
+  pages     = {066126},
+  year      = {2002},
+  doi       = {10.1103/PhysRevE.65.066126},
+  eprint    = {cond-mat/0108023},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. Source of the participation ratio,
+               RQ1's regressor. Companion to laloux1999noise.},
+  file      = {feature-construction/A Random Matrix Approach to Cross-Correlations in Financial Data (Plerou, PRE 2002). arXiv cond-mat 0108023.pdf}
+}
+
+% ---- Evaluation protocol and concept drift ---------------------------------
+
+@article{gama2014survey,
+  author    = {Gama, Jo{\~a}o and {\v{Z}}liobait{\.e}, Indr{\.e} and
+               Bifet, Albert and Pechenizkiy, Mykola and Bouchachia, Abdelhamid},
+  title     = {A survey on concept drift adaptation},
+  journal   = {ACM Computing Surveys},
+  volume    = {46},
+  number    = {4},
+  pages     = {1--37},
+  year      = {2014},
+  doi       = {10.1145/2523813},
+  note      = {verified=doi-resolved. Source of the blind (periodic) versus
+               informed (drift-triggered) retraining distinction that RQ3 maps
+               onto directly. The local Bournemouth copy is the accepted
+               manuscript and carries a placeholder DOI
+               (10.1145/0000000.0000000) on its first page; the DOI above is
+               the record of version.},
+  file      = {evaluation-protocol/A Survey on Concept Drift Adaptation (Gama, ACM CSUR 2014).pdf}
+}
+
+% ---- Walk-forward protocol: rolling origins, window choice, purging ---------
+%
+% CLAUDE.md 8.1-8.4 and Figure 1. Every element of the scheme resolves to one
+% or more of these; docs/WALK_FORWARD_FOUNDATION.md is the element-by-element
+% map, and it states which elements are grounded in the literature and which
+% are this study's own design decisions.
+
+@article{tashman2000outofsample,
+  author  = {Tashman, Leonard J.},
+  title   = {Out-of-sample tests of forecasting accuracy: an analysis and
+             review},
+  journal = {International Journal of Forecasting},
+  volume  = {16},
+  number  = {4},
+  pages   = {437--450},
+  year    = {2000},
+  doi     = {10.1016/S0169-2070(00)00065-0},
+  note    = {verified=doi-resolved, pdf=none. The canonical statement of
+             ROLLING-ORIGIN evaluation and the source of the fixed-origin /
+             rolling-origin and fixed-window / expanding-window vocabulary
+             CLAUDE.md 8.1 uses. Grounds three separate choices: that a single
+             train/test split is not an out-of-sample test at all, that
+             accuracy must be averaged over multiple origins, and that
+             rolling-origin errors are DEPENDENT -- which is why 9.2 clusters
+             by origin instead of treating 90 cells as 90 draws.}
+}
+
+@article{bergmeir2018note,
+  author  = {Bergmeir, Christoph and Hyndman, Rob J. and Koo, Bonsoo},
+  title   = {A note on the validity of cross-validation for evaluating
+             autoregressive time series prediction},
+  journal = {Computational Statistics \& Data Analysis},
+  volume  = {120},
+  pages   = {70--83},
+  year    = {2018},
+  doi     = {10.1016/j.csda.2017.11.003},
+  note    = {verified=doi-resolved, pdf=none. Cited AGAINST the easy version of
+             our own argument: for a purely autoregressive model with
+             uncorrelated errors, K-fold cross-validation is asymptotically
+             valid and rolling-origin is merely wasteful. Citing it is what
+             makes the walk-forward choice an argument rather than a reflex --
+             its conditions fail here on two counts, because the model is
+             cross-variate and because RQ2 makes TIME-SINCE-TRAINING the
+             independent variable, which any non-chronological scheme
+             destroys.}
+}
+
+@article{cerqueira2020evaluating,
+  author  = {Cerqueira, Vitor and Torgo, Lu{\'i}s and Mozeti{\v{c}}, Igor},
+  title   = {Evaluating time series forecasting models: an empirical study on
+             performance estimation methods},
+  journal = {Machine Learning},
+  volume  = {109},
+  number  = {11},
+  pages   = {1997--2028},
+  year    = {2020},
+  doi     = {10.1007/s10994-020-05910-7},
+  note    = {verified=doi-resolved, pdf=none. The empirical counterpart to
+             bergmeir2018note: on REAL-WORLD series, where stationarity fails,
+             out-of-sample rolling-origin estimators dominate cross-validation
+             variants, while on synthetic stationary series the ranking
+             reverses. Direct support for choosing walk-forward on hourly BTC,
+             and the citation that answers a reviewer who has read only
+             bergmeir2018note.}
+}
+
+@article{bergmeir2014directional,
+  author  = {Bergmeir, Christoph and Costantini, Mauro and
+             Ben{\'i}tez, Jos{\'e} M.},
+  title   = {On the usefulness of cross-validation for directional forecast
+             evaluation},
+  journal = {Computational Statistics \& Data Analysis},
+  volume  = {76},
+  pages   = {132--143},
+  year    = {2014},
+  doi     = {10.1016/j.csda.2014.02.001},
+  note    = {verified=doi-resolved, pdf=none. Extends the estimation-scheme
+             question to DIRECTIONAL accuracy specifically, which CLAUDE.md 9.1
+             reports at h=1, at h=24 and on the cumulative 24-hour return.}
+}
+
+@article{giacomini2006conditional,
+  author  = {Giacomini, Raffaella and White, Halbert},
+  title   = {Tests of Conditional Predictive Ability},
+  journal = {Econometrica},
+  volume  = {74},
+  number  = {6},
+  pages   = {1545--1578},
+  year    = {2006},
+  doi     = {10.1111/j.1468-0262.2006.00718.x},
+  note    = {verified=doi-resolved, pdf=none. The formal reason the training
+             window is ROLLING and FIXED-LENGTH rather than expanding: their
+             asymptotic framework treats a forecast as the output of a method
+             estimated on a finite, non-growing window, so parameter-estimation
+             error does not vanish and the object tested is the forecasting
+             METHOD rather than the population model. An expanding window sits
+             outside that framework. CLAUDE.md 8.1's own reason -- age cannot
+             be separated from training volume -- is the design reason; this is
+             the econometric one.}
+}
+
+@article{pesaran2007selection,
+  author  = {Pesaran, M. Hashem and Timmermann, Allan},
+  title   = {Selection of estimation window in the presence of breaks},
+  journal = {Journal of Econometrics},
+  volume  = {137},
+  number  = {1},
+  pages   = {134--161},
+  year    = {2007},
+  doi     = {10.1016/j.jeconom.2006.03.010},
+  note    = {verified=doi-resolved, pdf=none. Why a FINITE window is the right
+             answer at all under structural breaks: window length trades bias
+             against variance and the optimum is finite once the
+             data-generating process moves. The premise RQ2 and RQ3 are built
+             on, stated by econometricians rather than asserted by us.}
+}
+
+@article{inoue2017rolling,
+  author  = {Inoue, Atsushi and Jin, Lu and Rossi, Barbara},
+  title   = {Rolling window selection for out-of-sample forecasting with
+             time-varying parameters},
+  journal = {Journal of Econometrics},
+  volume  = {196},
+  number  = {1},
+  pages   = {55--67},
+  year    = {2017},
+  doi     = {10.1016/j.jeconom.2016.03.006},
+  note    = {verified=doi-resolved, pdf=none. The companion admission: window
+             LENGTH is a free parameter with real consequences, and 24 months
+             here is a convention adopted for sample-budget reasons, not an
+             optimum. Cite it in Limitations rather than pretend the choice was
+             forced.}
+}
+
+@incollection{rossi2013instability,
+  author    = {Rossi, Barbara},
+  title     = {Advances in Forecasting under Instability},
+  booktitle = {Handbook of Economic Forecasting},
+  volume    = {2},
+  pages     = {1203--1324},
+  publisher = {Elsevier},
+  year      = {2013},
+  doi       = {10.1016/B978-0-444-62731-5.00021-X},
+  note      = {verified=doi-resolved, pdf=none. Survey of forecasting under
+               parameter instability: rolling windows, break tests, and the
+               fact that out-of-sample performance is itself time-varying --
+               which is RQ2's hypothesis restated as an established regularity
+               in macro-financial forecasting.}
+}
+
+@article{hansen2015equivalence,
+  author  = {Hansen, Peter Reinhard and Timmermann, Allan},
+  title   = {Equivalence Between Out-of-Sample Forecast Comparisons and Wald
+             Statistics},
+  journal = {Econometrica},
+  volume  = {83},
+  number  = {6},
+  pages   = {2485--2505},
+  year    = {2015},
+  doi     = {10.3982/ECTA10581},
+  note    = {verified=doi-resolved, pdf=none. The sample-split ratio is not
+             innocuous: the power of an out-of-sample comparison depends on
+             where the split is placed, and a small evaluation sample is a
+             low-power test rather than a neutral one. Grounds the 21/3 split
+             and the 180-day test span being fixed IN ADVANCE (CLAUDE.md 11)
+             rather than chosen after seeing results.}
+}
+
+@article{kaufman2012leakage,
+  author  = {Kaufman, Shachar and Rosset, Saharon and Perlich, Claudia and
+             Stitelman, Ori},
+  title   = {Leakage in data mining: Formulation, detection, and avoidance},
+  journal = {ACM Transactions on Knowledge Discovery from Data},
+  volume  = {6},
+  number  = {4},
+  pages   = {1--21},
+  year    = {2012},
+  doi     = {10.1145/2382577.2382579},
+  note    = {verified=doi-resolved, pdf=none. The general taxonomy behind
+             CLAUDE.md 11's boundary x channel grid: leakage in features versus
+             leakage in training EXAMPLES. The H-step purge closes the second
+             class -- a training window whose target overlaps the evaluation
+             period -- and 5.3's no-rolling-feature property closes the first.}
+}
+
+@article{arian2024backtest,
+  author  = {Arian, Hamid and Norouzi Mobarekeh, Daniel and Seco, Luis},
+  title   = {Backtest overfitting in the machine learning era: A comparison of
+             out-of-sample testing methods in a synthetic controlled
+             environment},
+  journal = {Knowledge-Based Systems},
+  volume  = {305},
+  pages   = {112477},
+  year    = {2024},
+  doi     = {10.1016/j.knosys.2024.112477},
+  note    = {verified=doi-resolved, pdf=none. THE paper CLAUDE.md 8.4 must
+             answer rather than ignore: it concludes CPCV beats walk-forward on
+             probability of backtest overfitting. Its target is STRATEGY
+             SELECTION among many candidates, where block shuffling is
+             desirable; this study is a controlled architecture comparison in
+             which time-since-training is the independent variable, and
+             non-chronological block ordering leaves that variable undefined.}
+}
+
+@article{arnott2019protocol,
+  author  = {Arnott, Robert D. and Harvey, Campbell R. and Markowitz, Harry},
+  title   = {A Backtesting Protocol in the Era of Machine Learning},
+  journal = {The Journal of Financial Data Science},
+  volume  = {1},
+  number  = {1},
+  pages   = {64--74},
+  year    = {2019},
+  doi     = {10.3905/jfds.2019.1.064},
+  note    = {verified=doi-resolved, pdf=none. The protocol-level authority for
+             pre-registration, for holding the test period out until the design
+             is frozen, and for reporting the full trial count rather than only
+             the surviving configuration. Grounds CLAUDE.md 8.5's Stage 5 gate
+             running on VALIDATION (D27) and 13.5's DSR discussion.}
+}
+
+@article{baur2019calendar,
+  author  = {Baur, Dirk G. and Cahill, Daniel and Godfrey, Keith and
+             Liu, Zhangxin},
+  title   = {Bitcoin time-of-day, day-of-week and month-of-year effects in
+             returns and trading volume},
+  journal = {Finance Research Letters},
+  volume  = {31},
+  pages   = {78--92},
+  year    = {2019},
+  doi     = {10.1016/j.frl.2019.04.023},
+  note    = {verified=doi-resolved, pdf=none. Documents calendar effects in
+             BITCOIN specifically, which is what turns D26's collinearity
+             argument from a hypothetical into a live confound: at 6-month
+             origin spacing the test-block index b is a deterministic function
+             of calendar month up to a two-phase alternation, so a significant
+             beta1 would be observationally equivalent to a month-of-year
+             effect this paper measures.}
+}
+
+@article{ma2019dayofweek,
+  author  = {Ma, Donglian and Tanizaki, Hisashi},
+  title   = {On the day-of-the-week effects of Bitcoin markets: international
+             evidence},
+  journal = {China Finance Review International},
+  volume  = {9},
+  number  = {4},
+  pages   = {455--478},
+  year    = {2019},
+  doi     = {10.1108/CFRI-12-2018-0158},
+  note    = {verified=doi-resolved, pdf=none. A second, independent measurement
+             of the same class of effect as baur2019calendar. Two independent
+             sources are what stop D26's spacing argument reading as an
+             anecdote.}
+}
+
+@article{lu2019conceptdrift,
+  author  = {Lu, Jie and Liu, Anjin and Dong, Fan and Gu, Feng and
+             Gama, Jo{\~a}o and Zhang, Guangquan},
+  title   = {Learning under Concept Drift: A Review},
+  journal = {IEEE Transactions on Knowledge and Data Engineering},
+  volume  = {31},
+  number  = {12},
+  pages   = {2346--2363},
+  year    = {2019},
+  doi     = {10.1109/TKDE.2018.2876857},
+  note    = {verified=doi-resolved, pdf=none. The recent review beside
+             gama2014survey. Together they license the design decision that a
+             model is NOT retrained inside its six test blocks: that is
+             periodic (blind) retraining evaluated at a fixed cadence, and RQ3
+             asks what the cadence should be.}
+}
+
+@article{zliobaite2015evaluation,
+  author  = {{\v{Z}}liobait{\.e}, Indr{\.e} and Bifet, Albert and
+             Read, Jesse and Pfahringer, Bernhard and Holmes, Geoff},
+  title   = {Evaluation methods and decision theory for classification of
+             streaming data with temporal dependence},
+  journal = {Machine Learning},
+  volume  = {98},
+  number  = {3},
+  pages   = {455--482},
+  year    = {2014},
+  doi     = {10.1007/s10994-014-5441-4},
+  note    = {verified=doi-resolved, pdf=none. Why a naive persistence-style
+             baseline must be reported alongside any streaming evaluation, and
+             why accuracy under temporal dependence is misleading without one.
+             The streaming-literature counterpart of CLAUDE.md 7's Naive-RW
+             requirement and of the RelMSE / R2_oos reporting scale.}
+}
+
+@book{hyndman2021fpp,
+  author    = {Hyndman, Rob J. and Athanasopoulos, George},
+  title     = {Forecasting: Principles and Practice},
+  edition   = {3},
+  publisher = {OTexts},
+  address   = {Melbourne, Australia},
+  year      = {2021},
+  url       = {https://otexts.com/fpp3/},
+  note      = {verified=screened, pdf=none. Section 5.10, evaluation on a
+               rolling forecasting origin, is the textbook statement of the
+               scheme Figure 1 draws, and the reference an examiner is most
+               likely to already know. Freely readable online; a book, so no
+               DOI.}
+}
+
+@article{makridakis2018concerns,
+  author  = {Makridakis, Spyros and Spiliotis, Evangelos and
+             Assimakopoulos, Vassilios},
+  title   = {Statistical and Machine Learning forecasting methods: Concerns and
+             ways forward},
+  journal = {PLOS ONE},
+  volume  = {13},
+  number  = {3},
+  pages   = {e0194889},
+  year    = {2018},
+  doi     = {10.1371/journal.pone.0194889},
+  note    = {verified=doi-resolved, pdf=none. Machine-learning methods
+             underperforming simple statistical benchmarks out of sample, under
+             a rolling-origin protocol, over a large series collection. The
+             prior that makes this study's headline -- no model beats Naive-RW
+             -- a replication of a known regularity rather than a suspected
+             bug.}
+}
+
+% ---- Econometrics: predictive accuracy under nesting -----------------------
+
+@article{clark2001tests,
+  author    = {Clark, Todd E. and McCracken, Michael W.},
+  title     = {Tests of equal forecast accuracy and encompassing for nested
+               models},
+  journal   = {Journal of Econometrics},
+  volume    = {105},
+  number    = {1},
+  pages     = {85--110},
+  year      = {2001},
+  doi       = {10.1016/S0304-4076(01)00071-9},
+  note      = {verified=doi-resolved. CLAUDE.md 9.2: why standard
+               Diebold-Mariano is invalid on nested pairs, which is every
+               comparison that carries this paper -- the K ladder is
+               cumulative and Naive-RW is nested inside every model. Local file
+               is the Boston College RePEc working-paper copy.},
+  file      = {statistical-tests/Tests of Equal Forecast Accuracy and Encompassing for Nested Models (Clark and McCracken, 2001).pdf}
+}
+
+@article{romano2005stepwise,
+  author    = {Romano, Joseph P. and Wolf, Michael},
+  title     = {Stepwise Multiple Testing as Formalized Data Snooping},
+  journal   = {Econometrica},
+  volume    = {73},
+  number    = {4},
+  pages     = {1237--1282},
+  year      = {2005},
+  doi       = {10.1111/j.1468-0262.2005.00615.x},
+  note      = {verified=doi-resolved. The FWER stepdown behind Table 6. Its
+               effect here is the headline: it removes ALL 90 raw rejections
+               across the 15-model family (D79). Page 1 of the local copy reads
+               "Econometrica, Vol. 73, No. 4 (July, 2005), 1237-1282", so this
+               is the version of record, not a preprint.},
+  file      = {statistical-tests/Stepwise Multiple Testing as Formalized Data Snooping (Romano and Wolf, Econometrica 2005).pdf}
+}
+
+@article{mackinnon2023cluster,
+  author    = {MacKinnon, James G. and Nielsen, Morten {\O}rregaard and
+               Webb, Matthew D.},
+  title     = {Cluster-robust inference: A guide to empirical practice},
+  journal   = {Journal of Econometrics},
+  volume    = {232},
+  number    = {2},
+  pages     = {272--299},
+  year      = {2023},
+  doi       = {10.1016/j.jeconom.2022.04.001},
+  eprint    = {2205.03285},
+  archiveprefix = {arXiv},
+  note      = {verified=doi-resolved. CLAUDE.md 9.2 requirement 3: why the wild
+               cluster bootstrap must be RESTRICTED (WCR, null imposed) rather
+               than unrestricted at G = 15. NOTE: the reference library lists
+               "MacKinnon and Webb 2017, J. Applied Econometrics 32(2)" here --
+               a DIFFERENT paper by an overlapping author set. This is the one
+               CLAUDE.md 9.2 actually cites. See D89.},
+  file      = {statistical-tests/Cluster-Robust Inference, A Guide to Empirical Practice (MacKinnon, Nielsen and Webb, J Econometrics 2023).pdf}
+}
+
+% ---- Volatility estimators (variate family F2) -----------------------------
+
+@article{rogers1991estimating,
+  author    = {Rogers, L. C. G. and Satchell, S. E.},
+  title     = {Estimating Variance From High, Low and Closing Prices},
+  journal   = {The Annals of Applied Probability},
+  volume    = {1},
+  number    = {4},
+  pages     = {504--512},
+  year      = {1991},
+  doi       = {10.1214/aoap/1177005835},
+  note      = {verified=doi-resolved. CLAUDE.md 5.1: the one F2 estimator that
+               is NOT strictly positive -- it vanishes on shadowless (marubozu)
+               bars, 33 of 75,091 usable ones, which is why the implementation
+               uses log(RS + 1e-9) with kappa fixed (D52a). Local copy is the
+               IMS/JSTOR scan and carries no DOI on its face.},
+  file      = {feature-construction/Estimating Variance From High, Low and Closing Prices (Rogers and Satchell, Ann Appl Prob 1991).pdf}
+}
+
+
+% ============================================================================
+% NOT ON DISK -- resolved DOI, no legal free full text found.
+% Obtain through the UNESA library or the DOI. Never cite from this list
+% without reading the source first (CLAUDE.md 13.3).
+% ============================================================================
+
+@article{urquhart2016inefficiency,
+  author  = {Urquhart, Andrew},
+  title   = {The inefficiency of Bitcoin},
+  journal = {Economics Letters},
+  volume  = {148},
+  pages   = {80--82},
+  year    = {2016},
+  doi     = {10.1016/j.econlet.2016.09.019},
+  note    = {verified=doi-resolved. CLAUDE.md 4.5: efficiency is
+             reported as a finding, never assumed. Unpaywall reports this OA in
+             the Elsevier open archive, but ScienceDirect returns 403 to a
+             script -- free to read in a browser, not fetchable by one.
+             url: https://www.sciencedirect.com/science/article/pii/S0165176516303640},
+  file      = {crypto-market/The Inefficiency of Bitcoin. urquhart2016.pdf}
+}
+
+@article{diebold1995comparing,
+  author  = {Diebold, Francis X. and Mariano, Roberto S.},
+  title   = {Comparing Predictive Accuracy},
+  journal = {Journal of Business \& Economic Statistics},
+  volume  = {13},
+  number  = {3},
+  pages   = {253--263},
+  year    = {1995},
+  doi     = {10.1080/07350015.1995.10524599},
+  note    = {verified=doi-resolved. The base test, used for the
+             NON-nested pairs only (iTransformer vs DLinear vs PatchTST vs
+             LSTM). CLAUDE.md 9.2 also requires taking a position on Diebold
+             (2015), which argues DM stays valid when forecasts rather than
+             models are the object.},
+  file      = {statistical-tests/Comparing Predictive Accuracy. diebold1995.pdf}
+}
+
+@article{harvey1997testing,
+  author  = {Harvey, David and Leybourne, Stephen and Newbold, Paul},
+  title   = {Testing the equality of prediction mean squared errors},
+  journal = {International Journal of Forecasting},
+  volume  = {13},
+  number  = {2},
+  pages   = {281--291},
+  year    = {1997},
+  doi     = {10.1016/S0169-2070(96)00719-4},
+  note    = {verified=doi-resolved. The HLN small-sample correction.
+             CLAUDE.md 9.2 requires asserting the factor is positive before
+             applying it -- at h = 24 it is exactly 0 at T = 24.},
+  file      = {statistical-tests/Testing the equality of prediction mean squared errors. harvey1997.pdf}
+}
+
+@article{clark2007approximately,
+  author  = {Clark, Todd E. and West, Kenneth D.},
+  title   = {Approximately normal tests for equal predictive accuracy in nested
+             models},
+  journal = {Journal of Econometrics},
+  volume  = {138},
+  number  = {1},
+  pages   = {291--311},
+  year    = {2007},
+  doi     = {10.1016/j.jeconom.2006.05.023},
+  note    = {verified=doi-resolved. THE headline statistic of this
+             study: every nested comparison -- the K ladder, any model against
+             Naive-RW, Ridge-K1 against Ridge-K8 -- is Clark-West, not DM.
+             It decided the Stage 5 gate (S* = +0.8759, p = 0.1906) and hence
+             the paper's title. ABSENT ENTIRELY from
+             reference_library_itransformer_btc.md. See D89.
+             Free preprint: NBER Technical Working Paper t0326,
+             doi 10.3386/t0326 (metadata page only, no free PDF).},
+  file      = {statistical-tests/Approximately Normal Tests for Equal Predictive Accuracy in Nested Models (Clark and West, J Econometrics 2007).pdf}
+}
+
+@article{mccracken2007asymptotics,
+  author  = {McCracken, Michael W.},
+  title   = {Asymptotics for out of sample tests of Granger causality},
+  journal = {Journal of Econometrics},
+  volume  = {140},
+  number  = {2},
+  pages   = {719--752},
+  year    = {2007},
+  doi     = {10.1016/j.jeconom.2006.07.020},
+  note    = {verified=doi-resolved. Non-standard critical values for
+             nested out-of-sample tests. CLAUDE.md 9.2 names it beside
+             clark2001tests. Not in the reference library. See D89.},
+  file      = {statistical-tests/Asymptotics for out of sample tests of Granger causality. mccracken2007.pdf}
+}
+
+@article{hansen2011model,
+  author  = {Hansen, Peter R. and Lunde, Asger and Nason, James M.},
+  title   = {The Model Confidence Set},
+  journal = {Econometrica},
+  volume  = {79},
+  number  = {2},
+  pages   = {453--497},
+  year    = {2011},
+  doi     = {10.3982/ECTA5771},
+  note    = {verified=doi-resolved. The MCS membership column in
+             Table 6. At 90% and 75% the set contains Naive-RW, all four ridge
+             rungs and lstm-K8 -- and no other deep model. Not in the reference
+             library. See D89.},
+  file      = {statistical-tests/The Model Confidence Set (Hansen, Lunde and Nason, Econometrica 2011).pdf}
+}
+
+@article{white2000reality,
+  author  = {White, Halbert},
+  title   = {A Reality Check for Data Snooping},
+  journal = {Econometrica},
+  volume  = {68},
+  number  = {5},
+  pages   = {1097--1126},
+  year    = {2000},
+  doi     = {10.1111/1468-0262.00152},
+  note    = {verified=doi-resolved. CLAUDE.md 9.2 retains SPA and the
+             Reality Check ONLY where the paper poses a genuine one-against-many
+             null, and rejects them for the pairwise matrix -- state which
+             question each answers.},
+  file      = {statistical-tests/A Reality Check for Data Snooping. white2000.pdf}
+}
+
+@article{newey1987simple,
+  author  = {Newey, Whitney K. and West, Kenneth D.},
+  title   = {A Simple, Positive Semi-Definite, Heteroskedasticity and
+             Autocorrelation Consistent Covariance Matrix},
+  journal = {Econometrica},
+  volume  = {55},
+  number  = {3},
+  pages   = {703--708},
+  year    = {1987},
+  doi     = {10.2307/1913610},
+  note    = {verified=doi-resolved. Cited as the estimator this study
+             REJECTS: under the DM null h-step errors are MA(h-1), so all
+             autocovariances to lag 23 are genuinely nonzero and Bartlett
+             weights shrink gamma-22 by ~92%. The rectangular truncated
+             estimator is used instead (D34).},
+  file      = {statistical-tests/A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix. newey1987.pdf}
+}
+
+@article{cameron2008bootstrap,
+  author  = {Cameron, A. Colin and Gelbach, Jonah B. and Miller, Douglas L.},
+  title   = {Bootstrap-Based Improvements for Inference with Clustered Errors},
+  journal = {The Review of Economics and Statistics},
+  volume  = {90},
+  number  = {3},
+  pages   = {414--427},
+  year    = {2008},
+  doi     = {10.1162/rest.90.3.414},
+  note    = {verified=doi-resolved. The wild cluster bootstrap, and
+             the reason this study bootstraps the cluster-robust t-statistic
+             rather than beta-hat. Free preprint: NBER t0344, doi 10.3386/t0344
+             (metadata page only).},
+  file      = {statistical-tests/Bootstrap-Based Improvements For Inference With Clustered Errors. cameron2008.pdf}
+}
+
+@article{pesaran1992simple,
+  author  = {Pesaran, M. Hashem and Timmermann, Allan},
+  title   = {A Simple Nonparametric Test of Predictive Performance},
+  journal = {Journal of Business \& Economic Statistics},
+  volume  = {10},
+  number  = {4},
+  pages   = {461--465},
+  year    = {1992},
+  doi     = {10.1080/07350015.1992.10509922},
+  note    = {verified=doi-resolved. Makes directional accuracy
+             testable. CLAUDE.md 9.1: valid at h = 1; at h = 24 and on the
+             cumulative return it must run on NON-overlapping windows, since
+             overlapping targets share 23 of 24 hours and PT over-rejects badly.},
+  file      = {statistical-tests/A Simple Nonparametric Test of Predictive Performance. pesaran1992.pdf}
+}
+
+@article{lo1988stock,
+  author  = {Lo, Andrew W. and MacKinlay, A. Craig},
+  title   = {Stock Market Prices Do Not Follow Random Walks: Evidence from a
+             Simple Specification Test},
+  journal = {The Review of Financial Studies},
+  volume  = {1},
+  number  = {1},
+  pages   = {41--66},
+  year    = {1988},
+  doi     = {10.1093/rfs/1.1.41},
+  note    = {verified=doi-resolved. The variance ratio test behind
+             efficiency_table (CLAUDE.md 4.5). Free preprint: NBER w2168.},
+  file      = {statistical-tests/Stock Market Prices Do Not Follow Random Walks, Evidence from a Simple Specification Test. lo1988.pdf}
+}
+
+@article{bergmeir2012use,
+  author  = {Bergmeir, Christoph and Ben{\'i}tez, Jos{\'e} M.},
+  title   = {On the use of cross-validation for time series predictor
+             evaluation},
+  journal = {Information Sciences},
+  volume  = {191},
+  pages   = {192--213},
+  year    = {2012},
+  doi     = {10.1016/j.ins.2011.12.028},
+  note    = {verified=doi-resolved. The primary published
+             justification for rolling-origin evaluation: it captures
+             performance across differing conditions where a fixed origin
+             cannot. Direct support for CLAUDE.md 8.1's fifteen origins.},
+  file      = {evaluation-protocol/On the use of cross-validation for time series predictor evaluation. bergmeir2012.pdf}
+}
+
+@article{brownlees2006financial,
+  author  = {Brownlees, Christian T. and Gallo, Giampiero M.},
+  title   = {Financial econometric analysis at ultra-high frequency: Data
+             handling concerns},
+  journal = {Computational Statistics \& Data Analysis},
+  volume  = {51},
+  number  = {4},
+  pages   = {2232--2245},
+  year    = {2006},
+  doi     = {10.1016/j.csda.2006.09.030},
+  note    = {verified=doi-resolved, pdf=none. The canonical high-frequency
+             data-handling reference; licenses the segmentation and exclusion
+             decisions in CLAUDE.md 4.2-4.3 rather than leaving them as
+             unsupported house style.}
+}
+
+@article{bailey2014deflated,
+  author  = {Bailey, David H. and L{\'o}pez de Prado, Marcos},
+  title   = {The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest
+             Overfitting, and Non-Normality},
+  journal = {The Journal of Portfolio Management},
+  volume  = {40},
+  number  = {5},
+  pages   = {94--107},
+  year    = {2014},
+  doi     = {10.3905/jpm.2014.40.5.094},
+  note    = {verified=doi-resolved. CLAUDE.md 13.5 computes DSR PER
+             ORIGIN from that origin's non-overlapping 24-hour returns, using
+             the per-period Sharpe, not the annualised one. Measured DSR 0.173
+             against a +20.6% net P&L -- report the two together.
+             Free preprint: SSRN 2460551, doi 10.2139/ssrn.2460551.},
+  file      = {evaluation-protocol/The Deflated Sharpe Ratio Correcting for Selection Bias, Backtest Overfitting, and Non-Normality. bailey2014.pdf}
+}
+
+@article{lo2004adaptive,
+  author  = {Lo, Andrew W.},
+  title   = {The Adaptive Markets Hypothesis: Market Efficiency from an
+             Evolutionary Perspective},
+  journal = {The Journal of Portfolio Management},
+  volume  = {30},
+  number  = {5},
+  pages   = {15--29},
+  year    = {2004},
+  doi     = {10.3905/jpm.2004.442611},
+  note    = {verified=doi-resolved. Carries H2's ECONOMIC mechanism:
+             if predictability itself evolves, a static model must decay.
+             CLAUDE.md 3 pairs it with han2024capacity so the hypothesis has a
+             finance-theoretic and an ML-theoretic argument for the same claim.},
+  file      = {crypto-market/The Adaptive Markets Hypothesis, Market Efficiency from an Evolutionary Perspective. lo2004.pdf}
+}
+
+@article{parkinson1980extreme,
+  author  = {Parkinson, Michael},
+  title   = {The Extreme Value Method for Estimating the Variance of the Rate of
+             Return},
+  journal = {The Journal of Business},
+  volume  = {53},
+  number  = {1},
+  pages   = {61--65},
+  year    = {1980},
+  doi     = {10.1086/296071},
+  note    = {verified=doi-resolved. Variate family F2. Strictly
+             positive once H == L bars are excluded, unlike Rogers-Satchell.},
+  file      = {feature-construction/The Extreme Value Method for Estimating the Variance of the Rate of Return (Parkinson, J Business 1980).pdf}
+}
+
+@article{garman1980estimation,
+  author  = {Garman, Mark B. and Klass, Michael J.},
+  title   = {On the Estimation of Security Price Volatilities from Historical
+             Data},
+  journal = {The Journal of Business},
+  volume  = {53},
+  number  = {1},
+  pages   = {67--78},
+  year    = {1980},
+  doi     = {10.1086/296072},
+  note    = {verified=doi-resolved, pdf=none. Variate family F2, bounded below
+             by 0.114 (ln H/L)^2.}
+}
+
+@article{hoerl1970ridge,
+  author  = {Hoerl, Arthur E. and Kennard, Robert W.},
+  title   = {Ridge Regression: Biased Estimation for Nonorthogonal Problems},
+  journal = {Technometrics},
+  volume  = {12},
+  number  = {1},
+  pages   = {55--67},
+  year    = {1970},
+  doi     = {10.1080/00401706.1970.10488634},
+  note    = {verified=doi-resolved. The ridge baseline, which is the
+             single most important comparator this study has: mean R2_oos
+             -0.000568 against iTransformer-K8's -0.017993, i.e. it loses to
+             Naive-RW by roughly thirty times less than any deep model.
+             CAUTION: Crossref plain search returns the 2000 Technometrics
+             REPRINT (42(1):80-86, doi 10.1080/00401706.2000.10485983). Cite
+             the 1970 original above.},
+  file      = {baselines-and-components/Ridge Regression Biased Estimation for Nonorthogonal Problems. hoerl1970.pdf}
+}
+
+@article{hochreiter1997long,
+  author  = {Hochreiter, Sepp and Schmidhuber, J{\"u}rgen},
+  title   = {Long Short-Term Memory},
+  journal = {Neural Computation},
+  volume  = {9},
+  number  = {8},
+  pages   = {1735--1780},
+  year    = {1997},
+  doi     = {10.1162/neco.1997.9.8.1735},
+  note    = {verified=doi-resolved. The LSTM baseline (arm lstm,
+             75 runs, multivariate, target-channel loss). It is the ONLY deep
+             model in the Model Confidence Set, which is why CLAUDE.md 13.4's
+             honest framing is "the attention-based long-sequence architectures
+             fail here", not "deep learning fails here".},
+  file      = {baselines-and-components/Long Short-Term Memory. hochreiter1997.pdf}
+}
+
+@article{rubin1976inference,
+  author  = {Rubin, Donald B.},
+  title   = {Inference and missing data},
+  journal = {Biometrika},
+  volume  = {63},
+  number  = {3},
+  pages   = {581--592},
+  year    = {1976},
+  doi     = {10.1093/biomet/63.3.581},
+  note    = {verified=doi-resolved, pdf=none. Cited in order to argue the
+             MCAR/MAR/MNAR taxonomy does NOT apply: it governs values that
+             exist but went unobserved, and when the exchange is down no price
+             forms, so imputation is undefined rather than merely risky
+             (CLAUDE.md 4.2). Misreading this citation inverts the argument.}
+}
+
+@book{lopezdeprado2018advances,
+  author    = {L{\'o}pez de Prado, Marcos},
+  title     = {Advances in Financial Machine Learning},
+  publisher = {Wiley},
+  address   = {Hoboken, NJ},
+  year      = {2018},
+  isbn      = {978-1-119-48208-6},
+  note      = {verified=screened, pdf=none. Source of purging, embargo and
+               CPCV. Mandatory BOTH for adopting purging (chapter 7) and for
+               rejecting CPCV (CLAUDE.md 8.4, which must appear verbatim).
+               A book: no DOI. Chapter and page must be checked against a
+               physical or library copy before citing.}
+}
