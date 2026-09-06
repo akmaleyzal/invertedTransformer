@@ -6,12 +6,12 @@
 
 | Tier | Meaning | Count |
 |---|---|---|
-| `read` | read in full | 4 |
-| `doi-resolved` | DOI resolved | 56 |
+| `read` | read in full | 6 |
+| `doi-resolved` | DOI resolved | 54 |
 | `artifact` | identity from the PDF itself | 8 |
 | `screened` | search result only | 2 |
 
-**70 entries — 48 with a PDF on disk, 22 metadata-only.**
+**70 entries — 50 with a PDF on disk, 20 metadata-only.**
 
 ## Transformer based
 
@@ -72,13 +72,15 @@
 
 *How out-of-sample performance is measured: rolling-origin evaluation, concept drift, backtest overfitting*
 
-`paper/references/evaluation-protocol/` — 3 entries
+`paper/references/evaluation-protocol/` — 5 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
 | `bergmeir2012use` | On the use of cross-validation for time series predictor evaluation — *Information Sciences* | 2012 | `10.1016/j.ins.2011.12.028` | `doi-resolved` |
 | `bailey2014deflated` | The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting, and Non-Normality — *The Journal of Portfolio Management* | 2014 | `10.3905/jpm.2014.40.5.094` | `doi-resolved` |
 | `gama2014survey` | A survey on concept drift adaptation — *ACM Computing Surveys* | 2014 | `10.1145/2523813` | `doi-resolved` |
+| `bergmeir2018note` | A note on the validity of cross-validation for evaluating autoregressive time series prediction — *Computational Statistics & Data Analysis* | 2018 | `10.1016/j.csda.2017.11.003` | `read` |
+| `cerqueira2020evaluating` | Evaluating time series forecasting models: an empirical study on performance estimation methods — *Machine Learning* | 2020 | `10.1007/s10994-020-05910-7` | `read` |
 
 ## Statistical tests
 
@@ -119,7 +121,7 @@
 
 *Resolved DOI, no legal free full text found. Obtain through the UNESA library or the DOI — never cite one of these without reading it first (§13.3).*
 
-22 entries
+20 entries
 
 | Key | Reference | Year | Identifier | Tier |
 |---|---|---|---|---|
@@ -135,14 +137,12 @@
 | `zliobaite2015evaluation` | Evaluation methods and decision theory for classification of streaming data with temporal dependence — *Machine Learning* | 2014 | `10.1007/s10994-014-5441-4` | `doi-resolved` |
 | `hansen2015equivalence` | Equivalence Between Out-of-Sample Forecast Comparisons and Wald Statistics — *Econometrica* | 2015 | `10.3982/ECTA10581` | `doi-resolved` |
 | `inoue2017rolling` | Rolling window selection for out-of-sample forecasting with time-varying parameters — *Journal of Econometrics* | 2017 | `10.1016/j.jeconom.2016.03.006` | `doi-resolved` |
-| `bergmeir2018note` | A note on the validity of cross-validation for evaluating autoregressive time series prediction — *Computational Statistics & Data Analysis* | 2018 | `10.1016/j.csda.2017.11.003` | `doi-resolved` |
 | `lopezdeprado2018advances` | Advances in Financial Machine Learning | 2018 | — | `screened` |
 | `makridakis2018concerns` | Statistical and Machine Learning forecasting methods: Concerns and ways forward — *PLOS ONE* | 2018 | `10.1371/journal.pone.0194889` | `doi-resolved` |
 | `arnott2019protocol` | A Backtesting Protocol in the Era of Machine Learning — *The Journal of Financial Data Science* | 2019 | `10.3905/jfds.2019.1.064` | `doi-resolved` |
 | `baur2019calendar` | Bitcoin time-of-day, day-of-week and month-of-year effects in returns and trading volume — *Finance Research Letters* | 2019 | `10.1016/j.frl.2019.04.023` | `doi-resolved` |
 | `lu2019conceptdrift` | Learning under Concept Drift: A Review — *IEEE Transactions on Knowledge and Data Engineering* | 2019 | `10.1109/TKDE.2018.2876857` | `doi-resolved` |
 | `ma2019dayofweek` | On the day-of-the-week effects of Bitcoin markets: international evidence — *China Finance Review International* | 2019 | `10.1108/CFRI-12-2018-0158` | `doi-resolved` |
-| `cerqueira2020evaluating` | Evaluating time series forecasting models: an empirical study on performance estimation methods — *Machine Learning* | 2020 | `10.1007/s10994-020-05910-7` | `doi-resolved` |
 | `hyndman2021fpp` | Forecasting: Principles and Practice | 2021 | — | `screened` |
 | `arian2024backtest` | Backtest overfitting in the machine learning era: A comparison of out-of-sample testing methods in a synthetic controlled environment — *Knowledge-Based Systems* | 2024 | `10.1016/j.knosys.2024.112477` | `doi-resolved` |
 

@@ -43,7 +43,7 @@ quantity too small to see.
 | # | Element of Figure 1 | Why it is there | Published grounding |
 |---|---|---|---|
 | 1 | **Multiple origins, not one train/test split** | A single split estimates accuracy at one point in one regime; its error is an estimate with a sample size of one origin. | `tashman2000outofsample` — the canonical treatment; defines *fixed-origin* vs *rolling-origin* and argues a single fixed origin is not an out-of-sample test of a method. `bergmeir2012use` — rolling-origin captures performance across differing conditions where a fixed origin cannot. `hyndman2021fpp` §5.10 — the textbook statement, "evaluation on a rolling forecasting origin". |
-| 2 | **Chronological ordering preserved; no K-fold, no shuffling** | RQ2's independent variable is *time since training*. Any scheme that reorders blocks leaves it undefined. | `bergmeir2018note` is cited **against** us and is the stronger move: for a purely autoregressive model with uncorrelated errors, K-fold CV is asymptotically valid. Its conditions fail here on two counts — the model is cross-variate, and RQ2 needs chronology. `cerqueira2020evaluating` is the empirical answer: on **real-world** (non-stationary) series, out-of-sample rolling-origin estimators dominate CV variants; the ranking reverses only on synthetic stationary data. |
+| 2 | **Chronological ordering preserved; no K-fold, no shuffling** | RQ2's independent variable is *time since training*. Any scheme that reorders blocks leaves it undefined. | `bergmeir2018note` is cited **against** us and is the stronger move: it *proves* K-fold CV valid for a purely autoregressive model with uncorrelated errors. Its three assumptions fail here, and §2.1 works through them one at a time. `cerqueira2020evaluating` is the empirical half: on real-world non-stationary series, out-of-sample estimators dominate CV variants, and CV's error is **optimistically** biased. |
 | 3 | **Rolling 24-month window, *not* expanding** | With an expanding window, training-set size grows with each origin, so *model age* cannot be separated from *training data volume* — and RQ2 is a claim about age. | `giacomini2006conditional` — their framework treats the forecast as the output of a *method* estimated on a finite, non-growing window, so estimation error does not vanish asymptotically; an expanding window sits outside it. `pesaran2007selection` — under structural breaks the optimal estimation window is *finite*, trading bias against variance. `rossi2013instability` — survey: out-of-sample performance in macro-financial forecasting is itself time-varying. |
 | 4 | **Window length = 24 months** | Sample budget: 13,545–15,217 training windows on the feature frame against 12 × 96 input dimensions (`D25`, `docs/ORIGIN_WINDOW_BUDGET.md`). | `inoue2017rolling` — window length is a *free parameter with real consequences* and is estimable. **This study does not estimate it.** Cite the paper in Limitations; do not imply the 24 months were optimised. |
 | 5 | **21 / 3 train–validation split inside the window** | Early stopping and ridge α are selected somewhere, and that somewhere must be inside the training window and before the origin. | `hansen2015equivalence` — the sample-split ratio is not innocuous: the power of an out-of-sample comparison depends on where the split falls, so a split chosen after seeing results is a researcher degree of freedom. `arnott2019protocol` — the split, like every protocol element, is declared before the test period is opened. |
@@ -55,6 +55,57 @@ quantity too small to see.
 | 11 | **CPCV considered and rejected** | CPCV reorders blocks non-chronologically, which leaves time-since-training undefined; it also assumes DGP stability across blocks, which is the assumption this study tests. | `lopezdeprado2018advances` (source of CPCV) and `arian2024backtest` — the *Knowledge-Based Systems* 2024 paper that concludes **CPCV beats walk-forward** on probability of backtest overfitting. **Cite it and answer it**: its target is *strategy selection among many candidates*, where block shuffling is desirable; this is a controlled architecture comparison. Ignoring it is the reviewable failure. |
 | 12 | **Test period opened once, after the design is frozen** | The Stage 5 gate that repositioned the title ran on **validation**, not on test (`D27`). | `arnott2019protocol` — the protocol-level authority for pre-registration, held-out test periods and reporting the full trial count. `bailey2014deflated` (already in the library) for the trial-count consequence. |
 | 13 | **The result — no model beats Naive-RW** | Read in the frame the protocol establishes, this is a replication, not a bug. | `makridakis2018concerns` — ML methods underperforming simple statistical benchmarks out of sample, under a rolling-origin protocol, over a large series collection. |
+
+---
+
+## 2.1 Why the strongest paper *for* cross-validation does not license it here
+
+Both sources were read end to end on 2026-09-06. This section exists because "K-fold CV is fine for
+time series, Bergmeir proved it" is the single most likely challenge to §8, and the answer is not a
+preference — it is an assumption check that either passes or fails.
+
+**What `bergmeir2018note` actually proves.** Theorem 1: the cross-validated estimate converges in
+probability to the true prediction error, `P̂E →p PE`, under three assumptions.
+
+| | Assumption | Holds here? |
+|---|---|---|
+| **A1** | `{y_t}` is a **stationary and ergodic** nonlinear AR(p) in its **own lags** — `y_t = g(x_t, θ) + ε_t` with `x_t = (y_{t−1}, …, y_{t−p})` — and the model is **correctly specified** | **No, twice.** iTransformer at K = 8 or 12 consumes eight to twelve *distinct variates*, not p lags of the target, so the study is outside the model class the theorem is stated over. And stationarity is not a background condition here — RQ2 and RQ3 exist to *test* whether the microstructure-to-return mapping is stable in time. Assuming A1 would assume the answer. |
+| **A2** | the leave-one-out estimator is consistent | Not assessed. Nothing in this study turns on it. |
+| **A3** | the errors `{ε_t}` form a **martingale difference sequence**, hence are serially **uncorrelated** | **No, by construction at H = 24.** Every experiment in the paper is one-step-ahead. An optimal *h*-step forecast error is MA(*h*−1), so at H = 24 the errors are MA(23) and cannot be an MDS. This project already asserts exactly that elsewhere: §9.2 uses a **rectangular long-run variance estimator with truncation lag h−1 = 23** precisely because "all autocovariances to lag 23 are genuinely nonzero". Using K-fold CV would contradict the variance estimator the same manuscript defends. |
+
+The authors state the consequence themselves: *"the violation of A3 follows naturally since ε_t is no
+longer a MDS … Therefore, the CV does not work any longer."* Their Experiment 3 measures it — a
+seasonal AR(12) process fitted with AR(1…5) models leaves CV **more** biased than out-of-sample
+evaluation (MPAE ≈ −44 to −95 against OOS ≈ −26 to −42), and the bias is in the direction of
+*under-estimating* error.
+
+**Their own remedy is worth adopting as a robustness check.** They recommend a Ljung–Box test on the
+pooled out-of-sample residuals: if the residuals show serial correlation, CV is invalid. Reporting
+that test on this study's residuals would convert the argument above from an appeal to assumptions
+into a measurement. It is not currently run.
+
+**What `cerqueira2020evaluating` adds is the empirical half, on data of this frequency.** Eleven
+estimators over 62 real-world series at half-hourly, hourly and daily granularity, plus Bergmeir's
+three synthetic stationary DGPs. Three findings, in ascending order of importance to us:
+
+1. On the **synthetic stationary** cases, cross-validation wins — Bergmeir reproduced, not disputed.
+2. Splitting the 62 series by a wavelet-spectrum stationarity test gives **31 stationary / 31
+   non-stationary**. On the stationary half plain CV ranks best; on the **non-stationary half it falls
+   to among the worst**, with Holdout and repeated holdout on top.
+3. **The direction of the bias is systematic**: cross-validation **under-estimates** the loss, while
+   out-of-sample and prequential methods **over-estimate** it.
+
+Finding 3 is the one to put in the manuscript. This study's headline is a null — *no model beats
+Naive-RW* — and an optimistically biased estimator is precisely the one that manufactures skill that
+is not there. Choosing the pessimistic estimator is the conservative choice for the claim being made.
+
+They also fault the earlier CV-favourable comparisons for scoring out-of-sample at a **single origin**,
+invoking Tashman's recommendation of multiple test periods — which is what §8.1's fifteen origins
+supply, and which makes their criticism inapplicable to this design.
+
+**State the scope honestly.** Both papers study **univariate, purely autoregressive, one-step-ahead**
+forecasting. Neither is a multivariate transformer at H = 24. They are cited for the *assumption
+boundary* and the *direction of the bias*, not as evidence about this architecture.
 
 ---
 
@@ -134,13 +185,22 @@ occurred — see `D60b`; the estimand turned out undefined for a different reaso
 
 ## 6. Status of these citations
 
-The eighteen entries added on 2026-09-06 carry `verified=doi-resolved` (or `screened` for
-`hyndman2021fpp`, a book with no DOI). Per §13.3 **that is half the requirement**: the identifier is
-confirmed, the source is not yet read. Before any of them carries argumentative weight in the
-manuscript, promote it to `read` and update its `note`. The four that carry the most weight, and
-should be read first, are `tashman2000outofsample`, `bergmeir2018note`, `cerqueira2020evaluating` and
-`arian2024backtest` — the first three because the walk-forward choice rests on them, the fourth
-because it argues *against* this study's protocol and §8.4 promises an answer to it.
+Eighteen entries were added on 2026-09-06 at `verified=doi-resolved`. Per §13.3 that is **half** the
+requirement: the identifier is confirmed, the source is not read. Four carry the most weight, and two
+of them have since been read end to end.
 
-`tools/fetch_references.py` downloads only what is legally free; several of these are paywalled and
-their `note` says `pdf=none` rather than pointing at a fabricated file.
+| Entry | Tier | Why it matters | State |
+|---|---|---|---|
+| `bergmeir2018note` | **read** (18 pp) | The strongest published case *for* K-fold CV on time series. §2.1 checks its A1–A3 against this study. | Monash working-paper copy on disk. **Not** the CSDA version of record — the text is the July 2017 preprint, the page numbers in the entry are the journal's. |
+| `cerqueira2020evaluating` | **read** (28 pp) | The empirical half, on half-hourly/hourly/daily data. Supplies the direction-of-bias finding. | arXiv v1 on disk. |
+| `tashman2000outofsample` | doi-resolved | THE canonical citation of rolling-origin evaluation, and the source of the dependence caveat §9.2's clustering rests on. | **Not obtainable.** Unpaywall, 2026-09-06: `is_oa=false`, `oa_status=closed`, no OA location. Needs library access. |
+| `arian2024backtest` | doi-resolved | Argues CPCV **beats** walk-forward; §8.4 promises an answer to it. | **Not obtainable.** Unpaywall, 2026-09-06: closed, and no arXiv preprint exists. |
+
+**The two unread ones are the two that cannot be cited as they stand.** `tashman2000outofsample`
+appears at five places in §2 and `arian2024backtest` carries the CPCV rebuttal — a paper this study
+argues against and has not read is the specific failure `paper/CLAUDE.md`'s first refusal names.
+Both are registered in `tools/fetch_references.py`'s `PAYWALLED` list with the Unpaywall verdict and
+the date, so the gap is recorded rather than quietly carried.
+
+`tools/fetch_references.py` downloads only what is legally free; entries whose `note` says `pdf=none`
+have a resolved DOI standing in for a file, never a fabricated one.

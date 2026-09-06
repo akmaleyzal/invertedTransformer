@@ -485,15 +485,28 @@
   pages   = {70--83},
   year    = {2018},
   doi     = {10.1016/j.csda.2017.11.003},
-  note    = {verified=doi-resolved, pdf=none. Cited AGAINST the easy version of
-             our own argument: for a purely autoregressive model with
-             uncorrelated errors, K-fold cross-validation is asymptotically
-             valid and rolling-origin is merely wasteful. Citing it is what
-             makes the walk-forward choice an argument rather than a reflex --
-             its conditions fail here on two counts, because the model is
-             cross-variate and because RQ2 makes TIME-SINCE-TRAINING the
-             independent variable, which any non-chronological scheme
-             destroys.}
+  note    = {verified=read (2026-09-06, 18 pp). Cited AGAINST the easy version
+             of our own argument, and read so the scope of its result can be
+             stated exactly rather than gestured at. Theorem 1 gives
+             PE_hat ->p PE under three assumptions: A1, the series is a
+             STATIONARY and ergodic nonlinear AR(p) in its OWN lags,
+             y_t = g(x_t,theta) + e_t with x_t = (y_{t-1},...,y_{t-p}), and
+             correctly specified; A2, the leave-one-out estimator is
+             consistent; A3, the errors are a martingale difference sequence,
+             hence serially UNCORRELATED. Their own sentence on violation:
+             "the violation of A3 follows naturally since e_t is no longer a
+             MDS ... Therefore, the CV does not work any longer." Their
+             Experiment 3 is the demonstration -- a seasonal AR(12) DGP fitted
+             with AR(1..5) leaves CV MORE biased than OOS (MPAE about -44 to
+             -95 against OOS -26 to -42). Every experiment is ONE-STEP-AHEAD.
+             This study fails A1 and A3 by construction (see
+             docs/WALK_FORWARD_FOUNDATION.md 2.1), which is why the citation
+             strengthens the protocol rather than threatening it. Practical
+             remedy they give, worth reporting: Ljung-Box on the pooled
+             out-of-sample CV residuals. LOCAL FILE IS THE MONASH WORKING
+             PAPER, not the CSDA version of record -- the text is the July 2017
+             preprint; the pages above are the journal's.},
+  file    = {evaluation-protocol/A Note on the Validity of Cross-Validation for Evaluating Autoregressive Time Series Prediction (Bergmeir, Hyndman and Koo, CSDA 2018). Monash WP 10-15.pdf}
 }
 
 @article{cerqueira2020evaluating,
@@ -506,13 +519,30 @@
   pages   = {1997--2028},
   year    = {2020},
   doi     = {10.1007/s10994-020-05910-7},
-  note    = {verified=doi-resolved, pdf=none. The empirical counterpart to
-             bergmeir2018note: on REAL-WORLD series, where stationarity fails,
-             out-of-sample rolling-origin estimators dominate cross-validation
-             variants, while on synthetic stationary series the ranking
-             reverses. Direct support for choosing walk-forward on hourly BTC,
-             and the citation that answers a reviewer who has read only
-             bergmeir2018note.}
+  note    = {verified=read (2026-09-06, 28 pp, arXiv v1). The empirical
+             counterpart to bergmeir2018note, and the stronger citation of the
+             two because its design is the one this study runs. Eleven
+             estimators (four cross-validation variants, seven
+             out-of-sample/prequential) over 62 real-world series at
+             HALF-HOURLY, HOURLY and DAILY frequency plus the three stationary
+             synthetic DGPs of Bergmeir et al. Three results carry: (i) on the
+             synthetic stationary cases cross-validation wins, reproducing
+             Bergmeir; (ii) split by a wavelet-spectrum stationarity test
+             (Nason) the 62 series divide 31/31, and on the NON-STATIONARY half
+             standard CV falls to among the WORST ranks while Holdout and
+             repeated holdout take the best; (iii) the direction of the error
+             is systematic -- cross-validation UNDER-estimates the loss
+             (optimistic), out-of-sample and prequential OVER-estimate it
+             (pessimistic). (iii) is the decisive one for a study whose
+             headline is a null: an optimistic estimator is the failure mode
+             that manufactures skill. They also fault the earlier CV-favourable
+             comparisons for scoring out-of-sample at a SINGLE origin, citing
+             Tashman's multiple-test-period recommendation -- which is what the
+             fifteen origins of CLAUDE.md 8.1 supply. Scope to state honestly:
+             univariate, purely autoregressive, one step ahead, Cubist (lasso
+             and random forest give the same conclusions). Varying series
+             length 100..3000 produced no size effect favouring CV.},
+  file    = {evaluation-protocol/Evaluating Time Series Forecasting Models, An Empirical Study on Performance Estimation Methods (Cerqueira, Torgo and Mozetic, Machine Learning 2020). arXiv 1905.11744.pdf}
 }
 
 @article{bergmeir2014directional,
