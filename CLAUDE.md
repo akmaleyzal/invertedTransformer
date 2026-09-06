@@ -1144,6 +1144,17 @@ fixed (`D38` — holding capacity fixed is what makes the rungs comparable, and 
 independence is bounded near 4 whatever the spacing, so denser origins inflate G without adding
 information).
 
+**And the ladder is not re-run at `L = 192` or at the tuned configuration. This is now the most
+tempting wrong move available, so it is written down.** Table 9 measures both against the main grid
+at K=8: `look192` returns paired ΔRelMSE **−0.00351** (p = 0.0041) and `itrt` **−0.00490**
+(p = 0.0000) — each three to four times the matched-K effect and roughly twenty times the whole
+nominal-K ladder from K=1 to K=8, and both in the *improving* direction. The obvious next thought is
+to rebuild the ladder on the better lookback or the better configuration and see whether K then buys
+something. **Do not.** That is exactly the post-hoc rung §5.3 forbids; it destroys the fixed-capacity
+comparability that makes the rungs comparable at all (`D38`); and Table 9's own caption already labels
+these arms *exploratory, post-hoc and uncorrected for multiplicity*. The finding is reported as it
+stands — two ordinary design choices dominate effective rank, and none of them reaches Naive-RW.
+
 **The three `D64` arms are ordered last, after the `D62` robustness arms**, on the same reasoning: a
 session cut short loses a comparator rather than an RQ input. Their tags are new, so the 894 completed
 `run_id`s resume untouched — asserted in `tests/test_experiment_plane.py`, which still requires the
