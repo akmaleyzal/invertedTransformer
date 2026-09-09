@@ -2003,4 +2003,100 @@ identity.** `run_id` names a *cell of the design*, not a *result*, and idempoten
 only as strong as the assumption that the code behind a cell never changes. The digest was already
 being recorded; it just was not being read.
 
-New contradictions found later take IDs **D86+**.
+*(Superseded pointer: `D86`-`D88` are indexed in `CLAUDE.md` §14; `D89` is below.)*
+
+---
+
+## D89 — the reference library's *omissions*, not its metadata
+
+**Found 2026-09-05, by resolving every citation the code and the manuscript depend on against
+Crossref, Unpaywall and the PDFs themselves.** Severity **C**. Sections 9.1, 9.2, 13.3.
+
+**Note on scope.** `D86`–`D88` were registered in `CLAUDE.md` §14 on 2026-09-04 but their long-form
+evidence was never transferred here; this file's closing pointer still read `D86+`. That transfer is
+outstanding and is not done by this entry — recorded so the gap is visible rather than discovered
+later.
+
+### The expected defect did not materialise
+
+`reference_library_itransformer_btc.md` declares its own contents "assembled from search results, not
+from access to published versions", and `D16` had already found two mis-dated entries. The obvious
+hypothesis was that its metadata is broadly unreliable.
+
+**It is not.** Twenty-seven references were resolved against Crossref, and where the library stated a
+venue, volume and pages, it was **right every time**: Diebold & Mariano `13(3):253-263`, Harvey et al.
+`13(2):281-291`, Cameron et al. `90(3):414-427`, Lo & MacKinlay `1(1):41-66`, Parkinson `53(1):61-65`,
+Rubin `63(3):581-592`, and the rest. The single entry singled out for suspicion mid-audit — Han, Ye &
+Zhan at *TKDE* 36(11):7129–7142, 2024, which `arxiv.org/abs/2304.05206` shows as a 2023 preprint with
+no journal-ref — was **confirmed correct** by Crossref (`10.1109/TKDE.2024.3400008`). The arXiv page
+simply carries no journal reference. An absent journal-ref is not a contradicted one.
+
+### The actual defect: five statistics the code runs are not in the library at all
+
+| Statistic | Where it is used | In the reference library? |
+|---|---|---|
+| **Clark & West (2007)**, J. Econometrics 138(1):291-311 | `clark_west_test` — the **headline** statistic for every nested pair (§9.2), and the test that decided the Stage 5 gate and hence the paper's title | **absent** — `grep -ci clark` returns **0** |
+| **Clark & McCracken (2001)**, J. Econometrics 105(1):85-110 | why standard DM is invalid on nested pairs (§9.2) | **absent** |
+| **McCracken (2007)**, J. Econometrics 140(2):719-752 | non-standard critical values for the same (§9.2) | **absent** |
+| **Romano & Wolf (2005)**, Econometrica 73(4):1237-1282 | `romano_wolf` — the FWER stepdown that removes **all 90** raw rejections (§9.2, `D79`) | **absent** — `grep -ci romano` returns **0** |
+| **Hansen, Lunde & Nason (2011)**, Econometrica 79(2):453-497 | `model_confidence_set` — Table 6's membership column | **absent** |
+
+Its §E instead offers Hansen (2005) SPA and White (2000) Reality Check — the two tests `D35` examined
+and **rejected** for a pairwise matrix, because they answer a one-against-many null. The library
+therefore names the statistics the study *considered and discarded* and omits the ones it *ran*.
+
+One further mismatch of the same kind: §E's clustered-inference block lists **MacKinnon & Webb (2017)**,
+*J. Applied Econometrics* 32(2), where §9.2 cites **MacKinnon, Nielsen & Webb (2023)**,
+*J. Econometrics* 232(2):272-299 for the WCR-versus-WCU choice. Overlapping authors, different paper.
+
+**Why this is more serious than a wrong page number.** A wrong volume is caught by the first person who
+follows the DOI. A missing citation is caught by nobody, because nothing points at the hole — and here
+the hole is the statistic the paper's central claim rests on.
+
+### A second finding, about the resolution method itself
+
+Crossref's plain relevance search returned a **different paper** for **9 of the 18** PDFs already in
+`paper/references/`: PatchTST came back as an LSTM book chapter, TimesNet as a small-area
+health-analysis chapter, iTransformer as a peer-review record for a wind-energy article, and ShifTS as
+*Cogra* (AAAI 2019). Constraining the query by `container-title` and publication year fixed all nine of
+the *econometrics* look-ups in one pass, but conference papers with no Crossref DOI cannot be rescued
+that way.
+
+**The rule this buys: an automated resolver is a search engine, not an oracle.** Its top hit is a
+ranking, and a plausible ranking for a famous title is exactly what a wrong answer looks like. Where a
+filename, a search result and page 1 of the PDF disagree, **page 1 wins** — it is the artifact the
+study will actually cite. `tools/fetch_references.py` records this tier as `verified=artifact`.
+
+Reading page 1 of all 30 PDFs corrected three of the user's own filenames:
+
+| File as named | What page 1 says |
+|---|---|
+| `Intraday Functional PCA ... (2026)` | `arXiv:2505.20508v1 [econ.EM] 26 May 2025` — the year in the name is **wrong** |
+| `Forecasting Bitcoin ... Memory Path Dependence (2026)` | *Finance a úvěr — Czech J. of Economics and Finance* 76(1), `10.32065/CJEF.2026.01.03` |
+| `Forecasting cryptocurrencies price ... financial stress index` | *Applied Economics Letters*, `10.1080/13504851.2022.2141436` |
+
+And it left one library claim unsupported: §I asserts *Order Flow and Cryptocurrency Returns* is
+*International Review of Financial Analysis* (2026) with DOI `10.1016/j.irfa.2026.100029`. The PDF on
+disk is a working paper by Anastasopoulos, Gradojevic and Liu carrying no DOI. **Unconfirmed** — do
+not cite that DOI until the published version is located.
+
+**Fixed** by `paper/references/references.bib` (52 entries, every one carrying a `verified=` tier of
+`read` / `doi-resolved` / `artifact` / `screened`), `paper/references/README.md` generated from it, and
+`tools/fetch_references.py` which downloads only what is legally free, refuses to write a file whose
+normalised title matches an existing one at ratio ≥ 0.75, and lists paywalled entries with a resolved
+DOI instead of a fabricated PDF. Twelve PDFs were added to the eighteen already present, and eighteen more were then supplied
+by hand. On 2026-09-05 all of them were **regrouped into six category folders** -- same-volume
+renames driven by a table that refused to run until it accounted for every PDF on disk with no
+colliding destination. Four were renamed for cause, the sharpest being a file called
+*Financial econometric analysis at ultra-high frequency* whose own first page reads
+*Approximately normal tests for equal predictive accuracy in nested models* -- **Clark & West
+(2007)**, this study's headline statistic, filed under another paper's title. **48 PDFs, 0
+duplicate pairs, 50 of 52 entries carrying a resolved DOI or arXiv id**; the two without are a
+book (ISBN) and an ICLR paper (OpenReview mints no DOI).
+
+**What this does *not* do.** §13.3 requires a verified DOI **and the source read**. This closes the
+first half only, for 52 entries. `SOURCE_PROVENANCE`'s `verified` flags in `config.py` are deliberately
+untouched — flipping one means reading the paper, and conflating "I resolved its DOI" with "I read it"
+would retire the very distinction §13.3 exists to enforce.
+
+New contradictions found later take IDs **D90+**.

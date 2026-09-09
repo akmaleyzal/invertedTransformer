@@ -1,0 +1,13 @@
+# Corpus scope for graphify. Gitignore semantics; merged on top of .gitignore,
+# which already excludes the 52 reference PDFs (*.pdf) and the run artifacts.
+
+# The 1,620 run metas are one JSON per (arm, origin, K, H, seed) with an
+# identical schema. They are evidence for CLAUDE.md section 12's traceability
+# contract, not knowledge: indexed, they are 1,621 of 1,686 corpus files and
+# every community collapses into them. What they collectively SAY lives in
+# notebooks/outputs/RUN_ANALYSIS.md, which is indexed.
+notebooks/outputs/artifacts/meta/
+notebooks/outputs/artifacts/preds/
+
+# Editor/session scratch, not project knowledge.
+.jupyter/

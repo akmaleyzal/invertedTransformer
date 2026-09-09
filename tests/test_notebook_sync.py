@@ -215,6 +215,39 @@ def test_every_code_cell_has_a_markdown_heading_above_it(notebook: dict) -> None
     assert not naked, f"code cells with no heading above them: {naked}"
 
 
+def test_outline_supports_folding_and_sequential_reading(notebook: dict) -> None:
+    """Blank first-line markers fold groups; visible titles stay in styled panels."""
+    markdown = ["".join(c["source"]) for c in notebook["cells"]
+                if c["cell_type"] == "markdown"]
+    levels = []
+    for source in markdown:
+        marker = source.splitlines()[0]
+        assert re.fullmatch(r"#{1,4}", marker), "first line must be a blank folding marker"
+        assert len(re.findall(r"^#{1,6}(?:[ \t]|$)", source, re.M)) == 1
+        level = len(marker)
+        headings = re.findall(r'<h([1-4])\s+style="[^"]+">(.+?)</h\1>', source, re.S)
+        assert len(headings) == 1 and int(headings[0][0]) == level
+        assert headings[0][1].strip(), "visible title missing from the CSS panel"
+        assert source.index('<div style=') < source.index(f'<h{level} ')
+        levels.append(level)
+    assert levels.count(1) == 1 and levels[0] == 1
+    assert set(levels) == {1, 2, 3, 4}
+    assert all(b <= a + 1 for a, b in zip(levels, levels[1:])), "skipped heading level"
+
+    anchors = re.findall(r'<a id="(section-\d+)"', "\n".join(markdown))
+    links = re.findall(r"\]\(#(section-\d+)\)", markdown[0])
+    assert links == anchors and len(set(anchors)) == 12
+    assert levels.count(2) == len(anchors)
+
+    steps = [c.get("metadata", {}).get("itbtc", {}).get("step")
+             for c in notebook["cells"] if c["cell_type"] == "code"]
+    workflow = ["setup", "provenance_sources", "data", "features", "keff",
+                "invariants", "pilot", "tune", "grid", "rq1", "rq2", "rq3",
+                "save", "report", "sync_back"]
+    positions = [steps.index(step) for step in workflow]
+    assert positions == sorted(positions), "execution no longer follows the study"
+
+
 def test_section_map_covers_every_top_level_statement(generator) -> None:
     """Splitting loses nothing, and every anchor still names a real definition.
 

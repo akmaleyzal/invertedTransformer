@@ -1,0 +1,59 @@
+{
+  "run_id": "nsea_o12_K01_H024_s42",
+  "spec": {
+    "model": "nsea",
+    "origin_index": 12,
+    "k": 1,
+    "pred_len": 24,
+    "seed": 42
+  },
+  "config": {
+    "mode": "seasonal",
+    "seq_len": 96,
+    "pred_len": 24,
+    "k": 1,
+    "loss_channels": "target",
+    "channel_independent": false
+  },
+  "schedule": null,
+  "origin": "2024-08",
+  "origin_index": 12,
+  "block_labels": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "k": 1,
+  "variates": [
+    "r"
+  ],
+  "git_sha": "unknown",
+  "code_sha256": "bfb43f21028da322e123402837625815164a32b70f24f6fa50bed22f6679cadb",
+  "input_parquet": "/kaggle/input/datasets/akmaleyzal/btc1h-raw/BTCUSDT_1h.parquet",
+  "input_sha256": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
+  "input_sha256_source": "file-digest",
+  "n_train": 15095,
+  "n_val": 2089,
+  "n_test_per_block": [
+    720,
+    720,
+    720,
+    720,
+    720,
+    720
+  ],
+  "mu_g": 6.26465494072688e-05,
+  "sigma_g": 0.005080440533407666,
+  "mu_over_sigma": 0.012330928586865892,
+  "naive_rw_z": -0.012330928586865892,
+  "epochs_run": 0,
+  "best_val_mse": 1.6239488124847412,
+  "train_loss": 2.0312583446502686,
+  "wall_time_s": 0.0030374460002349224,
+  "n_parameters": 0,
+  "device": "cuda:0",
+  "status": "complete"
+}

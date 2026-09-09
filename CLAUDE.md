@@ -1979,22 +1979,23 @@ worse than none.
 `BTCUSDT_1h.parquet` and **nothing else** — no repository Dataset to upload, keep in step by hand, and
 silently run stale. No definition moved: the cells *transcribe* `src/` and the generator writes them.
 
-**The outline is the pipeline, not the package (`D73`).** Twenty-four **phases**, each opening a
-`##` banner and named for what that step of the study *does* — Persiapan, Pustaka, Konfigurasi,
-Muat data, Pra-proses, Efisiensi, Split, K_eff, Algoritma, Loop latih, Metrik, Baseline,
-Perbandingan, Ekonomi, Attention, Runner, Pelaporan, Provenance, Invarian, Gerbang, Grid,
-Evaluasi, Simpan, Tabel. A phase carries its modules first and its orchestration steps second, so
-each stage of the study keeps its definitions and its execution together instead of eighteen modules
-stacking up in one block with every Stage cell trailing behind them. `PHASES` in the generator is
-that outline; `build()` refuses to run unless the concatenation of `phase.modules` equals
-`MODULE_ORDER`, because a phase table that drops or repeats a module produces a `NameError` hours
-into a Kaggle session rather than a failure here. **Headings and prose are Indonesian; identifiers,
-code and error strings are not.**
+**The outline is the pipeline, not the package (`D73`; presentation revised 2026-09-09).** Twelve
+sections cover preparation, data quality, features, splits and K_eff, models and training functions,
+evaluation helpers and runner, preflight checks, validation, grid training, RQ evaluation, saved
+results, and the local-sync appendix. Each opens a **blank Markdown `##` marker on the first line**;
+blank `###` markers group steps or modules and `####` introduces definition cells. The notebook title
+uses a blank `#` marker. Visible titles live inside the CSS panels as styled HTML `h1`–`h4` headings,
+following the first Markdown cell of the v11 export; the blank markers provide section folding. The title
+contains navigation generated from `PHASES`; detailed method notes use collapsible disclosures.
+Each phase's ordered `contents` interleaves module names and orchestration steps, keeping definitions
+before their calls. `build()` refuses unless the module names in that sequence equal `MODULE_ORDER`.
+The presentation change preserves executable cell order, source bytes, and matching saved outputs.
+**Headings and prose are Indonesian; identifiers, code and error strings are not.**
 
 **It carries the package as definition cells, not as files (`D58`), segmented by logical group
 (`D63`).** Eighteen modules, each opening a `###` banner inside its phase and cut into `####`
-subsections of functions that work together — 137 definition cells of 20–120 lines plus 21
-orchestration cells, every one preceded by an HTML markdown heading naming what it does and which
+subsections of functions that work together — definition cells grouped by purpose plus orchestration
+cells, every one preceded by a styled HTML heading and a blank Markdown folding marker naming what it does and which
 rule of this document it enforces. `SECTION_MAP` in the generator is that cut; `main()` refuses to
 run when a module is missing from it, for the same reason it refuses on a missing `MODULE_ORDER`
 entry. Cells define plain `def`, `class` and constant bodies in the kernel namespace; nothing is on

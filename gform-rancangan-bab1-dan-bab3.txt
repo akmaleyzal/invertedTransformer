@@ -1,0 +1,29 @@
+1.  Proyeksi Judul *
+    Tuliskan rencana judul yang akan diangkat
+
+2.  Latar belakang kasus *
+    Tuliskan konteks permasalahan dari studi kasus yang diangkat dalam 2-3 paragraf (sekitar 250 kata). 
+
+    - Apa keterbatasan dari penelitian terdahulu? 
+    - Aspek apa yang menyebabkan permasalahan tersebut layak untuk dikaji?
+    - Mungkin, apa hal yang belum diselesaikan dari permasalahan terdahulu?
+
+3.  Pertanyaan penelitian *
+    Formulasikan sebuah pertanyaan terbuka mengenai permasalahan yang akan diselesaikan.
+    Bisa jadi pertanyaan terbuka ini merupakan "intisari" dari Latar Belakang kasus.
+
+4.  Rumusan masalah *
+    Tuliskan dalam numbered list, apa rumusan masalah yang akan diselesaikan dalam skripsi. 
+    Biasanya, rumusan masalah ini urut, yang ke-1 misal ada masalah di dataset, 2 ada masalah di hasil 1-2 algoritme yang akan dibandingkan, dst, dst.
+
+5.  Tujuan penelitian *
+    Tuliskan tujuan penelitian dari Skripsi ini. 
+    Biasanya menjawab apa yang dituliskan dalam rumusan masalah.
+    Kalo rumusan masalah ada 3, ya tujuan penelitian juga ada 3.
+
+6.  Referensi penelitian terdahulu (1) *
+    Tulis URL penelitian terdahulu: artikel jurnal
+
+7.  Referensi penelitian terdahulu (2) *
+    Tulis URL penelitian terdahulu: artikel jurnal atau prosiding
+

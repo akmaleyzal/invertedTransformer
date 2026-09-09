@@ -1,0 +1,309 @@
+{
+  "runs": 1620,
+  "status": {
+    "complete": 1620
+  },
+  "code_hashes": {
+    "bfb43f21028da322e123402837625815164a32b70f24f6fa50bed22f6679cadb": 1620
+  },
+  "input_hashes": {
+    "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e": 1620
+  },
+  "actual_input_hash": "8270a84b07c2923bc885782a8ba4e1898133d18ee3b260f157fcee3fd6923b4e",
+  "grid_json_hash": "6d1cab8c813e6dfce5079940c8ba4418cae461b0c4ceed24e7d1cd60681452a5",
+  "paper_derived_from": {
+    "generated_utc": "2026-09-06T07:03:55Z",
+    "grid_paper_numbers": "D:\\pythonProject\\invertedTransformer\\notebooks\\outputs\\artifacts\\paper_numbers.json",
+    "grid_paper_numbers_sha256": "6d1cab8c813e6dfce5079940c8ba4418cae461b0c4ceed24e7d1cd60681452a5",
+    "grid_generated_utc": "2026-09-03T19:52:31Z",
+    "artifacts_root": "D:\\pythonProject\\invertedTransformer\\notebooks\\outputs\\artifacts"
+  },
+  "paper_runs_complete": 1620,
+  "n_train_main": [
+    13545,
+    13547,
+    13689,
+    13704,
+    13729,
+    13924,
+    14157,
+    14278,
+    15019,
+    15071,
+    15095,
+    15119,
+    15217
+  ],
+  "time_alignment": {
+    "l048": {
+      "stored_timestamp": "2020-01-01T00:00:00+00:00",
+      "first_target_bar": "2020-01-03T00:00:00+00:00",
+      "last_target_bar_block1": "2020-02-02T22:00:00+00:00",
+      "raw_target_first_row": -0.0041301359895194525,
+      "origin": "2020-01-01T00:00:00+00:00",
+      "nominal_block1_end": "2020-01-31T00:00:00+00:00"
+    },
+    "itr": {
+      "stored_timestamp": "2020-01-01T00:00:00+00:00",
+      "first_target_bar": "2020-01-05T00:00:00+00:00",
+      "last_target_bar_block1": "2020-02-04T22:00:00+00:00",
+      "raw_target_first_row": 0.002630438808815213,
+      "origin": "2020-01-01T00:00:00+00:00",
+      "nominal_block1_end": "2020-01-31T00:00:00+00:00"
+    },
+    "l192": {
+      "stored_timestamp": "2020-01-01T00:00:00+00:00",
+      "first_target_bar": "2020-01-09T00:00:00+00:00",
+      "last_target_bar_block1": "2020-02-08T22:00:00+00:00",
+      "raw_target_first_row": -0.01241918367009678,
+      "origin": "2020-01-01T00:00:00+00:00",
+      "nominal_block1_end": "2020-01-31T00:00:00+00:00"
+    }
+  },
+  "training_cutoff_origin1": "2019-10-01T00:00:00+00:00",
+  "j_test": {
+    "k_augmented_by_pr_raw": {
+      "implemented_t": 3.293265551997712,
+      "implemented_p": 0.0011234760590233016,
+      "origin_CR1_t_diagnostic": 3.213639011395451,
+      "origin_CR1_p_t14_diagnostic": 0.006248715859295234
+    },
+    "pr_raw_augmented_by_k": {
+      "implemented_t": -0.3479748399602939,
+      "implemented_p": 0.7281322373852138,
+      "origin_CR1_t_diagnostic": -0.8132685016172844,
+      "origin_CR1_p_t14_diagnostic": 0.4296788031912326
+    }
+  },
+  "mde": {
+    "published": -0.0009202919371959043,
+    "recomputed_from_test_slopes": -0.0009202919371959043
+  },
+  "seed_estimands": [
+    {
+      "origin": 1,
+      "mean_seed_MSE": 1.3191338239036654,
+      "ensemble_MSE": 1.3109479651763738,
+      "difference_pct_of_mean_seed_MSE": 0.6205480125638746
+    },
+    {
+      "origin": 8,
+      "mean_seed_MSE": 0.3430989377191724,
+      "ensemble_MSE": 0.3416402682158301,
+      "difference_pct_of_mean_seed_MSE": 0.42514544435464835
+    },
+    {
+      "origin": 15,
+      "mean_seed_MSE": 0.9382250169517268,
+      "ensemble_MSE": 0.9347472227414068,
+      "difference_pct_of_mean_seed_MSE": 0.37067805137185905
+    }
+  ],
+  "instance_norm_shift_equivariance": {
+    "target_window_shift": 0.2,
+    "max_abs_f_x_plus_shift_minus_f_x_minus_shift": 2.8312206268310547e-07,
+    "implication": "The architectural shift equivariance prevents a globally constant forecast function; nesting of Naive-RW is not implied by additional input variables."
+  },
+  "direction_scale": [
+    {
+      "origin": 1,
+      "mu_over_sigma": -0.004750168524401542,
+      "implemented_da_h1": 0.5067421790722761,
+      "raw_da_h1": 0.5043149946062567,
+      "implemented_da_cum": 0.4258064516129032,
+      "raw_da_cum": 0.432258064516129,
+      "position_sign_changes_after_inverse_scaler": 2,
+      "positions": 155
+    },
+    {
+      "origin": 8,
+      "mu_over_sigma": -0.0001443277083644527,
+      "implemented_da_h1": 0.5011910433539781,
+      "raw_da_h1": 0.5021438780371605,
+      "implemented_da_cum": 0.5257142857142857,
+      "raw_da_cum": 0.5257142857142857,
+      "position_sign_changes_after_inverse_scaler": 0,
+      "positions": 175
+    },
+    {
+      "origin": 15,
+      "mu_over_sigma": 0.014809311407960775,
+      "implemented_da_h1": 0.5030092592592592,
+      "raw_da_h1": 0.4986111111111111,
+      "implemented_da_cum": 0.4444444444444444,
+      "raw_da_cum": 0.4722222222222222,
+      "position_sign_changes_after_inverse_scaler": 12,
+      "positions": 180
+    }
+  ],
+  "sortino_counterexample": {
+    "net_returns": [
+      -0.01,
+      -0.01,
+      0.02,
+      0.02
+    ],
+    "implemented": null,
+    "zero_MAR_full_sample_downside_deviation": 13.509256086106296
+  },
+  "improving_skill_counterexample": {
+    "skill": [
+      0.01,
+      0.02,
+      0.03,
+      0.04,
+      0.05,
+      0.06
+    ],
+    "computed_D": [
+      0.7142857142857143,
+      0.4285714285714286,
+      0.14285714285714296,
+      -0.14285714285714277,
+      -0.42857142857142855,
+      -0.7142857142857141
+    ],
+    "b_star": [
+      {
+        "origin": "synthetic",
+        "tau": 0.05,
+        "b_star": 1,
+        "event": true
+      }
+    ]
+  },
+  "notebook_upstream_change_counterexample": {
+    "carried_changed_missing": [
+      1,
+      0,
+      0
+    ],
+    "output_after_upstream_function_changed": [
+      {
+        "output_type": "stream",
+        "name": "stdout",
+        "text": [
+          "1\n"
+        ]
+      }
+    ]
+  },
+  "resume_vintage_counterexample": {
+    "pending_before_execute": 1,
+    "completed": 0,
+    "skipped": 1,
+    "remaining": 1
+  },
+  "lookback_on_common_actual_targets": {
+    "per_origin": [
+      {
+        "origin": 1,
+        "common_windows": 3210,
+        "l048": 1.029386556694072,
+        "itr": 1.0270846736389463,
+        "l192": 1.0255601095745301
+      },
+      {
+        "origin": 2,
+        "common_windows": 3940,
+        "l048": 1.0232890943603565,
+        "itr": 1.0135653636628739,
+        "l192": 1.0100770101884669
+      },
+      {
+        "origin": 3,
+        "common_windows": 2914,
+        "l048": 1.0310398908913443,
+        "itr": 1.0218902243549801,
+        "l192": 1.0139963953677917
+      },
+      {
+        "origin": 4,
+        "common_windows": 3574,
+        "l048": 1.0268198740814547,
+        "itr": 1.0167446569101442,
+        "l192": 1.0158471165499565
+      },
+      {
+        "origin": 5,
+        "common_windows": 3958,
+        "l048": 1.0299417896555312,
+        "itr": 1.020769434854488,
+        "l192": 1.0156811729653634
+      },
+      {
+        "origin": 6,
+        "common_windows": 4176,
+        "l048": 1.0205451377136745,
+        "itr": 1.0168305250573224,
+        "l192": 1.0140601900763846
+      },
+      {
+        "origin": 7,
+        "common_windows": 4176,
+        "l048": 1.0260328450055973,
+        "itr": 1.0225683975484645,
+        "l192": 1.0188540003692144
+      },
+      {
+        "origin": 8,
+        "common_windows": 3958,
+        "l048": 1.025172854630067,
+        "itr": 1.0180610530928083,
+        "l192": 1.0112613423729733
+      },
+      {
+        "origin": 9,
+        "common_windows": 4176,
+        "l048": 1.0270349281530173,
+        "itr": 1.0135147434217802,
+        "l192": 1.0102771356571658
+      },
+      {
+        "origin": 10,
+        "common_windows": 4176,
+        "l048": 1.0209017182321647,
+        "itr": 1.0094466687391797,
+        "l192": 1.0089645580881317
+      },
+      {
+        "origin": 11,
+        "common_windows": 4176,
+        "l048": 1.022501220319671,
+        "itr": 1.0151529201563756,
+        "l192": 1.0137779898739947
+      },
+      {
+        "origin": 12,
+        "common_windows": 4176,
+        "l048": 1.01825244561742,
+        "itr": 1.016020951712477,
+        "l192": 1.0107477417831783
+      },
+      {
+        "origin": 13,
+        "common_windows": 4176,
+        "l048": 1.0237440769555612,
+        "itr": 1.0164868994257688,
+        "l192": 1.012740592292907
+      },
+      {
+        "origin": 14,
+        "common_windows": 4176,
+        "l048": 1.0281877497439154,
+        "itr": 1.0168128290252108,
+        "l192": 1.0102591205863831
+      },
+      {
+        "origin": 15,
+        "common_windows": 4176,
+        "l048": 1.0299110707494483,
+        "itr": 1.018689575726393,
+        "l192": 1.0090764231931284
+      }
+    ],
+    "mean_delta_l192_minus_itr": -0.00416386789250951,
+    "mean_delta_l048_minus_itr": 0.007941489031738873,
+    "caveat": "Exploratory intersection of surviving actual issue times; no new training, no official tables replaced."
+  }
+}

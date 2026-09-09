@@ -401,7 +401,29 @@ MODULE_THEME: dict[str, tuple[str, str, str, str, str]] = {
     "report.py": ("#001a0d", "#003317", "#52b788", "#95d5b2", "#b7e4c7"),
 }
 
-#: What each module is, in one line, under its ``##`` heading.
+#: Reader-facing labels; filenames stay in the provenance line and cell metadata.
+MODULE_TITLE: dict[str, str] = {
+    "config.py": "Konfigurasi penelitian",
+    "__init__.py": "Inventaris nama dalam paket",
+    "segments.py": "Pembacaan data dan segmentasi",
+    "windows.py": "Validasi jendela berdasarkan timestamp",
+    "budget.py": "Audit jumlah jendela per origin",
+    "features.py": "Definisi fitur dan tangga variat",
+    "efficiency.py": "Fungsi diagnostik efisiensi pasar",
+    "splits.py": "Pembagian data, scaling, dan tensor",
+    "keff.py": "Pengukuran dimensionalitas efektif",
+    "model.py": "Arsitektur iTransformer",
+    "train.py": "Loss, optimizer, dan loop training",
+    "metrics.py": "Fungsi metrik dan uji statistik",
+    "baselines.py": "Model baseline",
+    "comparisons.py": "Fungsi perbandingan antarmodel",
+    "economics.py": "Fungsi evaluasi ekonomi",
+    "attention.py": "Fungsi analisis attention",
+    "runner.py": "Manifes, resume, dan eksekutor grid",
+    "report.py": "Fungsi pembentuk tabel dan figure",
+}
+
+#: What each module is, in one line, under its ``###`` heading.
 MODULE_BLURB: dict[str, str] = {
     "config.py": "Setiap angka protokol yang root §8.1 kunci, sebagai konstanta bernama. Tidak ada magic number di modul lain.",
     "__init__.py": "Permukaan paket. Di notebook ia tidak mengimpor apa pun — seluruh nama sudah hidup di namespace kernel yang sama.",
@@ -415,12 +437,12 @@ MODULE_BLURB: dict[str, str] = {
     "keff.py": "Dimensionalitas efektif — regresor RQ1. Dihitung hanya pada rentang latih, per origin (<code>D02</code>, <code>D44</code>).",
     "efficiency.py": "Uji efisiensi pasar root §4.5: ADF, variance ratio, Hurst. Full sample dan per sub-blok latih.",
     "metrics.py": "Seluruh estimator paper: metrik, DM/Clark–West, survival, dan bootstrap klaster liar untuk β₁.",
-    "baselines.py": "Ridge, DLinear, PatchTST — masing-masing dengan K eksplisit (<code>D40</code>) dan objektif terbitannya sendiri (<code>D56</code>).",
+    "baselines.py": "Ridge, DLinear, PatchTST, LSTM, naive-persist, dan seasonal-naive; K dan objektif setiap baseline dinyatakan eksplisit (<code>D40</code>, <code>D56</code>, <code>D64</code>).",
     "comparisons.py": "Matriks pasangan, stepdown Romano–Wolf, dan Model Confidence Set (<code>D35</code>).",
     "economics.py": "Evaluasi ekonomi root §13.5: fase 00:00 UTC, non-overlapping, per segmen, DSR per origin.",
     "attention.py": "Peta attention per tercile volatilitas untuk Figure 5. Cabang <code>capture</code> tidak mengonsumsi RNG (<code>D62d</code>).",
-    "runner.py": "Manifes 969 run, penemuan resume lewat glob, penjaga anggaran sesi, dan eksekutor grid.",
-    "report.py": "Sembilan tabel dan enam figure, seluruhnya di-render dari <code>paper_numbers.json</code> — tidak pernah disalin tangan.",
+    "runner.py": "Manifes eksperimen, penemuan resume lewat glob, penjaga anggaran sesi, dan eksekutor grid.",
+    "report.py": "Tabel, figure, dan panel pendukung manuskrip, dibentuk dari artefak eksperimen yang tersimpan.",
 }
 
 #: Where every module is cut, and what the heading above each cut says.
@@ -578,7 +600,7 @@ SECTION_MAP: dict[str, tuple[Section, ...]] = {
     "runner.py": (
         Section("Header, arm, konstanta sesi", "📄", "Sepuluh arm, dan <code>SESSION_BUDGET_H = 11,0</code> dengan cadangan setengah jam."),
         Section("Sel run", "🔲", "Satu sel grid, dan <code>run_id</code> deterministiknya. Mengubah komponen mana pun <strong>meng-orphan</strong> keluaran lama, bukan diam-diam memakainya ulang.", "RunCell"),
-        Section("Manifes 969 run", "📜", "684 konfirmatori, 210 robustness <code>D62</code>, 75 baseline yang <code>D64</code> bangun. Irisan H=24 sweep dideduplikasi terhadap grid utama (<code>D53e</code>).", "manifest"),
+        Section("Manifes eksperimen", "📜", "Gabungkan tangga utama, baseline, dan arm robustness maupun eksploratori. Run ID yang sama dideduplikasi, termasuk irisan H=24 sweep (<code>D53e</code>).", "manifest"),
         Section("Penemuan & resume", "🔍", "Ditemukan lewat glob, <strong>tidak pernah lewat slug Dataset yang dikodekan mati</strong>, jadi nama Dataset Kaggle bebas berubah.", "discover_roots"),
         Section("Penjaga anggaran sesi", "⏰", "Diperiksa di batas run, bukan batas epoch. <code>SESSION_T0</code> distempel di sel 0 supaya prelude ikut terhitung (<code>D54f</code>).", "BudgetGuard"),
         Section("Cache tensor per origin", "🗄️", "Tensor origin dimuat sekali dan dipakai ulang lintas rung dan seed.", "_TensorCache"),
@@ -776,10 +798,8 @@ def split_module_cells(name: str) -> list[tuple[Section, str]]:
 class Step:
     """One orchestration cell — a heading and the body under it.
 
-    Steps are what the notebook *does*; modules are what it *knows*. A phase
-    lists its modules first and its steps second, which is the order they have
-    to run in anyway: a call above the definition it needs fails on Kaggle at
-    cell N rather than in a test here (`D59`).
+    Steps are what the notebook *does*; modules are what it *knows*. Each phase
+    interleaves them in execution order, with definitions before their calls.
 
     **A step declares what it reads and what it writes (`D87`).** Until it did,
     the 144 definition cells carried ``metadata.itbtc`` and the seventeen cells
@@ -852,8 +872,7 @@ class Phase:
     blurb: str
     theme: str
     bullets: tuple[str, ...] = ()
-    modules: tuple[str, ...] = ()
-    steps: tuple[Step, ...] = ()
+    contents: tuple[str | Step, ...] = ()
 
 
 def _bullets(items: tuple[str, ...], body: str) -> str:
@@ -870,19 +889,24 @@ def _bullets(items: tuple[str, ...], body: str) -> str:
 
 
 def _html_phase(phase: Phase) -> str:
-    """The ``##``-level banner opening one phase of the pipeline."""
+    """A blank folding marker, with the visible title inside the coloured panel."""
     start, end, accent, head, body = MODULE_THEME[phase.theme]
+    notes = (
+        f'\n  <details style="color: {body}; margin-top: 12px;">'
+        '<summary style="cursor: pointer;">Catatan metode dan provenance</summary>'
+        f'{_bullets(phase.bullets, body)}\n  </details>'
+        if phase.bullets else ""
+    )
     return (
+        '##\n\n'
+        f'<a id="section-{phase.number}"></a>\n\n'
         f'<div style="background: linear-gradient(135deg, {start}, {end}); '
-        f"border-radius: 14px; padding: 26px 32px; margin-bottom: 8px; "
-        f'border: 1px solid {accent}33;">\n'
-        f'  <h2 style="color: {head}; margin: 0 0 8px 0; font-size: 1.6em; '
-        f'font-weight: 700; letter-spacing: 0.5px;">\n'
-        f"    {phase.emoji} {phase.number} &middot; {phase.title}\n"
-        f"  </h2>\n"
+        f'border-left: 4px solid {accent}; border-radius: 10px; '
+        f'padding: 20px 26px; margin-bottom: 8px;">\n'
+        f'  <h2 style="color: {head}; margin: 0 0 8px; font-size: 1.6em;">'
+        f'{phase.emoji} {phase.number} · {phase.title}</h2>\n'
         f'  <p style="color: {body}; margin: 0; font-size: 1.02em;">'
-        f"{phase.blurb}</p>"
-        f"{_bullets(phase.bullets, body)}\n"
+        f"{phase.blurb}</p>{notes}\n"
         f"</div>"
     )
 
@@ -891,13 +915,16 @@ def _html_module(name: str) -> str:
     """The ``###``-level banner opening a module's run of cells inside a phase."""
     start, end, accent, head, body = MODULE_THEME[name]
     return (
+        '###\n\n'
         f'<div style="background: linear-gradient(90deg, {start}, {end}); '
         f"border-left: 4px solid {accent}; border-radius: 8px; "
         f'padding: 16px 22px;">\n'
-        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.22em;">'
-        f"📘 {name}</h3>\n"
+        f'  <h3 style="color: {head}; margin: 0 0 6px; font-size: 1.22em;">'
+        f'{MODULE_TITLE[name]}</h3>\n'
         f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">'
         f"{MODULE_BLURB[name]}</p>\n"
+        f'  <p style="color: {head}; margin: 8px 0 0; font-size: 0.82em;">'
+        f'📘 Definisi · <code>{name}</code></p>\n'
         f"</div>"
     )
 
@@ -906,14 +933,13 @@ def _html_section(name: str, section: Section) -> str:
     """The ``####``-level banner directly above one code cell."""
     start, end, accent, head, body = MODULE_THEME[name]
     return (
+        '####\n\n'
         f'<div style="background: linear-gradient(90deg, {start}, {end}); '
-        f"border-left: 3px solid {accent}88; border-radius: 6px; "
-        f'padding: 11px 18px;">\n'
-        f'  <h4 style="color: {head}; margin: 0 0 5px 0; font-size: 1.02em; '
+        f'border-left: 3px solid {accent}88; border-radius: 6px; padding: 11px 18px;">\n'
+        f'  <h4 style="color: {head}; margin: 0 0 5px; font-size: 1.02em; '
         f'font-weight: 600;">{section.emoji} {section.title}</h4>\n'
-        f'  <p style="color: {body}; margin: 0; font-size: 0.9em;">'
-        f"{section.blurb}</p>\n"
-        f"</div>"
+        f'  <p style="color: {body}; margin: 0; font-size: 0.9em;">{section.blurb}</p>\n'
+        '</div>'
     )
 
 
@@ -921,11 +947,12 @@ def _html_step(emoji: str, title: str, blurb: str, theme: str) -> str:
     """A ``###``-level banner for an orchestration cell, themed like a module."""
     start, end, accent, head, body = MODULE_THEME[theme]
     return (
+        '###\n\n'
         f'<div style="background: linear-gradient(90deg, {start}, {end}); '
         f"border-left: 4px solid {accent}; border-radius: 8px; "
         f'padding: 16px 22px;">\n'
-        f'  <h3 style="color: {head}; margin: 0 0 6px 0; font-size: 1.22em;">'
-        f"{emoji} {title}</h3>\n"
+        f'  <h3 style="color: {head}; margin: 0 0 6px; font-size: 1.22em;">'
+        f'{emoji} {title}</h3>\n'
         f'  <p style="color: {body}; margin: 0; font-size: 0.94em;">{blurb}</p>\n'
         f"</div>"
     )
@@ -1097,40 +1124,33 @@ def library_cell() -> str:
 
 # -- prose -------------------------------------------------------------------
 
-MD_TITLE = """<div style="background: linear-gradient(135deg, #0b1021, #14213d, #1b2a4a); border-radius: 16px; padding: 36px 40px; margin-bottom: 8px;">
-  <h1 style="color: #8ecae6; font-size: 2.3em; font-weight: 800; margin: 0 0 10px 0; letter-spacing: 0.5px;">
-    &#9889; iTransformer &middot; Walk-Forward BTCUSDT 1 jam
+MD_TITLE = """#
+
+<div style="background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); border-radius: 16px; padding: 28px 34px; margin-bottom: 12px;">
+  <h1 style="color: #e0aaff; font-size: 2.3em; font-weight: 800; margin: 0 0 10px;">
+    iTransformer · Evaluasi Walk-Forward BTCUSDT
   </h1>
-  <p style="color: #ffb703; font-size: 1.12em; margin: 0 0 18px 0; font-weight: 500;">
-    Variat nominal atau dimensionalitas efektif? &mdash; 15 origin &middot; 1.620 run &middot; 2 &times; T4
+  <p style="color: #e0aaff; font-size: 1.2em; font-weight: 700; margin: 0 0 14px;">
+    ⚡ Notebook penelitian · BTCUSDT spot · 1 jam · PyTorch
   </p>
-  <hr style="border: none; border-top: 1px solid #2a4365; margin: 16px 0;">
-  <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
-    <strong>Dibaca dari atas ke bawah, sekali jalan.</strong> Notebook ini disusun menurut
-    <em>tahap pipeline</em>, bukan menurut nama berkas: konfigurasi &rarr; muat data &rarr;
-    pra-proses &rarr; split &rarr; algoritma &rarr; latih &rarr; metrik &rarr; baseline &rarr;
-    grid &rarr; evaluasi &rarr; laporan. Definisi satu tahap dan eksekusinya duduk berdampingan,
-    jadi tidak ada lagi tumpukan modul di tengah yang harus dilewati untuk sampai ke pekerjaannya
-    (<code>D73</code>). Nama modul turun satu tingkat, ke banner <code>###</code> dan ke
-    <code>cell.metadata</code>, karena badan tiap sel adalah potongan byte-exact berkas itu dan
-    pembaca yang membandingkan keduanya tetap butuh namanya.
+  <p style="color: #ddd6fe; margin: 0 0 12px;">
+    Dari data hingga evaluasi: manfaat penambahan variat (RQ1), perubahan gap menurut
+    umur model (RQ2), dan cadence retraining (RQ3), dengan protokol walk-forward yang dipra-registrasi.
   </p>
-  <p style="color: #a8c0dd; font-size: 0.97em; margin: 0 0 12px 0;">
-    <strong>Mandiri.</strong> Yang dibutuhkan sesi Kaggle hanya dua: notebook ini, dan
-    <code>BTCUSDT_1h.parquet</code> terpasang sebagai Kaggle Dataset. Setiap definisi yang dipakai
-    ada <em>di dalamnya</em> &mdash; sel-sel di bawah adalah <code>def</code>, <code>class</code>,
-    dan konstanta biasa yang dijalankan berurutan. Tidak ada yang ditulis ke disk untuk diimpor
-    balik, tidak ada paket <code>itransformer_btc</code> di mesin ini, dan tidak ada
-    <code>src/</code> di <code>sys.path</code>.
+  <p style="color: #ddd6fe; margin: 0;">
+    Jalankan berurutan dari atas. Di Kaggle, lampirkan <code>BTCUSDT_1h.parquet</code>,
+    pilih GPU, lalu gunakan <strong>Save Version → Save &amp; Run All</strong>.
+    Seluruh definisi yang diperlukan tersedia dalam notebook ini.
   </p>
-  <p style="color: #7f9cc0; font-size: 0.93em; margin: 0;">
-    Menjawab <strong>RQ1</strong> (manfaat mengikuti K atau K<sub>eff</sub>?),
-    <strong>RQ2</strong> (apakah gap multivariat menyempit seiring umur model?),
-    <strong>RQ3</strong> (cadence retraining berapa?) &mdash; ketiganya dipra-registrasi sebelum
-    satu model pun berjalan, dan tak satu pun bisa diubah sekarang tanpa mendeklarasikan
-    eksperimen baru.
-  </p>
-</div>"""
+</div>
+
+**Navigasi:** gunakan daftar isi di bawah. Penanda heading kosong di baris pertama
+tiap sel Markdown digunakan untuk melipat; judul tampil di dalam panel berwarna.
+Heading \u0060##\u0060 melipat satu bagian, \u0060###\u0060 melipat kelompok langkah atau definisi,
+dan \u0060####\u0060 melipat satu subbagian. Klik kembali panah heading untuk membukanya.
+Melipat bagian hanya mengubah tampilan; sel tetap ikut dijalankan oleh Run All.
+Catatan metode tambahan dapat dibuka lewat **Catatan metode dan provenance**.
+"""
 
 MD_TUNE = _html_step(
     "🎛️",
@@ -2194,12 +2214,8 @@ CODE_SYNC = r'''# ==============================================================
 MD_STEP_MAP = _html_step(
     "🗺️",
     "Peta artefak — sel mana memproduksi apa",
-    "Notebook ini punya 350-an sel dan hanya belasan di antaranya menghasilkan "
-    "sesuatu. Sel ini mencetak indeksnya: nomor sel, apa yang ditulis, apa yang "
-    "dibaca — sehingga <em>di mana figure dibuat</em> dan <em>di mana panel "
-    "metrik ditulis</em> terjawab sebelum satu sel pun dibuka. Indeksnya "
-    "dibangun dari metadata sel yang benar-benar dipancarkan, jadi ia tidak bisa "
-    "menyebut sel yang tidak ada (<code>D87</code>).",
+    "Indeks langkah eksekusi, input, dan output. Gunakan untuk menemukan sel "
+    "yang menyimpan prediksi, panel metrik, tabel, dan figure (<code>D87</code>).",
     "budget.py",
 )
 
@@ -2215,11 +2231,10 @@ MD_STEP_SETUP = _html_step(
 
 MD_STEP_LIBRARY = _html_step(
     "📚",
-    "Library — satu-satunya sel yang mengimpor",
-    "Setiap impor yang paket ini pakai, dimuat sekali. Sel definisi di bawahnya "
-    "tidak membawa satu impor pun, termasuk <code>from __future__ import "
-    "annotations</code>: IPython mengakumulasi flag <code>__future__</code> "
-    "lintas sel (<code>D66</code>, <code>D67</code>).",
+    "Library — impor bersama",
+    "Muat impor tingkat modul sekali untuk dipakai sel-sel definisi. Setup "
+    "memuat kebutuhannya sendiri; impor lokal di dalam fungsi tetap ditunda "
+    "sampai fungsi dipanggil (<code>D66</code>, <code>D67</code>).",
     "__init__.py",
 )
 
@@ -2253,7 +2268,7 @@ MD_STEP_GRID = _html_step(
 
 MD_STEP_SAVE = _html_step(
     "🧊",
-    "Simpan panel metrik — enam parquet plus paper_numbers.json",
+    "Simpan panel metrik dan paper_numbers.json",
     "Inilah sel yang <strong>menulis hasil metrik dalam bentuk parquet</strong>. "
     "Setiap panel diturunkan dari <code>preds/</code> mentah, bukan dari angka "
     "yang disalin: root §12 menuntut tiap angka bisa diregenerasi.",
@@ -2271,452 +2286,216 @@ MD_STEP_REPORT = _html_step(
 )
 
 
-#: The notebook's outline, top to bottom (`D73`).
-#:
-#: The unit here is the **phase** — one step of the study as a reader meets it —
-#: and not the module. A phase lists its modules first and its steps second,
-#: which is also the only order that runs: a call placed above the definition it
-#: needs fails on Kaggle at that cell rather than in a test here (`D59`).
-#:
-#: The concatenation of ``phase.modules`` must equal ``MODULE_ORDER``;
-#: :func:`build` asserts it, so the two cannot drift into a notebook that defines
-#: a module twice or leaves one out.
+#: Reading order and execution order are the same list. A phase may mix
+#: definitions and steps, so setup stays before imports and data is inspected
+#: as soon as its helpers exist. Module order remains checked against src/.
 PHASES: tuple[Phase, ...] = (
     Phase(
-        number="0",
-        title="Persiapan",
+        number="01",
+        title="Persiapan lingkungan dan konfigurasi",
         emoji="🔧",
         theme="config.py",
-        blurb="Temukan artefak imutabel lewat glob, tidak pernah lewat slug Dataset. Pasang hanya yang belum ada di image Kaggle.",
+        blurb="Siapkan dependensi, temukan dataset, lalu muat konfigurasi penelitian dan sumber algoritma.",
         bullets=(
-            "Kaggle membawa <code>torch</code> dan <code>pyarrow</code>-nya sendiri; mem-pin keduanya terhadap venv lokal terlarang. <code>/kaggle/input</code> hanya-baca, semua tulisan jatuh ke <code>/kaggle/working</code>.",
-            "Kandidat parquet dicocokkan lewat <strong>isi</strong>, bukan nama: <code>PAR1</code> di kedua ujung, diperiksa di titik pemilihan (<code>D72</code>). Pencariannya turun ke kedalaman berapa pun lewat <code>rglob</code>, karena path yang UI Kaggle berikan tiga tingkat dalam — satu tingkat lebih dalam dari pola terdalam yang lama (<code>D71</code>).",
-            "Parquet <strong>tidak</strong> diunduh ulang di sini meski Stage 1 sanggup: unduhan baru adalah vintage baru, dan root &sect;12 melarang angka dari dua vintage berbagi satu tabel.",
+            "Kaggle: pasang dataset <code>BTCUSDT_1h.parquet</code>, pilih GPU, lalu gunakan <strong>Save Version → Save &amp; Run All</strong>.",
+            "Data tetap pada vintage yang sama. Input Kaggle hanya-baca; hasil ditulis ke <code>/kaggle/working</code>.",
+            "Konfigurasi tangga utama dipra-registrasi; arm tuning dibahas terpisah pada bagian validasi.",
         ),
-        steps=(
+        contents=(
             Step(md=MD_STEP_MAP, code="{artifact_map}", step="artifact_map"),
-            Step(
-                md=MD_STEP_SETUP,
-                code=CODE_SETUP,
-                step="setup",
-                reads=("data/raw/BTCUSDT_1h.parquet",),
-            ),
-        ),
-    ),
-    Phase(
-        number="1",
-        title="Pustaka",
-        emoji="📚",
-        theme="__init__.py",
-        blurb="Setiap impor yang paket ini pakai, dimuat sekali di satu tempat.",
-        bullets=(
-            "Sel-sel definisi di bawah <strong>tidak membawa satu impor pun</strong> — termasuk <code>from __future__ import annotations</code>, karena IPython mengakumulasi flag <code>__future__</code> lintas sel dan direktif di sini berlaku untuk seluruh sesi (<code>D67</code>).",
-            "Daftarnya <strong>digenerate dari modul-modulnya sendiri</strong>, jadi dependensi yang muncul di paket tidak bisa hilang di sini.",
-            "Satu-satunya sel lain yang mengimpor adalah Persiapan di atas, dan itu tak terhindarkan: ia yang <em>memasang</em> paket yang sel ini impor.",
-        ),
-        steps=(
-            Step(
-                md=MD_STEP_LIBRARY,
-                code="{library}",
-                meta={"itbtc": {"role": "library"}},
-            ),
-        ),
-    ),
-    Phase(
-        number="2",
-        title="Konfigurasi & permukaan paket",
-        emoji="⚙️",
-        theme="config.py",
-        blurb="Setiap angka protokol yang root &sect;8.1 kunci, sebagai konstanta bernama — lalu daftar nama yang paket ini ekspor.",
-        bullets=(
-            "<strong>Definisi, bukan berkas.</strong> Sel-sel di bawah dieksekusi, tidak ditulis ke disk: dekorator berjalan, tipe field dataclass diselesaikan, konstanta modul dievaluasi. Sel yang menyebut sesuatu yang baru didefinisikan belakangan gagal seketika, bukan saat dipanggil.",
-            "<strong>Dua suntingan, dan hanya dua.</strong> Impor intra-paket dibuang — namanya sudah hidup di namespace ini, dan impornya akan gagal karena tak ada paketnya. Dan guard <code>if __name__ == \"__main__\":</code> milik <code>runner</code> dibuang: di dalam sel, <code>__name__</code> <em>adalah</em> <code>\"__main__\"</code>, jadi ia akan meluncurkan seluruh grid begitu sel definisinya jalan. Sisanya adalah paket itu sendiri, karakter demi karakter.",
-            "<em>Save Version &rarr; Save &amp; Run All</em> menjalankannya berurutan, dan hanya urutan itu yang bekerja.",
-        ),
-        modules=("config.py", "__init__.py"),
-        steps=(
+            Step(md=MD_STEP_SETUP, code=CODE_SETUP, step="setup",
+                 reads=("data/raw/BTCUSDT_1h.parquet",)),
+            Step(md=MD_STEP_LIBRARY, code="{library}",
+                 meta={"itbtc": {"role": "library"}}),
+            "config.py",
+            "__init__.py",
             Step(md=MD_UPSTREAM, code=CODE_UPSTREAM, step="provenance_sources"),
         ),
     ),
     Phase(
-        number="3",
-        title="Muat data & hukum segmen",
+        number="02",
+        title="Muat data dan audit kualitas",
         emoji="📥",
         theme="segments.py",
-        blurb="Muat artefak imutabel, potong deret di tiap gap, lalu asersi anggaran jendela per origin dengan kesamaan persis.",
+        blurb="Baca bar BTCUSDT, tandai bar yang tidak layak, dan periksa kontinuitas serta jumlah jendela per origin.",
         bullets=(
-            "<strong>Tidak ada imputasi di mana pun.</strong> Saat bursa mati tidak ada harga yang terbentuk, jadi imputasi <em>tak terdefinisi</em>, bukan sekadar berisiko — taksonomi Rubin berlaku untuk nilai yang ada tapi tak teramati.",
-            "<strong>Per origin, kesamaan persis</strong> (<code>D45</code>). Diasersi terhadap angka gabungan 4,9% ia menyala palsu di empat belas dari lima belas origin, dilonggarkan sampai lolos, dan setelah itu tidak lagi bisa membedakan drift indeks posisional dari variasi antar-origin biasa.",
-            "Blok uji memuat <strong>720</strong> origin ramalan, bukan 601 (<code>D51b</code>): lookback jendela uji boleh menyeberang ke belakang, target jendela latih tidak boleh menyeberang ke depan.",
+            "Gap, zero-volume, dan bar H = L memutus segmen. Tidak ada imputasi; return dihitung di dalam setiap segmen.",
+            "Validasi jendela memakai timestamp. Anggarannya dicocokkan per origin dengan <code>docs/ORIGIN_WINDOW_BUDGET.md</code> (<code>D45</code>, <code>D51</code>).",
         ),
-        modules=("segments.py", "windows.py", "budget.py"),
-        steps=(
-            Step(
-                md=MD_STEP_DATA,
-                code=CODE_DATA,
-                step="data",
-                reads=("data/raw/BTCUSDT_1h.parquet",),
-            ),
+        contents=(
+            "segments.py", "windows.py", "budget.py",
+            Step(md=MD_STEP_DATA, code=CODE_DATA, step="data",
+                 reads=("data/raw/BTCUSDT_1h.parquet",)),
         ),
     ),
     Phase(
-        number="4",
-        title="Pra-proses — dua belas variat",
+        number="03",
+        title="Feature engineering dan eksplorasi",
         emoji="🧪",
         theme="features.py",
-        blurb="Fungsi per-bar dari bar saat ini, kecuali r yang memakai penutup sekarang dan sebelumnya. Tidak ada rolling window di mana pun.",
+        blurb="Bangun dua belas variat F1–F5, tinjau statistiknya, lalu siapkan fungsi diagnostik efisiensi pasar.",
         bullets=(
-            "Itu properti keamanan <strong>struktural</strong>, bukan pilihan gaya: tanpa satu pun rolling window di pipeline, kelas kebocoran <code>center=True</code> <em>tak terwakili</em>.",
-            "Urutan kolom adalah urutan tangga, jadi rung K persis K kolom pertama dan <code>r</code> adalah kanal 0 di setiap rung — yang membuat loss kanal-tunggal satu konstanta, bukan sebuah lookup.",
-            "Rogers&ndash;Satchell <strong>tidak</strong> positif tegas: ia lenyap pada bar tanpa bayangan, dan 33 bar seperti itu ada. <code>log(RS + 1e-9)</code> menaruh <code>log &kappa; = &minus;20,7</code> di dalam support terukur, bukan sebagai 33 lonjakan di luar support (<code>D52a</code>).",
+            "Setiap fitur memakai bar saat ini; log-return juga memakai close sebelumnya. Tidak ada rolling feature atau pemotongan extreme return.",
+            "Tangga K = 1, 4, 8, 12 tetap; target <code>r</code> selalu kanal 0. Rogers–Satchell memakai <code>log(RS + 1e-9)</code> (<code>D52a</code>).",
+            "Fungsi ADF, variance ratio, dan Hurst didefinisikan di sini; hasilnya dihitung saat laporan dibentuk pada bagian 11.",
         ),
-        modules=("features.py",),
-        steps=(Step(md=MD_STEP_FEATURES, code=CODE_FEATURES, step="features"),),
+        contents=(
+            "features.py",
+            Step(md=MD_STEP_FEATURES, code=CODE_FEATURES, step="features"),
+            "efficiency.py",
+        ),
     ),
     Phase(
-        number="5",
-        title="Uji efisiensi pasar",
-        emoji="🌊",
-        theme="efficiency.py",
-        blurb="ADF, variance ratio Lo&ndash;MacKinlay, dan eksponen Hurst — full sample dan tiap sub-blok latih 21 bulan.",
-        bullets=(
-            "Mengubah &ldquo;pasar efisien&rdquo; dari asumsi menjadi <strong>temuan</strong>. Klaimnya soal <em>variasi</em>, dan satu baris tidak bisa menunjukkannya — karena itu per origin, bukan sekali di seluruh sampel.",
-            "Jangan mengklaim pasarnya efisien. Nyatakan buktinya campur dan berubah menurut waktu, lalu laporkan angka sendiri (root &sect;4.5).",
-        ),
-        modules=("efficiency.py",),
-    ),
-    Phase(
-        number="6",
-        title="Split walk-forward & scaler",
+        number="04",
+        title="Split walk-forward, scaling, dan K_eff",
         emoji="🪟",
         theme="splits.py",
-        blurb="Purge H langkah di kedua batas, dan StandardScaler yang dipasang hanya pada sub-blok latih 21 bulan.",
+        blurb="Siapkan pembagian train–validation–test, tensor per origin, dan pengukuran dimensionalitas efektif sebelum training.",
         bullets=(
-            "<strong>Dua batas, bukan satu</strong> (<code>D24</code>). Tanpa purge latih&rarr;validasi, jendela latih yang targetnya menembus batas 21 bulan membawa observasi validasi ke dalam latihan — dan validasi itulah yang memutuskan early stopping dan &alpha; ridge, jadi split yang terkontaminasi adalah yang mengatur <em>pemilihan model</em>.",
-            "Asimetrinya disengaja: <em>input</em> 96 bar jendela validasi boleh menjangkau mundur ke periode latih. Itu informasi masa lalu yang sah bagi peramal di saat itu, dan memblokirnya membuat evaluasi pesimistis secara tidak realistis. Hanya <strong>target</strong> yang dipurge.",
-            "Memindahkan <code>train_end</code> adalah kebocoran, bukan ketidakcocokan.",
+            "Setiap origin memakai 21 bulan training dan 3 bulan validation, diikuti enam blok uji 30 hari. StandardScaler hanya fit pada training.",
+            "Purge H langkah berlaku pada kedua batas split. Lookback boleh menjangkau masa lalu; target training tidak boleh memasuki validation (<code>D24</code>).",
+            "K_eff diukur pada training setiap origin; gate hanya membaca rentang pra-origin-pertama. Gate yang gagal dilaporkan tanpa mengubah tangga (<code>D02</code>, <code>D44</code>, <code>D48</code>).",
         ),
-        modules=("splits.py",),
-    ),
-    Phase(
-        number="7",
-        title="Dimensionalitas efektif — Stage 3b",
-        emoji="📐",
-        theme="keff.py",
-        blurb="K_eff adalah variabel bebas RQ1 dan ia diukur sebelum satu epoch pun berjalan.",
-        bullets=(
-            "<strong>Per origin, pada sub-blok latih 21 bulan origin itu sendiri</strong> (<code>D44</code>). PR full-sample akan diestimasi dari data yang sama dengan outcome-nya, membuat RQ1 sebagian sirkular — satu-satunya jalur kebocoran yang lolos dari tiap butir checklist, karena root &sect;11 hanya mengaudit gerbangnya.",
-            "<strong>Gerbang membaca rentang pra-origin-pertama saja</strong> (<code>D02</code>), pemicu dipra-registrasi di PR &lt; 5,0. Aksinya <em>disklosur, bukan re-cut</em> (<code>D48</code>): <code>D01</code> tidak menyisakan potongan konsisten kedua atas F1&ndash;F5.",
-            "Dilaporkan juga pada fitur <strong>ternormalisasi-jendela</strong> (<code>D04</code>) — <code>use_norm</code> mengupas <em>level</em> volatilitas, jadi rung 8&rarr;12 bisa mendatar karena sebab yang tak ada hubungannya dengan redundansi.",
-        ),
-        modules=("keff.py",),
-        steps=(
-            Step(
-                md=MD_STEP_KEFF,
-                code=CODE_KEFF,
-                step="keff",
-                writes=("artifacts/keff_table.parquet",),
-            ),
+        contents=(
+            "splits.py", "keff.py",
+            Step(md=MD_STEP_KEFF, code=CODE_KEFF, step="keff",
+                 writes=("artifacts/keff_table.parquet",)),
         ),
     ),
     Phase(
-        number="8",
-        title="Algoritma — arsitektur iTransformer",
+        number="05",
+        title="Model, baseline, dan fungsi training",
         emoji="🧠",
         theme="model.py",
-        blurb="Encoder-only. Tiap variat adalah satu token, dan attention berjalan lintas variat, bukan lintas waktu.",
+        blurb="Definisikan iTransformer, loop training, metrik, serta model baseline pada informasi dan skala yang dinyatakan eksplisit.",
         bullets=(
-            "<strong>Tanpa causal mask.</strong> Masking berlaku pada sumbu waktu; attention di sini berjalan pada sumbu variat, tempat seluruh token sezaman. Kausalitas ditegakkan di hulu — pada fitur dan windowing.",
-            "<code>d_model = 128</code>, bukan 512: panjang urutan attention adalah N &le; 12, dan 512 akan over-parameterise terhadap ~14.000 sampel (<code>D25</code>).",
-            "<strong>Tidak ada yang di-tune di sini</strong> (<code>D38</code>). Tiap nilai kecuali <code>d_model</code> diadopsi apa adanya dari Liu et al. (2024) dan identik di setiap rung — menahan kapasitas tetaplah yang membuat rung-rungnya sebanding.",
-            "K=1 mendegenerasi menjadi <em>kendali</em>, bukan bug (<code>D50</code>): pada N=1 softmax memberi bobot 1, tapi proyeksi value dan output serta residualnya <strong>tetap ada</strong> — ia bukan identitas telanjang.",
+            "Attention bekerja lintas variat. Kapasitas model tetap di seluruh tangga pada horizon yang sama; loss iTransformer memakai kanal target saja (<code>D38</code>, <code>D39</code>).",
+            "Tensor dimuat ke GPU sekali dan batch diambil melalui indeks. Learning rate dibelah setiap empat epoch (<code>D47</code>).",
+            "K = 8 pada DLinear dan PatchTST berarti training channel-independent dengan bobot bersama; LSTM dan ridge membaca seluruh variat untuk memprediksi target (<code>D56</code>, <code>D64</code>).",
         ),
-        modules=("model.py",),
+        contents=("model.py", "train.py", "metrics.py", "baselines.py"),
     ),
     Phase(
-        number="9",
-        title="Loop latih & kontrak keterlacakan",
-        emoji="🔥",
-        theme="train.py",
-        blurb="Loop latih GPU-resident tanpa DataLoader, plus kontrak keterlacakan root &sect;12 yang setiap run tulis.",
-        bullets=(
-            "<strong>Loss MSE pada kanal target saja</strong>, di setiap rung (<code>D39</code>). Di bawah loss all-channel, K=12 menjadi masalah 12-tugas dan K=1 masalah 1-tugas, jadi supervisi tambahan ikut berubah bersama variabel bebas studi ini sendiri.",
-            "Data tidak bergerak setelah muat awal: seluruh split masuk GPU sekali, lalu batch dibentuk dengan mengiris indeks tensor itu. Bentuk <code>DataLoader</code> per-item ~10&times; lebih buruk dan menaruh grid di luar kuota mingguan.",
-            "LR dibelah tiap 4 epoch, bukan tiap epoch (<code>D47</code>) — pembelahan per-epoch mencapai ~4e-7 di epoch 9, jadi anggaran epoch tidak akan pernah mengikat. Terukur: <strong>0 dari 444 run</strong> menyentuh cap 30 epoch (<code>D62c</code>).",
-        ),
-        modules=("train.py",),
-    ),
-    Phase(
-        number="10",
-        title="Metrik & uji statistik",
-        emoji="📏",
-        theme="metrics.py",
-        blurb="Seluruh estimator paper: metrik, DM/Clark&ndash;West, survival, dan bootstrap klaster liar untuk &beta;&#8321;.",
-        bullets=(
-            "Setiap metrik rasio dibentuk dari <strong>MSE yang sudah dirata-rata seed</strong>, tidak pernah dari rata-rata rasio per-seed (<code>D42</code>): keduanya berbeda oleh Jensen.",
-            "Pasangan <strong>bersarang</strong> memakai Clark&ndash;West, bukan DM baku — DM baku sistematis undersized justru terhadap alternatif yang studi ini ada untuk menegakkannya (<code>D29</code>).",
-            "Varians jangka panjang memakai estimator <strong>rektangular terpotong</strong> pada lag h&minus;1, bukan bobot Bartlett: Bartlett menyusutkan &gamma;&#770;&#8322;&#8322; sekitar 92% dan menghasilkan p yang terlalu optimistis (<code>D34</code>).",
-            "<code>D(i,b)</code> hidup di skala <em>skill</em>, bukan RelMSE (<code>D23</code>) — di skala RelMSE tiap &tau; tak terjangkau dan RQ3 akan mengembalikan &ldquo;tanpa decay&rdquo; karena satuan yang tidak cocok, bukan karena pasarnya.",
-        ),
-        modules=("metrics.py",),
-    ),
-    Phase(
-        number="11",
-        title="Baseline",
-        emoji="🪶",
-        theme="baselines.py",
-        blurb="Ridge, DLinear, PatchTST, LSTM, dan dua komparator naif — masing-masing dengan K eksplisit.",
-        bullets=(
-            "<strong>Setiap baseline membawa K</strong> (<code>D40</code>). Baseline channel-independent dengan K yang tak dinyatakan tidak bisa bicara soal debat channel-independence yang jadi pilar Related Work.",
-            "K=8 milik DLinear dan PatchTST berarti <em>dilatih pada</em> delapan kanal lewat bobot bersama, <strong>bukan</strong> meramal target dari delapan kanal (<code>D56</code>). K=8 milik LSTM dan ridge berarti yang kedua. Nyatakan itu di mana pun angkanya muncul.",
-            "Ridge menjawab pertanyaan yang <code>D17</code> ajukan — apakah transformer dibutuhkan sama sekali? Terukur: <strong>tidak</strong>. Rata-rata <code>R&sup2;_oos</code> ridge &minus;0,00057 lawan &minus;0,0180 iTransformer-K8 dan &minus;0,0262 DLinear (<code>D60c</code>).",
-            "ARIMA tetap ditangguhkan <strong>dengan alasan tertulis</strong>: pada log-return crypto per jam, seleksi AIC mendarat di sekitar order (0,0,0) — yang <em>adalah</em> baseline naif (<code>D64</code>).",
-        ),
-        modules=("baselines.py",),
-    ),
-    Phase(
-        number="12",
-        title="Perbandingan model",
-        emoji="⚔️",
-        theme="comparisons.py",
-        blurb="Matriks pasangan, stepdown Romano&ndash;Wolf, dan Model Confidence Set (<code>D35</code>).",
-        bullets=(
-            "SPA dan Reality Check menguji null <em>satu-lawan-banyak</em> dan tidak mengatakan apa pun tentang matriks semua-pasangan yang Tabel 6 muat. Romano&ndash;Wolf yang mengendalikan FWER lintas seluruh pasangan.",
-            "Terukur: stepdown itu <strong>menghapus setiap penolakan terhadap Naive-RW</strong> — 8 dari 11 model menolak mentah di &alpha; = 0,05, nol setelah adjustment, p &ge; 0,336 (<code>D62a</code>).",
-            "MCS di 90% maupun 75% memuat Naive-RW dan keempat rung ridge, dan <strong>tidak satu pun model deep</strong>.",
-        ),
-        modules=("comparisons.py",),
-    ),
-    Phase(
-        number="13",
-        title="Evaluasi ekonomi",
-        emoji="💰",
-        theme="economics.py",
-        blurb="Fase 00:00 UTC, non-overlapping, per segmen, DSR per origin (root &sect;13.5).",
-        bullets=(
-            "<strong>Return lintas-gap terlarang.</strong> Posisi yang ditahan melewati blok downtime tidak punya return terealisasi yang terdefinisi — di blok 2018-02-08 sebuah &ldquo;trade 24 jam&rdquo; akan membukukan gerak 57 jam (<code>D46</code>).",
-            "Fase dikunci di 00:00 UTC: ada 24 penyelarasan partisi harian non-overlapping yang sah, dan memilih fase setelah melihat kurva ekuitas adalah parameter bebas atas klaim ekonomi paper ini.",
-            "P&amp;L positif di bawah <code>R&sup2;_oos</code> negatif bukan kontradiksi: MSE dan P&amp;L arah adalah objektif berbeda, dan sampel yang didominasi kenaikan BTC 2020&ndash;2026 membayar posisi yang mayoritas long untuk <em>drift</em>, bukan untuk ramalannya. Laporkan +20,6% bersama buy-and-hold +29,0% dan DSR 0,173, atau angka pertama terbaca sebagai skill.",
-        ),
-        modules=("economics.py",),
-    ),
-    Phase(
-        number="14",
-        title="Peta attention",
-        emoji="🗺️",
-        theme="attention.py",
-        blurb="Peta per tercile volatilitas untuk Figure 5. Calm dan stress ditentukan data, bukan dipilih setelah melihat petanya.",
-        bullets=(
-            "<strong>Attention bukan penjelasan.</strong> Peta ini bukti deskriptif soal kebergantungan variat, divalidasi lewat stabilitas antar-seed, dan tidak pernah kausal (Jain &amp; Wallace 2019; Wiegreffe &amp; Pinter 2019).",
-            "<code>capture</code> adalah atribut <strong>runtime</strong>, tidak pernah field config — cabangnya tidak mengonsumsi RNG, jadi run yang ditangkap identik bit-per-bit dengan grid utama, dan arm ini sekaligus jadi pemeriksaan reproduksibilitas (<code>D62d</code>).",
-        ),
-        modules=("attention.py",),
-    ),
-    Phase(
-        number="15",
-        title="Manifes & eksekutor grid",
-        emoji="🚀",
+        number="06",
+        title="Persiapan evaluasi dan eksekutor",
+        emoji="⚙️",
         theme="runner.py",
-        blurb="Manifes 1.620 run, penemuan resume lewat glob, penjaga anggaran sesi, dan eksekutor dua-GPU.",
+        blurb="Siapkan fungsi perbandingan, ekonomi, attention, laporan, dan eksekutor; catat provenance sebelum training dimulai.",
         bullets=(
-            "<strong>Ditemukan lewat glob, tidak pernah lewat slug Dataset yang dikodekan mati</strong>, jadi nama Kaggle Dataset bebas berubah. Run dianggap lengkap hanya bila kedua berkas ada <em>dan</em> <code>meta.status</code> berbunyi <code>complete</code>.",
-            "<strong>Paralelisme di tingkat run, tidak pernah tingkat batch.</strong> Satu worker per device dari satu antrean bersama; <code>set_seed(seed, device)</code> menyemai generator CPU dan <strong>hanya device itu</strong>, jadi satu run menghasilkan byte yang sama entah ia berjalan sendiri atau berdampingan (<code>D68</code>). <code>DataParallel</code> ditolak — pada batch 32 biaya scatter/gather melebihi hematnya; DDP lebih buruk lagi pada 969 run pendek.",
-            "<strong>Penjaga anggaran mengukur sesi, bukan worker</strong> (<code>D54f</code>). Dinding 12 jam Kaggle berjalan dari sel 0, jadi prelude dikurangi lebih dulu lewat <code>SESSION_T0</code>.",
-            "Jalankan lewat <em>Save Version &rarr; Save &amp; Run All</em>, jangan lewat editor: idle timeout 20 menit membunuh sesi interaktif, dan menabrak dinding 12 jam secara interaktif menghilangkan <code>/kaggle/working</code> seluruhnya.",
+            "Bagian ini mendefinisikan perangkat evaluasi. Perhitungan hasil dimulai setelah grid lengkap, pada bagian 10–11.",
+            "Perbandingan nested memakai Clark–West; matriks antarmodel memakai koreksi multiplicity. Rasio dibentuk setelah MSE dirata-rata antar-seed (<code>D29</code>, <code>D35</code>, <code>D42</code>).",
+            "Evaluasi ekonomi memakai return per segmen dan fase 00:00 UTC. Peta attention bersifat deskriptif. Digest kode dan input menyertai artefak setiap run.",
         ),
-        modules=("runner.py",),
-    ),
-    Phase(
-        number="16",
-        title="Pelaporan",
-        emoji="📋",
-        theme="report.py",
-        blurb="Sembilan tabel dan enam figure, seluruhnya di-render dari paper_numbers.json — tidak pernah disalin tangan.",
-        bullets=(
-            "Ini bagian yang <code>D60g</code> soroti: grid menghasilkan angkanya dan meninggalkan setiap tabel dan figure tak tergenerate, empat di antaranya tanpa masukan sama sekali.",
-            "<code>paper/paper_numbers.json</code> menyebut berkas grid lewat sha256, jadi keduanya tidak bisa diam-diam berbeda (<code>D60f</code>, <code>D62a</code>).",
-        ),
-        modules=("report.py",),
-    ),
-    Phase(
-        number="17",
-        title="Provenance kode & input",
-        emoji="🔐",
-        theme="train.py",
-        blurb="Seluruh sel definisi sudah lewat; sekarang catat kode apa yang barusan didefinisikan, sebelum apa pun yang mahal berjalan.",
-        bullets=(
-            "Root &sect;12 meminta tiap run menyebut kode yang menghasilkannya, dan menyebut git sha sebagai caranya. Di Kaggle tidak ada repositori git, dan sel-sel di atas adalah definisi bukan berkas — jadi tidak ada pula yang bisa di-hash dari disk. <code>code_sha256</code> yang memikulnya (<code>D54b</code>).",
-            "Sentinelnya satu per modul: sel yang terlewat meninggalkan <em>lubang</em>, bukan berkas basi, dan lubang itu baru muncul berjam-jam kemudian di tengah grid. Murah di sini, tak terbatas di sana.",
-        ),
-        steps=(
+        contents=(
+            "comparisons.py", "economics.py", "attention.py", "runner.py", "report.py",
             Step(md=MD_MODULE_NAMES, code="{module_names}", step="module_names"),
             Step(md=MD_PROVENANCE, code=CODE_PROVENANCE, step="code_digest"),
         ),
     ),
     Phase(
-        number="18",
-        title="Invarian pra-terbang — Stage 4",
+        number="07",
+        title="Pemeriksaan sebelum training",
         emoji="🛠️",
         theme="efficiency.py",
-        blurb="Tiga pemeriksaan yang harus lolos sebelum grid. Ketiganya gagal saat pertama kali dijalankan.",
+        blurb="Periksa invariansi skala, overfit satu batch, dan nilai Naive-RW pada setiap origin.",
         bullets=(
-            "<code>MSE(c&middot;x)/c&sup2; == MSE(x)</code>, <strong>bukan</strong> <code>MSE(c&middot;x) == MSE(x)</code> (<code>D03</code>) — targetnya adalah kanal dari array yang sama, jadi ia ikut terskala dan loss-nya terskala oleh c&sup2;. Versi spesifikasi sumber tidak mungkin lolos.",
-            "Overfit satu batch dengan <strong><code>dropout=0.0</code></strong> (<code>D52d</code>). Dengan 0,1 yang terkonfigurasi masih menyala, loss-nya mentok di sekitar 7e-2 dan pembaca yang menuruti instruksinya secara harfiah menyimpulkan plumbing rusak padahal tidak.",
-            "<strong>Naive-RW dihitung lebih dulu</strong>, sebelum satu model pun latih, dan ia <code>&#375;<sub>z</sub> = &minus;&mu;<sub>g</sub>/&sigma;<sub>g</sub></code> — tidak pernah 0 (<code>D31</code>), yang diam-diam akan menjadi model constant-drift yang memakai nama baseline EMH.",
+            "Asersi skala: <code>MSE(c·x)/c² == MSE(x)</code>. Overfit satu batch memakai <code>dropout=0.0</code> (<code>D03</code>, <code>D52d</code>).",
+            "Naive-RW memprediksi raw return 0, yang menjadi <code>−μ_g/σ_g</code> di ruang scaler, dan dihitung sebelum model dilatih (<code>D31</code>).",
         ),
-        steps=(
+        contents=(
             Step(md=MD_STEP_INVARIANTS, code=CODE_INVARIANTS, step="invariants"),
         ),
     ),
     Phase(
-        number="19",
-        title="Gerbang Stage 5 — validasi saja",
+        number="08",
+        title="Validasi dan pemilihan konfigurasi",
         emoji="🛡️",
         theme="comparisons.py",
-        blurb="Origin 1, 4 K &times; 3 seed, dinilai pada sub-blok validasi. Blok uji tetap tertutup.",
+        blurb="Jalankan pilot pada validation origin pertama, lalu pilih konfigurasi untuk arm tuning eksploratori.",
         bullets=(
-            "Root &sect;11 menuntut blok uji dibuka sekali, setelah desain dibekukan, jadi gerbang yang mereposisi judul berdasarkan hasil blok uji tidak bisa hidup berdampingan dengannya (<code>D27</code>).",
-            "Statistiknya <strong>Clark&ndash;West, bukan DM</strong> (<code>D29</code>): himpunan fitur K=1 adalah subset tegas K=8 di bawah arsitektur dan sampel yang sama.",
-            "Gerbangnya <strong>K=1 lawan K=8, tidak pernah K=12</strong> — K=12 dibangun untuk redundan, dan menggerbangkan padanya akan membunuh paper yang layak untuk alasan yang salah.",
-            "<strong>Terukur: gerbang GAGAL.</strong> <code>S* = +0,8759, p = 0,1906</code> satu sisi. Judul direposisi ke varian deskriptif pada 2026-08-20, dan arm K=16 karenanya tidak dijalankan — klausa 1 gagal (<code>D60a</code>).",
+            "Pilot membandingkan K = 1 dan K = 8 pada validation. Blok uji tetap tertutup sampai desain dibekukan (<code>D27</code>).",
+            "Tuning hanya berlaku untuk arm eksploratori <code>itrt</code>; konfigurasi tangga RQ1 tetap. Konfigurasi terpilih dipakai lengkap, termasuk learning rate (<code>D76</code>).",
         ),
-        steps=(
-            Step(
-                md=MD_STEP_PILOT,
-                code=CODE_PILOT,
-                step="pilot",
-                writes=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
-            ),
-            Step(
-                md=MD_TUNE,
-                code=CODE_TUNE,
-                step="tune",
-                writes=("artifacts/meta/tuning_selection.json",),
-            ),
+        contents=(
+            Step(md=MD_STEP_PILOT, code=CODE_PILOT, step="pilot",
+                 writes=("artifacts/preds/*.parquet", "artifacts/meta/*.json")),
+            Step(md=MD_TUNE, code=CODE_TUNE, step="tune",
+                 writes=("artifacts/meta/tuning_selection.json",)),
         ),
     ),
     Phase(
-        number="20",
-        title="Grid",
-        emoji="⚡",
+        number="09",
+        title="Training grid walk-forward",
+        emoji="🚀",
         theme="splits.py",
-        blurb="Manifes penuh dijalankan di kernel ini. Resume otomatis, penjaga anggaran di batas run.",
+        blurb="Latih seluruh manifes dengan resume otomatis, satu worker per device, dan batas waktu sesi.",
         bullets=(
-            "<strong>Granularitas resume adalah satu run</strong>, ~32 detik. Sesi yang terpotong di run 200 kehilangan paling banyak satu run yang sedang jalan; sesi berikutnya mengurangi yang sudah selesai lalu melanjutkan. Checkpointing intra-run sengaja ditiadakan.",
-            "Terukur pada manifes 894-run: <strong>0 gagal, 7,79 jam, rata-rata 31,8 detik per run</strong> — di satu device. Dengan dua worker (<code>D68</code>), sisa 726 run &asymp; 6,4 GPU-jam &asymp; 3,2 jam wall.",
-            "Baseline berjalan <em>setelah</em> tangga, jadi sesi yang pendek kehilangan komparator, bukan masukan RQ1&ndash;RQ3 — dan asersi keselarasan jendela <code>D45</code> tiap baseline menemukan pembandingnya sudah di disk.",
-            "<strong>Evaluasi digerbangi kelengkapan grid.</strong> Panel parsial adalah panel tak seimbang, dan estimator root &sect;9.1 menolaknya secara desain. &beta;&#8321; setengah-panel adalah estimand yang berbeda, bukan yang lebih berderau (<code>D54e</code>).",
+            "Run lengkap memerlukan prediksi dan metadata dengan <code>status: complete</code>. Resume ditemukan lewat glob, sehingga nama Dataset bebas berubah.",
+            "Anggaran mencakup waktu sejak setup. Jika sesi berakhir dengan grid parsial, simpan output dan lanjutkan pada sesi berikutnya.",
+            "Evaluasi RQ dan laporan menunggu <code>GRID_COMPLETE</code>; panel parsial tidak diperlakukan sebagai hasil akhir (<code>D54e</code>).",
         ),
-        steps=(
-            Step(
-                md=MD_STEP_GRID,
-                code=CODE_GRID,
-                step="grid",
-                reads=("data/raw/BTCUSDT_1h.parquet",),
-                writes=(
-                    "artifacts/preds/*.parquet",
-                    "artifacts/meta/*.json",
-                    "artifacts/attn/*.parquet",
-                ),
-            ),
+        contents=(
+            Step(md=MD_STEP_GRID, code=CODE_GRID, step="grid",
+                 reads=("data/raw/BTCUSDT_1h.parquet",),
+                 writes=("artifacts/preds/*.parquet", "artifacts/meta/*.json",
+                         "artifacts/attn/*.parquet")),
         ),
     ),
     Phase(
-        number="21",
-        title="Evaluasi — RQ1, RQ2, RQ3",
+        number="10",
+        title="Evaluasi model dan research questions",
         emoji="📈",
         theme="attention.py",
-        blurb="Setiap angka di bawah bermuara pada berkas prediksi yang dipersist dan satu config hash, atau ia tidak masuk manuskrip.",
+        blurb="Baca prediksi tersimpan untuk menjawab RQ1, RQ2, dan RQ3 pada grid yang lengkap.",
         bullets=(
-            "Metrik rasio dibentuk dari <strong>MSE yang sudah dirata-rata seed</strong>, tidak pernah dari rata-rata rasio per-seed (<code>D42</code>): keduanya berbeda oleh Jensen, dan yang kedua menuntut memasangkan seed 42 di K=1 dengan seed 42 di K=8 — dua run latih independen dari model berbeda, di mana salah satu dari 5! urutan memberi jawaban berbeda.",
-            "<strong>Unit inferensinya adalah origin.</strong> Dispersi seed adalah diagnostik derau Monte-Carlo, tidak pernah ketidakpastian atas estimasi yang teragregasi lintas origin (<code>D30</code>).",
-            "Perbandingan lintas-origin apa pun dilakukan pada RelMSE atau <code>R&sup2;_oos</code>, <strong>tidak pernah</strong> pada MSE ruang-scaler: dua origin membawa &sigma;<sub>g</sub> berbeda, dan angka mentahnya 99,7% adalah drift scaler (<code>D60i</code>).",
+            "RQ1 membandingkan K dan K_eff. RQ2 mengukur perubahan gap menurut umur model, dengan origin fixed effects dan MDE.",
+            "Unit inferensi adalah origin. Perbandingan lintas-origin memakai RelMSE atau R²_oos karena scaler setiap origin berbeda (<code>D30</code>, <code>D60i</code>).",
+            "Untuk RQ3, decay estimand tidak terdefinisi ketika out-of-sample skill tidak positif. Hasil tersebut tidak berarti tidak ada decay (<code>D55</code>, <code>D60b</code>).",
         ),
-        steps=(
-            Step(
-                md=MD_RQ1, code=CODE_RQ1, guard="RQ1", step="rq1",
-                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
-            ),
-            Step(
-                md=MD_RQ2, code=CODE_RQ2, guard="RQ2", step="rq2",
-                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
-            ),
-            Step(
-                md=MD_RQ3, code=CODE_RQ3, guard="RQ3", step="rq3",
-                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
-            ),
+        contents=(
+            Step(md=MD_RQ1, code=CODE_RQ1, guard="RQ1", step="rq1",
+                 reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json")),
+            Step(md=MD_RQ2, code=CODE_RQ2, guard="RQ2", step="rq2",
+                 reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json")),
+            Step(md=MD_RQ3, code=CODE_RQ3, guard="RQ3", step="rq3",
+                 reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json")),
         ),
     ),
     Phase(
-        number="22",
-        title="Simpan angka",
+        number="11",
+        title="Simpan hasil, tabel, dan figure",
         emoji="💾",
-        theme="train.py",
-        blurb="Setiap tabel dan figure digenerate DARI paper_numbers.json, tidak pernah disalin tangan.",
-        bullets=(
-            "Angka yang dihasilkan di bawah hash artefak input yang berbeda tidak sebanding dan tidak boleh berbagi satu tabel, jadi digest parquet ikut bersamanya — begitu pula <code>code_sha256</code>, yang mengidentifikasi kode di luar repo.",
-            "Angka yang tidak bisa diregenerasi adalah kegagalan yang terdokumentasi, bukan catatan kaki.",
-        ),
-        steps=(
-            Step(
-                md=MD_STEP_SAVE,
-                code=CODE_SAVE,
-                guard="paper_numbers.json",
-                step="save",
-                reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
-                writes=(
-                    "artifacts/paper_numbers.json",
-                    "artifacts/run_block_metrics.parquet",
-                    "artifacts/seed_averaged_cells.parquet",
-                    "artifacts/amplification_panel.parquet",
-                    "artifacts/decay_panel.parquet",
-                ),
-            ),
-        ),
-    ),
-    Phase(
-        number="23",
-        title="Tabel & figure",
-        emoji="📊",
         theme="report.py",
-        blurb="Semua yang root &sect;13.4 janjikan, di-render dari paper_numbers.json dan tidak pernah disalin tangan.",
+        blurb="Simpan panel metrik dan paper_numbers.json, lalu render tabel, figure, dan analisis pendukung manuskrip.",
         bullets=(
-            "Tiga dari empat deliverable yang dulu tanpa masukan — matriks DM, evaluasi ekonomi, kurva ekuitas — dihitung di sini dari berkas prediksi yang sudah ada di disk.",
-            "<strong>Figure 5 pengecualian</strong>: bobot attention tidak pernah dipersist oleh grid asli, jadi ia butuh arm <code>attention</code> dan dilewati <em>dengan disebut namanya</em> sampai arm itu jalan — sumbu kosong berlabel figure terbaca sebagai pengukuran atas ketiadaan.",
+            "Semua hasil diturunkan dari prediksi tersimpan. Setiap angka harus dapat ditelusuri ke input, konfigurasi, dan kode yang menghasilkannya (root §12).",
+            "Bagian ini juga menghitung diagnostik pasar, perbandingan antarmodel, ekonomi, serta laporan attention dari artefak yang tersedia.",
+            "Artefak yang belum tersedia disebutkan oleh laporan; grid parsial tetap melewati tahap ini tanpa menghasilkan inferensi parsial.",
         ),
-        steps=(
-            Step(
-                md=MD_STEP_REPORT,
-                code=CODE_REPORT,
-                guard="tables and figures",
-                step="report",
-                reads=(
-                    "artifacts/paper_numbers.json",
-                    "artifacts/preds/*.parquet",
-                    "artifacts/attn/*.parquet",
-                ),
-                writes=(
-                    "paper/paper_numbers.json",
-                    "paper/tables/*.tex",
-                    "paper/figures/*.pdf",
-                    "paper/figures/*.png",
-                    "paper/panels/*.parquet",
-                ),
-            ),
+        contents=(
+            Step(md=MD_STEP_SAVE, code=CODE_SAVE, guard="paper_numbers.json", step="save",
+                 reads=("artifacts/preds/*.parquet", "artifacts/meta/*.json"),
+                 writes=("artifacts/paper_numbers.json", "artifacts/run_block_metrics.parquet",
+                         "artifacts/seed_averaged_cells.parquet", "artifacts/amplification_panel.parquet",
+                         "artifacts/decay_panel.parquet")),
+            Step(md=MD_STEP_REPORT, code=CODE_REPORT, guard="tables and figures", step="report",
+                 reads=("artifacts/paper_numbers.json", "artifacts/preds/*.parquet",
+                        "artifacts/attn/*.parquet"),
+                 writes=("paper/paper_numbers.json", "paper/tables/*.tex",
+                         "paper/figures/*.pdf", "paper/figures/*.png", "paper/panels/*.parquet")),
         ),
     ),
     Phase(
-        number="24",
-        title="Sinkron balik ke src/ — nonaktif",
+        number="12",
+        title="Lampiran — sinkronisasi lokal",
         emoji="🔁",
         theme="__init__.py",
-        blurb="Notebook adalah tempat mengetik; <code>src/</code> adalah proyeksi yang diuji. Sel ini menutup arah baliknya, dan ia dikomentari penuh.",
+        blurb="Sinkronkan perubahan definisi dari notebook yang sudah disimpan ke src/ pada checkout lokal.",
         bullets=(
-            "Sampai <code>D88</code>, mengedit sebuah sel berarti mengetik ulang perubahannya ke <code>src/</code> — dua salinan yang harus setuju tanpa ada yang memeriksa, yaitu <code>D54a</code> dan <code>D69</code> dengan kostum baru.",
-            "<strong>Dikomentari penuh dan tetap begitu.</strong> Di Kaggle tidak ada <code>tools/</code> maupun <code>src/</code>; sel aktif di sana akan gagal atau menulis sampah ke direktori kerja sesi. Aktivasi adalah keputusan sadar di checkout lokal.",
-            "Impor baru tidak bisa datang dari sel: impor hidup di sel Library yang digenerate <em>dari</em> modul (<code>D66</code>). Skripnya menolak dan menyebut <code>src/</code> sebagai tempatnya, bukan menebak.",
+            "Sel sinkronisasi tetap dikomentari. Aktifkan hanya di checkout lokal setelah menyimpan notebook; Kaggle tidak membawa tools/ atau src/ (<code>D88</code>).",
+            "Impor baru ditambahkan di src/, kemudian notebook dibangun ulang. Perubahan source dan notebook disimpan bersama.",
         ),
-        steps=(Step(md=MD_STEP_SYNC, code=CODE_SYNC, step="sync_back"),),
+        contents=(Step(md=MD_STEP_SYNC, code=CODE_SYNC, step="sync_back"),),
     ),
 )
 
@@ -2724,10 +2503,12 @@ PHASES: tuple[Phase, ...] = (
 def build() -> dict:
     """The whole notebook, as an nbformat 4.5 dictionary.
 
-    Phases in order, each laying out its modules and then its steps. The title
-    banner is the only cell outside a phase.
+    Phase contents are emitted in order. The title includes navigation built
+    from the same phases, so section links cannot fall behind the outline.
     """
-    laid_out = tuple(name for phase in PHASES for name in phase.modules)
+    laid_out = tuple(
+        item for phase in PHASES for item in phase.contents if isinstance(item, str)
+    )
     if laid_out != MODULE_ORDER:
         raise SystemExit(
             f"PHASES lays out {laid_out} but MODULE_ORDER is {MODULE_ORDER}. "
@@ -2753,16 +2534,22 @@ def build() -> dict:
     module_names = "MODULE_NAMES = [\n" + "".join(
         f"    {name!r},\n" for name in MODULE_ORDER) + "]\n"
 
-    md(MD_TITLE)
+    navigation = "\n\n**Daftar isi**\n\n" + "\n".join(
+        f"- [{phase.number} · {phase.title}](#section-{phase.number})"
+        for phase in PHASES
+    )
+    md(MD_TITLE + navigation)
     for phase in PHASES:
         md(_html_phase(phase))
-        for name in phase.modules:
-            md(_html_module(name))
-            for section, body in split_module_cells(name):
-                md(_html_section(name, section))
-                code(body, {"itbtc": {
-                    "role": "module", "module": name, "section": section.title}})
-        for step in phase.steps:
+        for item in phase.contents:
+            if isinstance(item, str):
+                md(_html_module(item))
+                for section, body in split_module_cells(item):
+                    md(_html_section(item, section))
+                    code(body, {"itbtc": {
+                        "role": "module", "module": item, "section": section.title}})
+                continue
+            step = item
             if step.md is not None:
                 # The artefact strip rides in the banner's own markdown cell
                 # rather than one of its own — see :func:`_html_artifacts`.

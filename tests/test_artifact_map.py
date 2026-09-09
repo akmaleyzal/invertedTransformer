@@ -15,8 +15,10 @@ while pointing at a cell that stopped writing figures three commits ago.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -195,3 +197,36 @@ def test_the_artifact_map_cell_lists_every_producer(cells: list[dict]) -> None:
             f"artefact map does not list it at that index. The map is built "
             f"from the emitted cells, so this means the notebook was hand-edited."
         )
+
+
+def test_the_notebook_map_is_current() -> None:
+    """`docs/NOTEBOOK_MAP.md` is generated, so a stale one fails here.
+
+    ``.ipynb`` is not a format the documentation tooling reads, so the notebook
+    -- the primary deliverable (root §15) -- had no entry anywhere outside
+    itself. ``tools/notebook_map.py`` writes that entry from the same
+    ``metadata.itbtc`` this module already guards.
+
+    It is generated, which per root §16 means the same rule every other
+    generated artefact carries: a committed copy that no longer matches its
+    source is worse than none, because it reads as authoritative while naming
+    cells that moved.
+    """
+    generator = ROOT / "tools" / "notebook_map.py"
+    spec = importlib.util.spec_from_file_location("notebook_map", generator)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Registered before execution for the reason `test_notebook_sync` records:
+    # ``dataclasses`` resolves annotations through ``sys.modules[cls.__module__]``
+    # and an unregistered module makes that lookup return None.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    committed = module.OUTPUT
+    assert committed.exists(), (
+        f"{committed.relative_to(ROOT)} is missing; run tools/notebook_map.py"
+    )
+    phases, counts = module.parse(NOTEBOOK)
+    assert committed.read_text(encoding="utf-8") == module.render(phases, counts), (
+        f"{committed.relative_to(ROOT)} is stale; run tools/notebook_map.py"
+    )

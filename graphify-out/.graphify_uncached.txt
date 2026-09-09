@@ -1,0 +1,15 @@
+D:\pythonProject\invertedTransformer\.research\topic_dossier.gaps.yml
+D:\pythonProject\invertedTransformer\.research\topic_dossier.md
+D:\pythonProject\invertedTransformer\AGENTS.md
+D:\pythonProject\invertedTransformer\CLAUDE.md
+D:\pythonProject\invertedTransformer\README.md
+D:\pythonProject\invertedTransformer\USAGE.md
+D:\pythonProject\invertedTransformer\docs\DIVERGENCE_REGISTER.md
+D:\pythonProject\invertedTransformer\docs\NOTEBOOK_MAP.md
+D:\pythonProject\invertedTransformer\docs\RESEARCH_WORKFLOW_AUDIT_2026-09-09.md
+D:\pythonProject\invertedTransformer\docs\WALK_FORWARD_FOUNDATION.md
+D:\pythonProject\invertedTransformer\gform-rancangan-bab1-dan-bab3-jawaban.md
+D:\pythonProject\invertedTransformer\gform-rancangan-bab1-dan-bab3.txt
+D:\pythonProject\invertedTransformer\notebooks\logs-iTransformer.txt
+D:\pythonProject\invertedTransformer\notebooks\outputs\RUN_ANALYSIS.md
+D:\pythonProject\invertedTransformer\paper\references\README.md
