@@ -1,28 +1,10 @@
-"""Render every table and figure from the artifacts already on disk.
+"""Render saved research evidence with the notebook's exported analysis code.
 
-Root §12 admits no number into the manuscript that does not resolve to a
-prediction file, a config hash and a documented decision. This is the command
-that turns those three into LaTeX: it reads ``notebooks/outputs/artifacts/``,
-writes ``paper/paper_numbers.json`` --- the manuscript's single source --- and
-renders every table and figure **from that file**, so nothing is transcribed by
-hand.
-
-CPU only, and deliberately so. Nothing here needs a GPU or a Kaggle session: the
-684 prediction files are committed, a Romano--Wolf bootstrap iterates in seconds,
-and putting the analysis inside a twelve-hour session would make every iteration
-cost a session. The notebook calls the same functions from
-``itransformer_btc.report``; this is the local driver for them, in the same sense
-``tools/build_notebook.py`` is the local driver for the launcher.
-
-Usage::
-
-    python tools/build_report.py
-    python tools/build_report.py --artifacts notebooks/outputs/artifacts --out paper
-    python tools/build_report.py --check      # fail if regenerating would change a byte
-
-``--check`` is the drift guard `D54d` added for the notebook, applied to the
-second generated artifact. It ignores the one field that legitimately moves ---
-the generation timestamp --- and nothing else.
+The default reads the preserved historical artifacts and writes a separate
+paper/reanalysis_2026-09-09 bundle. It never fits a model. New Kaggle artifacts
+can be supplied explicitly with --artifacts and a separate --out directory.
+--check compares the regenerated JSON, ignoring only its generation timestamp
+and floating-point differences below the documented relative tolerance.
 """
 
 from __future__ import annotations
@@ -48,7 +30,7 @@ from itransformer_btc.segments import load_bars, usable_mask  # noqa: E402
 #: Where the grid's output actually lives. Repo-root ``artifacts/`` holds ONE
 #: stale 2026-08-06 CPU smoke run and is not the results directory (`D60f`).
 DEFAULT_ARTIFACTS = ROOT / "notebooks" / "outputs" / "artifacts"
-DEFAULT_OUT = ROOT / "paper"
+DEFAULT_OUT = ROOT / "paper" / "reanalysis_2026-09-09"
 DEFAULT_PARQUET = ROOT / "data" / "raw" / "BTCUSDT_1h.parquet"
 
 #: The one field that moves on every run and means nothing to a reader. Excluded

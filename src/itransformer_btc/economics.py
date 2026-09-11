@@ -23,7 +23,7 @@ is honoured here rather than re-decided:
    cluster on stress, so the strategy is flat precisely across the
    large-drawdown periods and the reported MDD is optimistic by an amount only
    that count lets a reader bound.
-3. **Costs.** A 0.04% taker fee per side, plus slippage at a pre-registered
+3. **Costs.** A 0.04% taker fee per side, plus slippage at a documented
    sensitivity band of 0.02% / 0.05% / 0.10% per side, with Table 8 reported at
    all three. Fixing the fee exactly while leaving slippage blank fixes the lever
    that costs nothing and leaves open the one that decides whether the strategy
@@ -83,7 +83,7 @@ from itransformer_btc.metrics import (
 #: 0.30%.
 TAKER_FEE_PER_SIDE: Final = 0.0004
 
-#: Root §13.5's pre-registered slippage band, per side. Table 8 is reported at
+#: Root §13.5's documented slippage band, per side. Table 8 is reported at
 #: all three, never at one.
 SLIPPAGE_BAND: Final[tuple[float, ...]] = (0.0002, 0.0005, 0.0010)
 
@@ -127,64 +127,55 @@ class StrategyResult:
 
 
 def positions(preds: pl.DataFrame, sigma_g: float, mu_g: float) -> pl.DataFrame:
-    """Non-overlapping daily positions and their realised raw returns.
+    """Exploratory long/cash daily decisions from inverse-scaled forecasts.
 
-    The position is the **sign of the cumulative H-step forecast** on raw,
-    drift-free log-returns. Because ``r_hat - mu_g = y_z * sigma_g`` and
-    ``sigma_g > 0``, that sign equals the sign of the summed scaler-space
-    forecast; the multiplication is kept anyway so the quantity in the code is
-    the quantity root §13.5 names.
-
-    The realised return is the actual market move and therefore **does** carry
-    the drift: ``sum_h(y_true_z) * sigma_g + H * mu_g``.
-
-    Args:
-        preds: One run's predictions, in scaler space.
-        sigma_g: Training-window standard deviation of the target.
-        mu_g: Training-window mean of the target.
-
-    Returns:
-        ``timestamp, block, position, realised_raw, forecast_raw``, one row per
-        surviving 00:00-UTC window start.
+    Observed complete targets are selected retrospectively. This conditional
+    simulation cannot establish executable performance across missing outcomes.
     """
-    per_window = (
-        preds.group_by("timestamp")
-        .agg(
-            pl.col("y_pred").sum().alias("_f_z"),
-            pl.col("y_true").sum().alias("_a_z"),
-            pl.len().alias("_n_steps"),
-            pl.col("block").first().alias("block"),
-        )
-        .sort("timestamp")
-    )
-    keep = non_overlapping_mask(per_window.get_column("timestamp").to_numpy())
-    return (
-        per_window.filter(pl.Series(keep))
-        .with_columns(
-            (pl.col("_f_z") * sigma_g).alias("forecast_raw"),
-            (pl.col("_f_z") * sigma_g).sign().alias("position"),
-            (pl.col("_a_z") * sigma_g + pl.col("_n_steps") * mu_g).alias("realised_raw"),
-        )
-        .select(["timestamp", "block", "position", "realised_raw", "forecast_raw"])
+    if not np.isfinite(sigma_g) or sigma_g <= 0 or not np.isfinite(mu_g):
+        raise ValueError("finite mean and positive scale are required")
+    per_window = preds.group_by("timestamp").agg(
+        pl.col("y_pred").sum().alias("_f_z"), pl.col("y_true").sum().alias("_a_z"),
+        pl.len().alias("_n_steps"), pl.col("step").n_unique().alias("_unique"),
+        pl.col("step").min().alias("_first"), pl.col("step").max().alias("_last"),
+        pl.col("block").first().alias("block"),
+    ).sort("timestamp")
+    if per_window.filter((pl.col("_n_steps") != 24) | (pl.col("_unique") != 24) |
+                         (pl.col("_first") != 1) | (pl.col("_last") != 24)).height:
+        raise ValueError("economics requires complete 24-step daily forecasts")
+    if preds.select(pl.any_horizontal(pl.col("y_true", "y_pred").is_null() |
+                                     ~pl.col("y_true", "y_pred").is_finite()).any()).item():
+        raise ValueError("non-finite economic inputs")
+    keep = non_overlapping_mask(per_window["timestamp"].to_numpy())
+    return per_window.filter(pl.Series(keep)).with_columns(
+        (pl.col("_f_z") * sigma_g + 24 * mu_g).alias("forecast_raw"),
+        (pl.col("_a_z") * sigma_g + 24 * mu_g).alias("realised_raw"),
+    ).with_columns((pl.col("forecast_raw") > 0).cast(pl.Float64).alias("position")).select(
+        "timestamp", "block", "position", "realised_raw", "forecast_raw"
     )
 
 
-def net_returns(
-    position: np.ndarray, realised: np.ndarray, slippage_per_side: float
-) -> np.ndarray:
-    """Per-period net log-return after fees and slippage.
+def net_returns(position: np.ndarray, realised: np.ndarray, slippage_per_side: float) -> np.ndarray:
+    """Self-financing log equity increments of separate daily long/cash trades.
 
-    ``net_t = pos_t * r_t - |pos_t - pos_{t-1}| * (fee + slippage)``, with the
-    first period charged as an opening trade from flat.
-
-    The cost is deducted on the **log** scale, which is an approximation: a
-    proportional cost is multiplicative in price space. At 0.06%-0.14% per round
-    trip the difference is below 1e-6 per period, far under the dispersion of the
-    returns themselves -- but it is an approximation, and saying so is cheaper
-    than leaving a reader to infer it.
+    Every long trade opens from cash and closes after 24h, including the final
+    trade and trades beside missing days. Buy at P*(1+c), sell at P'*(1-c):
+    wealth multiplier = exp(realised)*(1-c)/(1+c). Cash earns zero.
+    This explicit round-trip policy replaces the old unfinanced short ledger.
     """
-    turnover = np.abs(np.diff(position, prepend=0.0))
-    return position * realised - turnover * (TAKER_FEE_PER_SIDE + slippage_per_side)
+    position, realised = np.asarray(position), np.asarray(realised)
+    if position.ndim != 1 or position.shape != realised.shape or not len(position):
+        raise ValueError("position and realised must be nonempty equal 1D arrays")
+    if not np.isfinite(position).all() or not np.isfinite(realised).all():
+        raise ValueError("non-finite ledger input")
+    if not np.isin(position, [0., 1.]).all():
+        raise ValueError("this spot simulation permits only long/cash positions")
+    if not np.isfinite(slippage_per_side) or slippage_per_side < 0:
+        raise ValueError("slippage must be finite and nonnegative")
+    cost = TAKER_FEE_PER_SIDE + slippage_per_side
+    if cost >= 1:
+        raise ValueError("per-side cost must be below one")
+    return position * (realised + math.log1p(-cost) - math.log1p(cost))
 
 
 def max_drawdown(net: np.ndarray) -> float:
@@ -192,7 +183,7 @@ def max_drawdown(net: np.ndarray) -> float:
     if len(net) == 0:
         return float("nan")
     equity = np.exp(np.cumsum(net))
-    peak = np.maximum.accumulate(equity)
+    peak = np.maximum.accumulate(np.maximum(equity, 1.0))
     return float((1.0 - equity / peak).max())
 
 
@@ -232,16 +223,16 @@ def summarise(
     mdd_interval: bool = True,
     seed: int = 42,
 ) -> StrategyResult:
-    """Every Table 8 figure for one return series."""
+    """Summarise conditional daily round trips. Sharpe/Sortino use simple returns; equity and MDD use log increments. MAR=0 uses all periods. Annualisation does not correct missing calendar outcomes."""
     net = net_returns(position, realised, slippage_per_side)
     n = len(net)
     if n < 2:
         raise ValueError(f"a strategy needs at least two periods, got {n}")
 
-    mean = float(net.mean())
-    sd = float(net.std(ddof=1))
-    downside = net[net < 0.0]
-    downside_sd = float(downside.std(ddof=1)) if len(downside) > 1 else 0.0
+    simple = np.expm1(net)
+    mean = float(simple.mean())
+    sd = float(simple.std(ddof=1))
+    downside_sd = float(np.sqrt(np.mean(np.minimum(simple, 0.0) ** 2)))
     sharpe = mean / sd if sd > 0 else float("nan")
     sortino = (
         mean / downside_sd * math.sqrt(PERIODS_PER_YEAR)
@@ -265,21 +256,19 @@ def summarise(
         mdd_ci_low=low,
         mdd_ci_high=high,
         # Half the mean absolute position change: expected round trips per period.
-        turnover_per_period=float(np.abs(np.diff(position, prepend=0.0)).mean() / 2.0),
+        turnover_per_period=float(np.mean(position)),
         net_log_return=total_log,
         net_total_return=float(math.expm1(total_log)),
     )
 
 
 def _flat_days(frame: pl.DataFrame) -> int:
-    """Calendar days in the covered blocks with no surviving 00:00-UTC window.
+    """Unavailable daily slots, NOT a bound on unobserved loss or drawdown.
 
-    Positions exist only where a valid window exists, so the strategy is flat
-    precisely across the outages -- which, since outages cluster on stress, are
-    disproportionately the large-drawdown periods (`D45`, `D46`).
+    The legacy result field n_flat_days is retained for file compatibility;
+    it counts excluded slots, not verified live decisions to remain in cash.
     """
-    n_blocks = frame.get_column("block").n_unique()
-    return int(n_blocks * BLOCK_DAYS - frame.height)
+    return int(frame["block"].n_unique() * BLOCK_DAYS - frame.height)
 
 
 def run_strategy(
@@ -289,7 +278,7 @@ def run_strategy(
     mdd_interval: bool = True,
     seed: int = 42,
 ) -> StrategyResult:
-    """The forecast-sign strategy for one run at one slippage level."""
+    """Conditional long/cash daily round-trip simulation for one saved forecast run."""
     frame = positions(preds, float(meta["sigma_g"]), float(meta["mu_g"]))
     return summarise(
         frame.get_column("position").to_numpy().astype(np.float64),
@@ -308,12 +297,7 @@ def buy_and_hold(
     mdd_interval: bool = True,
     seed: int = 42,
 ) -> StrategyResult:
-    """Always long, on the same daily grid -- Table 8's comparator.
-
-    Not Naive-RW: that strategy holds a constant **zero** position, so its return
-    series has zero variance and its Sharpe is undefined. A comparison against it
-    is not conservative, it is meaningless.
-    """
+    """Always-long DAILY ROUND TRIPS on observed slots; retained API name, not uninterrupted buy-and-hold."""
     frame = positions(preds, float(meta["sigma_g"]), float(meta["mu_g"]))
     return summarise(
         np.ones(frame.height),
@@ -447,101 +431,41 @@ def _origin_run_ids(roots: list[Path], origin_index: int, pred_len: int) -> list
 
 
 def economics_table(
-    roots: list[Path],
-    keys: list[tuple[str, int]],
-    origin_indices: tuple[int, ...],
-    slippages: tuple[float, ...] = SLIPPAGE_BAND,
-    pred_len: int = PRED_LEN,
-    seed: int = 42,
+    roots: list[Path], keys: list[tuple[str, int]], origin_indices: tuple[int, ...],
+    slippages: tuple[float, ...] = SLIPPAGE_BAND, pred_len: int = PRED_LEN, seed: int = 42,
 ) -> pl.DataFrame:
-    """Table 8 -- every (model, origin, slippage) cell, with comparator and DSR.
-
-    Args:
-        roots: Artifact roots, working directory first.
-        keys: ``(model_tag, k)`` pairs to evaluate.
-        origin_indices: Origins to cover.
-        slippages: Per-side slippage levels; all are reported, never one.
-        pred_len: Horizon.
-        seed: Bootstrap seed for the drawdown interval.
-
-    Returns:
-        One row per cell: every :class:`StrategyResult` field, the buy-and-hold
-        comparator, the Jobson-Korkie/Memmel test of the Sharpe difference, and
-        the Deflated Sharpe Ratio beside the ``n_trials`` and ``var_sharpe`` it
-        was computed from -- so a reader can redo it (root §12).
-    """
-    rows: list[dict] = []
+    """Conditional long/cash simulation; inferential trading claims withheld."""
+    if pred_len != 24:
+        raise ValueError("the economic protocol requires H=24")
+    rows = []
     for origin_index in origin_indices:
-        # The DSR's trial set: every configuration evaluated on THIS origin's span.
-        trial_sharpes: list[float] = []
-        for run_id in _origin_run_ids(roots, origin_index, pred_len):
-            meta = load_meta(run_id, roots)
-            frame = positions(
-                load_predictions(run_id, roots),
-                float(meta["sigma_g"]),
-                float(meta["mu_g"]),
-            )
-            net = net_returns(
-                frame.get_column("position").to_numpy().astype(np.float64),
-                frame.get_column("realised_raw").to_numpy().astype(np.float64),
-                SLIPPAGE_BAND[1],
-            )
-            sd = net.std(ddof=1)
-            if sd > 0:
-                trial_sharpes.append(float(net.mean() / sd))
-        n_trials = len(trial_sharpes)
-        var_sharpe = float(np.var(trial_sharpes, ddof=1)) if n_trials > 1 else float("nan")
-
+        n_trials = len(_origin_run_ids(roots, origin_index, pred_len))
         for model, k in keys:
             run_id = f"{model}_o{origin_index:02d}_K{k:02d}_H{pred_len:03d}_s42"
             meta = load_meta(run_id, roots)
-            frame = positions(
-                load_predictions(run_id, roots),
-                float(meta["sigma_g"]),
-                float(meta["mu_g"]),
-            )
-            position = frame.get_column("position").to_numpy().astype(np.float64)
-            realised = frame.get_column("realised_raw").to_numpy().astype(np.float64)
-            hold_position = np.ones(len(position))
-            flat = _flat_days(frame)
-
+            frame = positions(load_predictions(run_id, roots), float(meta["sigma_g"]), float(meta["mu_g"]))
+            pos, realised = [frame[n].to_numpy().astype(np.float64) for n in ("position", "realised_raw")]
             for slippage in slippages:
-                result = summarise(position, realised, slippage, flat, seed=seed)
-                hold = summarise(
-                    hold_position, realised, slippage, flat,
-                    mdd_interval=False, seed=seed,
-                )
-                net = net_returns(position, realised, slippage)
-                z, p = jobson_korkie_memmel(
-                    net, net_returns(hold_position, realised, slippage)
-                )
-                skew, kurtosis = moments(net)
-                rows.append(
-                    {
-                        "model": f"{model}-K{k}",
-                        "origin_index": origin_index,
-                        "origin": str(meta["origin"]),
-                        "slippage_per_side": slippage,
-                        **asdict(result),
-                        "hold_sharpe_annualised": hold.sharpe_annualised,
-                        "hold_net_total_return": hold.net_total_return,
-                        "jk_memmel_z": z,
-                        "jk_memmel_p": p,
-                        "dsr": deflated_sharpe(
-                            result.sharpe_per_period, result.n_periods,
-                            skew, kurtosis, n_trials, var_sharpe,
-                        ),
-                        "dsr_n_trials": n_trials,
-                        "dsr_var_sharpe": var_sharpe,
-                    }
-                )
+                result = summarise(pos, realised, slippage, _flat_days(frame), mdd_interval=False, seed=seed)
+                hold = summarise(np.ones(len(pos)), realised, slippage, _flat_days(frame), mdd_interval=False)
+                rows.append({
+                    "model": f"{model}-K{k}", "origin_index": origin_index, "origin": str(meta["origin"]),
+                    "slippage_per_side": slippage, **asdict(result),
+                    "hold_sharpe_annualised": hold.sharpe_annualised, "hold_net_total_return": hold.net_total_return,
+                    "jk_memmel_z": float("nan"), "jk_memmel_p": float("nan"), "dsr": float("nan"),
+                    "dsr_n_trials": n_trials, "dsr_var_sharpe": float("nan"),
+                    "evaluation_status": "conditional on future target availability; not an executable backtest",
+                    "policy": "long/cash; each daily trade opens and closes; terminal and both-side costs included",
+                    "risk_return_scale": "simple daily return; 365-period annualisation is a conditional diagnostic",
+                    "inference_status": "JK/DSR and MDD confidence intervals withheld",
+                })
     return pl.DataFrame(rows)
 
 
 #: Buy-and-hold's name in :func:`equity_curves`. Not a model tag: it runs no
 #: model. Root §13.2 requires the economic result be reported beside it, and
 #: :func:`economics_table` already carries it as the ``hold_*`` columns.
-HOLD_LABEL: Final = "Buy & hold"
+HOLD_LABEL: Final = "Always-long daily trades"
 
 
 def equity_curves(

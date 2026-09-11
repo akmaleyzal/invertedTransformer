@@ -414,11 +414,11 @@ def test_definition_cells_execute_in_one_namespace(notebook: dict) -> None:
 
     # Committed expected values — CLAUDE.md §6.2 and `D52`.
     model = namespace["ITransformer"](namespace["ITransformerConfig"]())
-    assert model.n_parameters() == 280_472
+    assert model.n_parameters() == 280_728
     assert len(namespace["ORIGINS"]) == 15
     assert len(namespace["VARIATE_ORDER"]) == 12
     # 684 confirmatory + `D62`'s 210 exploratory + `D64`'s 75 deferred baselines
-    assert len(namespace["manifest"]()) == 1_620
+    assert len(namespace["manifest"]()) == 2_130
     assert namespace["ladder_columns"](1) == ["r"]
 
     # Every arm must be able to *build and run its model* here, not merely be

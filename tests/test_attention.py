@@ -82,7 +82,7 @@ def test_captured_weights_are_row_stochastic() -> None:
     assert torch.allclose(weights.sum(dim=-1), torch.ones(4, 8), atol=1e-5)
 
 
-def test_the_uniform_arm_captures_nothing_because_it_computes_nothing() -> None:
+def test_uniform_arm_captures_declared_uniform_weights() -> None:
     """`D50`'s arm replaces the softmax with a mean, so there is no weight matrix
     to record --- and a figure built from one would be inventing it."""
     model = ITransformerConfig(pred_len=24, uniform_attention=True).build().eval()
@@ -90,7 +90,7 @@ def test_the_uniform_arm_captures_nothing_because_it_computes_nothing() -> None:
         layer.attention.capture = True
     with torch.no_grad():
         model(torch.randn(4, 96, 8))
-    assert model.layers[0].attention.last_weights is None
+    torch.testing.assert_close(model.layers[0].attention.last_weights, torch.full((4, 8, 8), 1/8))
 
 
 # -- the regimes -------------------------------------------------------------

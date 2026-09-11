@@ -39,6 +39,12 @@ from pathlib import Path
 
 import polars as pl
 import torch
+from itransformer_btc.config import ValidationRefreshOrigin
+from dataclasses import replace
+import hashlib
+import numpy as np
+from dataclasses import asdict
+from itransformer_btc.train import _input_sha256
 
 from itransformer_btc.config import (
     HORIZONS,
@@ -83,6 +89,7 @@ from itransformer_btc.train import (
     train_one,
     write_artifacts,
 )
+from itransformer_btc.train import TrainingSession, SessionBudgetExhausted
 
 #: Arm to the ``model`` component of ``run_id``. Distinct tags mean a changed
 #: arm **orphans** prior outputs rather than silently reusing a mismatched
@@ -90,6 +97,12 @@ from itransformer_btc.train import (
 ARM_MODEL_TAG: dict[str, str] = {
     "main": "itr",       # 15 origins x 4 K x 5 seeds, H=24
     "uniform": "itru",   # `D50` — attention forced uniform, K=8
+    "valrefresh": "itrv",
+    "repr_identity": "repi",
+    "repr_whiten": "repw",
+    "repr_correlate": "repc",
+    "dlinear_all": "dlina",
+    "patchtst_all": "ptsta",
     "fresh": "itrf",     # root §8.1 falsification arm, trained at o_i + 90 d
     "horizon": "itr",    # `D08`/`D48` — 4 named origins x 4 K x 4 H x 3 seeds
     "ridge": "rdg",      # `D17` — is a transformer needed at all? K = 1,4,8,12
@@ -103,7 +116,7 @@ ARM_MODEL_TAG: dict[str, str] = {
     # reported only when it agrees with the headline does not meet.
     "orthogonal": "itro",  # K=8, one or two per family — high effective rank
     "redundant": "itrr",   # K=8, F2 and F3 loaded whole — low effective rank
-    "look048": "l048",     # L=48 at K=8 — half the pre-registered lookback
+    "look048": "l048",     # L=48 at K=8 — half the documented lookback
     "look192": "l192",     # L=192 at K=8 — double it
     "tuned": "itrt",       # K=8 at the config origin 1's validation preferred
     # `D62`'s three exploratory arms. Distinct tags, so none can collide with a
@@ -133,6 +146,7 @@ ROBUSTNESS_ARMS: tuple[str, ...] = (
     # `D70`. Ordered with the rest of the robustness block, after the baselines,
     # so a session cut short loses a robustness arm rather than an RQ input.
     "orthogonal", "redundant", "look048", "look192", "tuned",
+    "valrefresh", "repr_identity", "repr_whiten", "repr_correlate", "dlinear_all", "patchtst_all",
 )
 
 ALL_ARMS: tuple[str, ...] = (
@@ -208,7 +222,7 @@ class RunCell:
         return (self.arm, self.origin_index, self.k, self.pred_len)
 
     @property
-    def tensor_key(self) -> tuple[bool, int, int, int]:
+    def tensor_key(self) -> tuple:
         """The **tensor-build** key, which is coarser than :attr:`group`.
 
         :func:`build_origin_tensors` reads the origin, K and H and nothing else,
@@ -219,7 +233,7 @@ class RunCell:
         :attr:`group`, because that partition must be a function of the arm.
         """
         return (
-            self.arm == "fresh",
+            self.arm if self.arm in ("fresh", "valrefresh") else "base",
             self.origin_index,
             self.k,
             self.pred_len,
@@ -230,12 +244,18 @@ class RunCell:
             self.subset,
         )
 
+    def representation(self) -> str:
+        return {"repr_identity": "repr_identity", "repr_whiten": "whiten",
+                "repr_correlate": "correlate"}.get(self.arm, "identity")
+
     def columns(self) -> tuple[str, ...] | None:
         """The named column set this cell trains on, or ``None`` for its rung."""
         return MATCHED_K_SUBSETS[self.subset] if self.subset else None
 
     def origin(self) -> OriginLike:
         base = ORIGINS[self.origin_index - 1]
+        if self.arm == "valrefresh":
+            return ValidationRefreshOrigin(base)
         return FalsificationOrigin(base) if self.arm == "fresh" else base
 
     def model_config(self, overrides: dict[str, Architecture] | None = None) -> Architecture:
@@ -253,10 +273,12 @@ class RunCell:
         """
         if self.arm == "ridge":
             return RidgeConfig(pred_len=self.pred_len, k=self.k)
-        if self.arm == "dlinear":
-            return DLinearConfig(pred_len=self.pred_len)
-        if self.arm == "patchtst":
-            return PatchTSTConfig(pred_len=self.pred_len)
+        if self.arm in ("dlinear", "dlinear_all"):
+            selected = (overrides or {}).get(self.arm, DLinearConfig(pred_len=self.pred_len))
+            return replace(selected, loss_channels="all" if self.arm.endswith("_all") else "target")
+        if self.arm in ("patchtst", "patchtst_all"):
+            selected = (overrides or {}).get(self.arm, PatchTSTConfig(pred_len=self.pred_len))
+            return replace(selected, loss_channels="all" if self.arm.endswith("_all") else "target")
         if self.arm == "lstm":
             return LSTMConfig(pred_len=self.pred_len, k=self.k)
         if self.arm in ("persist", "seasonal"):
@@ -276,6 +298,8 @@ class RunCell:
             return overrides["tuned"]
         if self.arm in ("look048", "look192", "orthogonal", "redundant"):
             return ITransformerConfig(seq_len=self.seq_len, pred_len=self.pred_len)
+        if self.arm.startswith("repr_"):
+            return ITransformerConfig(pred_len=self.pred_len, use_norm=False)
         if self.arm == "longsched":
             # `D62c`. The only thing that moves is the schedule, which is a
             # method, so meta['config'] is byte-identical to the main arm's and
@@ -305,7 +329,7 @@ class RunCell:
         ).run_id
 
 
-def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
+def manifest(arms: tuple[str, ...] = ALL_ARMS, *, historical: bool = False) -> list[RunCell]:
     """Every run in the study, deduplicated and ordered.
 
     Root §10.2's accounting, arm by arm:
@@ -362,7 +386,7 @@ def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
     if "fresh" in arms:
         # One seed. The arm asks whether the aged-minus-fresh gap is zero, and
         # that contrast is between two models, not between five initialisations.
-        cells += [RunCell("fresh", o.index, 8, PRED_LEN, SEEDS[0]) for o in ORIGINS]
+        cells += [RunCell("fresh", o.index, 8, PRED_LEN, s) for o in ORIGINS for s in SEEDS]
     if "horizon" in arms:
         cells += [
             RunCell("horizon", i, k, h, s)
@@ -455,12 +479,18 @@ def manifest(arms: tuple[str, ...] = ALL_ARMS) -> list[RunCell]:
             RunCell("capacity", o.index, 12, PRED_LEN, s) for o in ORIGINS for s in SEEDS
         ]
 
+    for arm in ("valrefresh", "repr_identity", "repr_whiten", "repr_correlate", "dlinear_all", "patchtst_all"):
+        if arm in arms:
+            cells += [RunCell(arm, o.index, 8, PRED_LEN, s) for o in ORIGINS for s in SEEDS]
     seen: set[str] = set()
     unique: list[RunCell] = []
     for cell in cells:
         if cell.run_id not in seen:
             seen.add(cell.run_id)
             unique.append(cell)
+    if historical:
+        added = {"valrefresh", "repr_identity", "repr_whiten", "repr_correlate", "dlinear_all", "patchtst_all"}
+        unique = [c for c in unique if c.arm not in added and (c.arm != "fresh" or c.seed == SEEDS[0])]
     return unique
 
 
@@ -476,6 +506,9 @@ def discover_roots(working: Path = ARTIFACTS) -> list[Path]:
     roots = [Path(working)]
     kaggle_input = Path("/kaggle/input")
     if kaggle_input.exists():
+        for folder in ("validation", "checkpoints"):
+            roots += sorted(p.parent for p in kaggle_input.glob(f"*/{folder}") if p.is_dir())
+            roots += sorted(p.parent for p in kaggle_input.glob(f"*/*/{folder}") if p.is_dir())
         roots += sorted(p for p in kaggle_input.iterdir() if (p / "preds").is_dir())
         roots += sorted(p.parent for p in kaggle_input.glob("*/*/preds") if p.is_dir())
     seen: set[str] = set()
@@ -540,30 +573,36 @@ def completed_run_ids(roots: list[Path], code_digest: str = "") -> set[str]:
                 continue
             if meta.get("status") != "complete":
                 continue
-            if wanted and meta.get("code_sha256") not in (None, wanted):
+            if wanted and meta.get("code_sha256") != wanted:
                 continue
             done.add(run_id)
     return done
 
 
-def pending(cells: list[RunCell], roots: list[Path]) -> list[RunCell]:
-    """Manifest minus what is already complete **at this code vintage** (`D85`).
+def pending(
+    cells: list[RunCell], roots: list[Path], *,
+    configs: dict[str, Architecture] | None = None,
+) -> list[RunCell]:
+    """Requests not complete for the current code, input, and resolved options.
 
-    The vintage clause is the whole point. ``run_id`` encodes
-    ``{model, origin, K, H, seed}`` and nothing about the configuration, so root
-    §10.4's "a changed component orphans prior outputs" only covers a change that
-    renames the arm. A fix *inside* an arm leaves every id identical, and `D76`
-    was exactly that: the tuned arm's learning rate changed and its 75 ids did
-    not, so a resumed session would have skipped all of them and reported the old
-    configuration under the corrected caption.
-
-    Passing the digest makes the skip decision agree with §12, which already says
-    numbers from different digests are not comparable: a grid must not silently
-    become a mixture of two. Within one vintage nothing changes, which is the
-    case a partial session actually hits.
+    The notebook supplies its validation-selected config. Without that config
+    a tuned request is unresolved, so it cannot be declared complete.
     """
-    done = completed_run_ids(roots, code_digest=code_sha256())
-    return [c for c in cells if c.run_id not in done]
+    todo = []
+    for cell in cells:
+        if cell.arm == "tuned" and (not configs or "tuned" not in configs):
+            todo.append(cell)
+            continue
+        cfg = cell.model_config(configs)
+        # First existing artifact wins, as it does for the prediction reader.
+        candidates = [root for root in roots if
+                      (root / "preds" / f"{cell.run_id}.parquet").exists() or
+                      (root / "meta" / f"{cell.run_id}.json").exists()]
+        if not candidates or not is_complete(
+            cell.run_id, candidates[0], strict=True, cfg=cfg, columns=cell.columns()
+        ):
+            todo.append(cell)
+    return todo
 
 
 def shard(cells: list[RunCell], index: int, count: int) -> list[RunCell]:
@@ -582,19 +621,15 @@ def shard(cells: list[RunCell], index: int, count: int) -> list[RunCell]:
 
 
 class BudgetGuard:
-    """Root §10.5's session budget, checked at run boundaries.
-
-    Hitting Kaggle's own 12 h wall interactively loses ``/kaggle/working``
-    entirely, so the guard stops early enough that Save Version still runs. It
-    also refuses to *start* a run it does not expect to finish, using the
-    observed mean wall time: stopping at 10.9 h and then beginning a 98 s run is
-    the failure mode a naive elapsed-only check has.
-    """
+    """One monotonic deadline for a session. Starting a run requires a buffer based on recent maximum duration; train_one also checks the deadline within every epoch. Reserved time is for saving and stopping the Kaggle session."""
 
     def __init__(
-        self, budget_h: float = SESSION_BUDGET_H, reserve_h: float = RESERVE_H
+        self, budget_h: float = SESSION_BUDGET_H, reserve_h: float = RESERVE_H,
+        *, started_at: float | None = None,
     ) -> None:
-        self.deadline = time.perf_counter() + (budget_h - reserve_h) * 3600.0
+        if not np.isfinite(budget_h + reserve_h) or min(budget_h, reserve_h) < 0:
+            raise ValueError("budget and reserve must be finite, nonnegative hours")
+        self.deadline = (time.perf_counter() if started_at is None else started_at) + (budget_h - reserve_h) * 3600.0
         self.durations: list[float] = []
 
     def record(self, seconds: float) -> None:
@@ -609,7 +644,7 @@ class BudgetGuard:
         return self.deadline - time.perf_counter()
 
     def may_start(self) -> bool:
-        return self.remaining_s > self.mean_run_s
+        return self.remaining_s > max(120.0, 1.5 * max(self.durations[-20:], default=120.0))
 
 
 class _TensorCache:
@@ -636,7 +671,8 @@ class _TensorCache:
             cell.k,
             seq_len=cell.seq_len,
             pred_len=cell.pred_len,
-            columns=cell.columns(),
+            columns=cell.columns(), train_window_limit=11_500,
+            representation=cell.representation(),
         )
         self._store[key] = tensors
         while len(self._store) > self.size:
@@ -722,17 +758,17 @@ def execute(
     :func:`_assert_alignment`.
     """
     guard = guard or BudgetGuard()
-    roots = roots or discover_roots(out_root)
+    roots = list(dict.fromkeys([Path(out_root), *(roots or discover_roots(out_root))]))
     device = device or pick_device()
     cache = _TensorCache(features)
 
     started = time.perf_counter()
-    done = completed_run_ids(roots)
+    pending_ids = {c.run_id for c in pending(cells, roots, configs=configs)}
     completed = skipped = failed = 0
     queue = list(cells)
 
     for position, cell in enumerate(queue, start=1):
-        if cell.run_id in done or is_complete(cell.run_id, out_root):
+        if cell.run_id not in pending_ids:
             skipped += 1
             continue
         if not guard.may_start():
@@ -749,9 +785,10 @@ def execute(
             # iTransformer arm (`D38` — nothing is tuned), and carrying the
             # chosen alpha for ridge, which is the one selection root §11 admits.
             # Writing the config that went in would lose it.
-            model, cfg, outcome = cell.model_config(configs).fit(
-                tensors, cell.spec, device=device
-            )
+            with TrainingSession(out_root, roots, guard.deadline):
+                model, cfg, outcome = cell.model_config(configs).fit(
+                    tensors, cell.spec, device=device
+                )
             # Figure 5's maps, and only for the arm that exists to produce them
             # (`D62d`). Captured after training rather than during it, so nothing
             # about the optimisation changes and the arm reproduces its main-grid
@@ -762,7 +799,11 @@ def execute(
             write_artifacts(
                 model, tensors, cell.spec, cfg, outcome, device,
                 root=out_root, attention=maps,
+                requested_config=cell.model_config(configs),
             )
+        except SessionBudgetExhausted as exc:
+            log(f"PAUSED: {exc}; save this session output and attach it next session")
+            break
         except Exception as exc:  # noqa: BLE001 - one bad cell must not end the shard
             failed += 1
             log(f"[{position}/{len(queue)}] {cell.run_id} FAILED: {exc!r}")
@@ -773,7 +814,7 @@ def execute(
         # fatal — RelMSE across two samples is not a ratio — and continuing would
         # fill Table 6 with statistics that mean nothing. One bad *cell* must not
         # end a shard; one broken *invariant* must.
-        if cell.arm in BASELINE_ARMS:
+        if cell.arm in (*BASELINE_ARMS, "dlinear_all", "patchtst_all"):
             _assert_alignment(cell, roots, log)
 
         elapsed = time.perf_counter() - began
@@ -789,7 +830,7 @@ def execute(
         completed=completed,
         skipped=skipped,
         failed=failed,
-        remaining=len(pending(queue, discover_roots(out_root))),
+        remaining=len(pending(queue, roots, configs=configs)),
         wall_time_s=time.perf_counter() - started,
         mean_run_s=guard.mean_run_s,
     )
@@ -807,6 +848,50 @@ def visible_devices() -> list[torch.device]:
     if not torch.cuda.is_available():
         return [torch.device("cpu")]
     return [torch.device("cuda", i) for i in range(torch.cuda.device_count())]
+
+
+
+def consolidate_resume_outputs(cells, roots, out_root, configs=None):
+    """Carry accepted prior runs forward so the next session needs one bundle."""
+    import shutil
+    out_root = Path(out_root)
+    copied = 0
+    for cell in cells:
+        cfg = cell.model_config(configs)
+        for root in roots:
+            root = Path(root)
+            if root == out_root:
+                continue
+            if not is_complete(cell.run_id, root, strict=True, cfg=cfg, columns=cell.columns()):
+                continue
+            if is_complete(cell.run_id, out_root, strict=True, cfg=cfg, columns=cell.columns()):
+                break
+            # Metadata is copied last, after every file it certifies.
+            for folder, suffix in (("preds", ".parquet"), ("weights", ".pt"),
+                                   ("attn", ".parquet"), ("meta", ".json")):
+                source = root / folder / f"{cell.run_id}{suffix}"
+                if source.exists():
+                    destination = out_root / folder / source.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staging = destination.with_suffix(destination.suffix + ".tmp")
+                    shutil.copyfile(source, staging)
+                    staging.replace(destination)
+            copied += 1
+            break
+    # Pending epochs and validation caches are small. Their own identity gates
+    # are checked at consumption, even when copied from an older code vintage.
+    for root in roots:
+        if Path(root) == out_root:
+            continue
+        for folder, pattern in (("checkpoints", "*.pt"), ("validation", "*.json")):
+            for source in (Path(root) / folder).glob(pattern):
+                destination = out_root / folder / source.name
+                if not destination.exists():
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staging = destination.with_suffix(destination.suffix + ".tmp")
+                    shutil.copyfile(source, staging)
+                    staging.replace(destination)
+    return copied
 
 
 def execute_parallel(
@@ -863,20 +948,21 @@ def execute_parallel(
         )
 
     guard = guard or BudgetGuard()
-    roots = roots or discover_roots(out_root)
-    done = completed_run_ids(roots)
+    roots = list(dict.fromkeys([Path(out_root), *(roots or discover_roots(out_root))]))
+    pending_ids = {c.run_id for c in pending(cells, roots, configs=configs)}
 
     queue = list(cells)
     cursor = 0
     completed = skipped = failed = 0
     state = threading.Lock()
+    fatal = []
     started = time.perf_counter()
     log(f"run-level parallelism across {[str(d) for d in devices]} (`D68`)")
 
     def take() -> tuple[int, RunCell] | None:
         nonlocal cursor
         with state:
-            if cursor >= len(queue) or not guard.may_start():
+            if fatal or cursor >= len(queue) or not guard.may_start():
                 return None
             cursor += 1
             return cursor, queue[cursor - 1]
@@ -886,7 +972,7 @@ def execute_parallel(
         cache = _TensorCache(features, size=2)
         while (item := take()) is not None:
             position, cell = item
-            if cell.run_id in done or is_complete(cell.run_id, out_root):
+            if cell.run_id not in pending_ids:
                 with state:
                     skipped += 1
                 continue
@@ -894,9 +980,10 @@ def execute_parallel(
             began = time.perf_counter()
             try:
                 tensors = cache.get(cell)
-                model, cfg, outcome = cell.model_config(configs).fit(
-                    tensors, cell.spec, device=device
-                )
+                with TrainingSession(out_root, roots, guard.deadline):
+                    model, cfg, outcome = cell.model_config(configs).fit(
+                        tensors, cell.spec, device=device
+                    )
                 maps = (
                     tercile_maps(model, tensors, device)
                     if cell.arm == "attention"
@@ -905,15 +992,24 @@ def execute_parallel(
                 write_artifacts(
                     model, tensors, cell.spec, cfg, outcome, device,
                     root=out_root, attention=maps,
+                requested_config=cell.model_config(configs),
                 )
+            except SessionBudgetExhausted as exc:
+                log(f"PAUSED: {exc}; save this session output and attach it next session")
+                break
             except Exception as exc:  # noqa: BLE001 - one bad cell must not end the shard
                 with state:
                     failed += 1
                 log(f"[{position}/{len(queue)}] {device} {cell.run_id} FAILED: {exc!r}")
                 continue
 
-            if cell.arm in BASELINE_ARMS:
-                _assert_alignment(cell, roots, log)
+            if cell.arm in (*BASELINE_ARMS, "dlinear_all", "patchtst_all"):
+                try:
+                    _assert_alignment(cell, roots, log)
+                except Exception as exc:
+                    with state:
+                        fatal.append(exc)
+                    return
 
             elapsed = time.perf_counter() - began
             with state:
@@ -934,6 +1030,8 @@ def execute_parallel(
     for thread in threads:
         thread.join()
 
+    if fatal:
+        raise RuntimeError("fatal cross-model target alignment failure") from fatal[0]
     if cursor < len(queue):
         log(
             f"budget guard: stopped with {len(queue) - cursor} cells unstarted — "
@@ -944,7 +1042,7 @@ def execute_parallel(
         completed=completed,
         skipped=skipped,
         failed=failed,
-        remaining=len(pending(queue, discover_roots(out_root))),
+        remaining=len(pending(queue, roots, configs=configs)),
         wall_time_s=time.perf_counter() - started,
         mean_run_s=guard.mean_run_s,
     )
@@ -975,186 +1073,112 @@ TUNING_GRID: tuple[dict[str, object], ...] = tuple(
 TUNING_EPOCHS: int = 6
 
 
-def tune_on_validation(
-    features: pl.DataFrame,
-    *,
-    origin_index: int = 1,
-    k: int = 8,
-    device=None,
-    log=print,
-) -> tuple[TunedConfig, list[dict]]:
-    """Pick one iTransformer config on one origin's **validation** sub-block.
 
-    This exists to answer the one attack on the null that root §6.2 leaves open.
-    Nothing in this study is tuned — every hyperparameter is adopted from
-    Liu et al. (2024) and held identical at every rung, which is what makes the
-    rungs comparable (`D38`). A referee reads that as *"you did not try"*, and the
-    honest reply is a number rather than a paragraph: **if the configuration the
-    validation set prefers is still worse than a random walk, the null is not an
-    artefact of the defaults.**
+def validation_fit(tensors, spec, cfg, *, device, out_root=None, roots=None, **schedule):
+    """Cache a validation-only fit by data/code/config, including its budget."""
+    identity = json.loads(json.dumps({
+        "spec": asdict(spec), "config": asdict(cfg), "schedule_overrides": schedule,
+        "code_sha256": code_sha256(), "input_sha256": _input_sha256()[0],
+        "torch": str(torch.__version__), "device_type": device.type,
+        "training_selection": tensors.training_selection,
+    }))
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    destination = Path(out_root) / "validation" / f"{key}.json" if out_root else None
+    row = None
+    if destination:
+        for root in dict.fromkeys([Path(out_root), *(roots or [])]):
+            path = root / "validation" / f"{key}.json"
+            if path.exists():
+                cached = json.loads(path.read_text(encoding="utf-8"))
+                if cached.get("identity") == identity and np.isfinite(cached.get("val_mse", np.nan)):
+                    row = cached
+                    break
+    if row is None:
+        _, outcome = train_one(tensors, spec, cfg, device=device, **schedule)
+        row = {"identity": identity, "val_mse": outcome.best_val_mse,
+               "epochs_run": outcome.epochs_run, "wall_time_s": outcome.wall_time_s,
+               "n_val": len(tensors.val)}
+    if destination:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staging = destination.with_suffix(".json.tmp")
+        staging.write_text(json.dumps(row, indent=2), encoding="utf-8")
+        staging.replace(destination)
+        (Path(out_root) / "checkpoints" / f"{spec.run_id}.pt").unlink(missing_ok=True)
+    return row
 
-    Three properties keep it inside the pre-registration:
 
-    - **The winner is run as selected, learning rate included** (`D76`). Anything
-      the search ranks on and the arm then does not apply makes the arm answer a
-      different question from the one its caption claims.
-    - **Validation only, one origin.** Exactly where `D27` put the Stage 5 gate,
-      and for its reason: root §11 opens the test blocks once, after the design is
-      frozen, so a selection that reads one cannot coexist with it.
-    - **The grid is declared before it runs** (:data:`TUNING_GRID`). A space
-      chosen after seeing the winner is not a search.
-    - **The arm is exploratory and reported whatever it shows** (root §13.2). It
-      does not enter RQ1's ladder comparison, and it gets its own row.
-
-    The probes are deterministic given the data, so a resumed session recomputes
-    the same winner rather than needing it persisted. Its trial count enters
-    root §13.5's development trial total, which is stated rather than concealed.
-
-    Returns:
-        The winning config under root §6.2's full schedule, and the ranked table.
-    """
+def tune_on_validation(features: pl.DataFrame, *, origin_index=1, k=8,
+                       device=None, out_root=None, roots=None, log=print):
+    """Select the exploratory iTransformer config on origin-1 validation only."""
     device = device or pick_device()
-    origin = ORIGINS[origin_index - 1]
-    tensors = build_origin_tensors(features, origin, k, pred_len=PRED_LEN)
-
-    rows: list[dict] = []
+    tensors = _TensorCache(features, size=1).get(RunCell("tuned", origin_index, k, PRED_LEN, SEEDS[0]))
+    rows = []
     for index, point in enumerate(TUNING_GRID):
-        cfg = ITransformerConfig(
-            pred_len=PRED_LEN,
-            d_model=int(point["d_model"]), e_layers=int(point["e_layers"]),
-        )
-        spec = RunSpec("tuned", origin_index, k, PRED_LEN, SEEDS[0])
-        _, outcome = train_one(
-            tensors, spec, cfg, device=device,
-            max_epochs=TUNING_EPOCHS, patience=TUNING_EPOCHS,
-            lr=float(point["lr"]),
-        )
-        rows.append({**point, "val_mse": outcome.best_val_mse})
-        log(f"  probe {index + 1}/{len(TUNING_GRID)} {point} -> {outcome.best_val_mse:.6f}")
-
+        cfg = ITransformerConfig(pred_len=PRED_LEN, d_model=int(point["d_model"]), e_layers=int(point["e_layers"]))
+        spec = RunSpec(f"probeit{index}", origin_index, k, PRED_LEN, SEEDS[0])
+        row = validation_fit(tensors, spec, cfg, device=device, out_root=out_root, roots=roots,
+                             max_epochs=TUNING_EPOCHS, patience=TUNING_EPOCHS, lr=float(point["lr"]))
+        rows.append({**point, "val_mse": row["val_mse"], "epochs_run": row["epochs_run"]})
+        log(f"validation probe {index+1}/{len(TUNING_GRID)}: {rows[-1]}")
     rows.sort(key=lambda r: r["val_mse"])
     best = rows[0]
-    log(f"tuned config selected on origin {origin_index} validation: {best}")
-    # `D76`: **the learning rate travels with the winner.** It is a third of the
-    # declared search space, and returning a bare ``ITransformerConfig`` --- which
-    # has no ``lr`` --- selected it and then threw it away, so the arm ran the
-    # winner's architecture under the default rate: a point this same search had
-    # evaluated and had not ranked first. :class:`TunedConfig` carries it into
-    # ``train_one`` through ``schedule()`` and into ``meta['config']`` through
-    # ``asdict``, which is what makes the arm regenerable under root §12.
-    return (
-        TunedConfig(
-            pred_len=PRED_LEN,
-            d_model=int(best["d_model"]), e_layers=int(best["e_layers"]),
-            lr=float(best["lr"]),
-        ),
-        rows,
-    )
+    return TunedConfig(pred_len=PRED_LEN, d_model=int(best["d_model"]),
+                       e_layers=int(best["e_layers"]), lr=float(best["lr"])), rows
+
+
+def tune_baselines_on_validation(features, *, device=None, out_root=None, roots=None, log=print):
+    """Fixed LR sensitivity, no test feedback; report every candidate and cap."""
+    device = device or pick_device()
+    tensors = _TensorCache(features, size=1).get(RunCell("dlinear", 1, 8, PRED_LEN, SEEDS[0]))
+    configs, table = {}, []
+    for arm in ("dlinear", "patchtst", "dlinear_all", "patchtst_all"):
+        rows = []
+        for index, lr in enumerate((1e-4, 1e-3, 1e-2)):
+            cfg = replace(RunCell(arm, 1, 8, PRED_LEN, SEEDS[0]).model_config(), lr=lr)
+            spec = RunSpec(f"probe{arm}{index}", 1, 8, PRED_LEN, SEEDS[0])
+            result = validation_fit(tensors, spec, cfg, device=device, out_root=out_root, roots=roots)
+            rows.append({"arm": arm, "lr": lr, "val_mse": result["val_mse"],
+                         "epochs_run": result["epochs_run"], "cap_reached": result["epochs_run"] >= cfg.max_epochs})
+            log(f"baseline validation: {rows[-1]}")
+        best = min(rows, key=lambda r: r["val_mse"])
+        configs[arm] = replace(cfg, lr=best["lr"])
+        table.extend(rows)
+    return configs, table
 
 
 @dataclass(frozen=True, slots=True)
 class PilotResult:
-    """Root §8.5's Stage 5 gate. Note what it does **not** touch: the test blocks."""
-
+    """Validation-only descriptive gate; it does not establish statistical power."""
     val_mse: dict[int, float]
-    clark_west: object
     n_val: int
     passed: bool
 
     def __str__(self) -> str:
         rungs = "  ".join(f"K={k}: {v:.6f}" for k, v in sorted(self.val_mse.items()))
-        verdict = (
-            "PASS — K=8 beats K=1 on validation; keep the framing as written"
-            if self.passed
-            else "FAIL — reposition the title to the descriptive variant NOW, "
-                 "not in week nine (root §8.5)"
-        )
-        return f"validation MSE  {rungs}\n{self.clark_west}\n{verdict}"
+        return f"validation mean seed/step MSE  {rungs}\nK=8 lower validation loss: {self.passed}; descriptive selection event, no CW claim"
 
 
-def stage5_pilot(
-    features: pl.DataFrame,
-    *,
-    origin_index: int = 1,
-    rungs: tuple[int, ...] = K_LADDER,
-    seeds: tuple[int, ...] = SEEDS[:3],
-    out_root: Path = ARTIFACTS,
-    device=None,
-    log=print,
-) -> PilotResult:
-    """Origin 1, 4 K x 3 seeds, scored on the **validation** sub-block (`D27`).
-
-    §11's final item requires the test blocks be opened once, after the design is
-    frozen; a gate that repositions the title on a test-block result cannot
-    coexist with it. The validation sub-block is the leak-free instrument for a
-    go/no-go on architecture.
-
-    The twelve cells are ordinary main-grid ``run_id``s and their artifacts are
-    written, so the pilot costs the grid nothing: §10.5's resume finds them
-    complete and the main run skips them. That is deliberate and is *why* the
-    gate must run on validation — with a test-block gate, the origin that decided
-    the paper's framing would end up back inside the evidence for it.
-
-    The gate statistic is **Clark-West, not DM** (`D29`): K=1's feature set is a
-    strict subset of K=8's under the same architecture and sample, so the pair is
-    nested and standard DM is undersized against exactly the alternative being
-    tested. Predictions are averaged across seeds before the test, matching §9.1's
-    order of operations.
-    """
-    # The *name*, not the module, for the reason given at the top of this file.
-    # ``from itransformer_btc import metrics`` binds a module **object**, and the
-    # flattened notebook has no such object — so ``metrics.clark_west_test`` was a
-    # NameError six minutes into a Kaggle session while satisfying every check the
-    # repository had (`D59`).
     from itransformer_btc.metrics import clark_west_test
     from itransformer_btc.train import predict
-
+def stage5_pilot(features: pl.DataFrame, *, origin_index=1, rungs=K_LADDER,
+                 seeds=SEEDS[:3], out_root=None, roots=None, device=None, log=print):
+    """Mean validation step-MSE across seeds; no test artifact or power claim."""
     device = device or pick_device()
-    origin = ORIGINS[origin_index - 1]
     cache = _TensorCache(features, size=1)
-
-    val_mse: dict[int, float] = {}
-    val_pred: dict[int, "object"] = {}
-    y_val = None
-
-    import numpy as _np
-    import torch as _torch
-
+    val_mse = {}
     for k in rungs:
         cell = RunCell("main", origin_index, k, PRED_LEN, seeds[0])
         tensors = cache.get(cell)
-        y_val = tensors.val.y
-        stacked = []
+        losses = []
         for seed in seeds:
-            spec = RunCell("main", origin_index, k, PRED_LEN, seed).spec
-            model, outcome = train_one(tensors, spec, cell.model_config(), device=device)
-            write_artifacts(model, tensors, spec, cell.model_config(), outcome,
-                            device, root=out_root)
-            stacked.append(
-                predict(model, _torch.from_numpy(tensors.val.x).to(device))
-            )
-            log(f"pilot {spec.run_id}  val={outcome.best_val_mse:.6f}  "
-                f"{outcome.wall_time_s:.1f}s")
-        mean_pred = _np.mean(_np.stack(stacked), axis=0)
-        val_pred[k] = mean_pred
-        val_mse[k] = float(_np.mean((y_val - mean_pred) ** 2))
-
-    small, large = min(rungs), 8
-    # One loss value per forecast origin: the DM/CW series is indexed by the
-    # moment the forecast was issued, not by the (origin, step) pair.
-    cw = clark_west_test(
-        y_val.mean(axis=1),
-        val_pred[small].mean(axis=1),
-        val_pred[large].mean(axis=1),
-        h=PRED_LEN,
-        name=f"Clark-West K={small} vs K={large} (validation)",
-    )
-    return PilotResult(
-        val_mse=val_mse,
-        clark_west=cw,
-        n_val=len(y_val),
-        passed=bool(cw.p_value < 0.05 and val_mse[large] < val_mse[small]),
-    )
+            spec = RunSpec("pilotitr", origin_index, k, PRED_LEN, seed)
+            result = validation_fit(tensors, spec, cell.model_config(), device=device,
+                                    out_root=out_root, roots=roots)
+            losses.append(result["val_mse"])
+            log(f"pilot {spec.run_id}: validation MSE {losses[-1]:.6f}")
+        val_mse[k] = float(np.mean(losses))
+    return PilotResult(val_mse=val_mse, n_val=len(tensors.val),
+                       passed=bool(8 in val_mse and val_mse[8] < val_mse[min(rungs)]))
 
 
 def build_feature_frame(parquet: Path = DEFAULT_PARQUET) -> pl.DataFrame:

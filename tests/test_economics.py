@@ -89,25 +89,16 @@ def test_position_is_the_sign_of_the_cumulative_forecast() -> None:
     frame = positions(_preds(30, seed=3), META["sigma_g"], META["mu_g"])
     forecast = frame.get_column("forecast_raw").to_numpy()
     position = frame.get_column("position").to_numpy()
-    assert np.array_equal(np.sign(forecast), position)
-    assert set(np.unique(position)) <= {-1.0, 0.0, 1.0}
+    assert np.array_equal((forecast > 0).astype(float), position)
+    assert set(np.unique(position)) <= {0.0, 1.0}
 
 
-def test_realised_return_carries_the_drift_the_forecast_does_not() -> None:
-    """`D31`. The position comes from the drift-free forecast; the realised
-    return is the actual market move and therefore includes ``H * mu_g``."""
+def test_forecast_and_realised_both_use_the_inverse_scaler():
     preds = _preds(5, seed=9)
-    with_drift = positions(preds, META["sigma_g"], mu_g=0.01)
-    without = positions(preds, META["sigma_g"], mu_g=0.0)
-    assert np.allclose(
-        with_drift.get_column("realised_raw").to_numpy()
-        - without.get_column("realised_raw").to_numpy(),
-        24 * 0.01,
-    )
-    assert np.array_equal(
-        with_drift.get_column("position").to_numpy(),
-        without.get_column("position").to_numpy(),
-    )
+    with_mean = positions(preds, META["sigma_g"], mu_g=.01)
+    without = positions(preds, META["sigma_g"], mu_g=0.)
+    for name in ("forecast_raw", "realised_raw"):
+        np.testing.assert_allclose(with_mean[name].to_numpy() - without[name].to_numpy(), .24)
 
 
 # -- `D46` specification 2: flat days, which bound the drawdown ---------------
@@ -143,11 +134,13 @@ def test_costs_reduce_net_return_monotonically() -> None:
     assert nets[0] > nets[1] > nets[2]
 
 
-def test_a_held_position_is_charged_once_not_every_period() -> None:
-    position = np.array([1.0, 1.0, 1.0, -1.0])
-    net = net_returns(position, np.zeros(4), 0.0005)
-    unit = TAKER_FEE_PER_SIDE + 0.0005
-    assert net == pytest.approx([-unit, 0.0, 0.0, -2 * unit])
+def test_daily_round_trips_pay_entry_exit_and_terminal_costs():
+    position = np.array([1., 1., 0., 1.])
+    cost = TAKER_FEE_PER_SIDE + .0005
+    np.testing.assert_allclose(net_returns(position, np.zeros(4), .0005),
+                               position * math.log((1-cost)/(1+cost)))
+    with pytest.raises(ValueError, match="long/cash"):
+        net_returns(np.array([-1.]), np.array([0.]), .0005)
 
 
 # -- the summary statistics --------------------------------------------------
@@ -173,7 +166,7 @@ def test_buy_and_hold_is_the_comparator_and_trades_once() -> None:
     """Naive-RW holds a constant zero position, so its return series has zero
     variance and its Sharpe is undefined; comparing against it is meaningless."""
     hold = buy_and_hold(_preds(60, seed=7), META, 0.0005, mdd_interval=False)
-    assert hold.turnover_per_period == pytest.approx(0.5 / hold.n_periods)
+    assert hold.turnover_per_period == pytest.approx(1.)  # one complete round trip per observed day
 
 
 def test_jobson_korkie_memmel_is_zero_against_itself() -> None:

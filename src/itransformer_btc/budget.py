@@ -134,7 +134,7 @@ def surviving_block_starts(frame: pl.DataFrame, origin: Origin, b: int) -> int:
     survivors = 0
     for start in range(lo_ms, hi_ms, HOUR_MS):
         # The window is contiguous exactly when every hour it spans is usable.
-        if all((start + k * HOUR_MS) in usable for k in range(WINDOW_SPAN)):
+        if all((start + (k - SEQ_LEN) * HOUR_MS) in usable for k in range(WINDOW_SPAN)):
             survivors += 1
     return survivors
 

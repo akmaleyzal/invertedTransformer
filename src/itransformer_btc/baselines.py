@@ -1,66 +1,19 @@
-"""Ridge, DLinear and PatchTST — the comparators root §7 calls mandatory (`D56`).
+"""Baseline configurations compared with iTransformer on common target calendars.
 
-Until the 534-run grid finished on 2026-08-08 this module did not exist, and
-neither did any other baseline class. Root §7 says DLinear and PatchTST are "not
-optional", root §10.2 budgets 255 baseline runs, and
-:func:`itransformer_btc.metrics.dm_nonnested` has been sitting ready for input
-that was never produced — so §10.2's 789 was never executable and Table 6 had no
-inputs. The consequence is not bookkeeping: with Naive-RW the only comparator,
-"iTransformer has no edge" rests on one contrast, and §6.2/`D38` says the
-hyperparameters were adopted unchanged and never tuned. A referee reads that null
-as an immature configuration rather than a finding. These three models are the
-minimum that answers the question deciding what the negative result means:
-**did iTransformer fail, or did the whole LTSF class fail here?**
+DLinear and PatchTST default to target-only loss, including checkpoint selection.
+Their target-only path consumes target history alone (effective_input_channels=1)
+despite the supplied K=8 tensor. Separate all-channel arms expose auxiliary-task
+supervision. Ridge and LSTM can use the supplied multivariate history directly.
 
-What is built, and what each one is for:
+The post-audit PatchTST port uses its own BatchNorm/residual-attention encoder,
+shared patch projection and head, affine-free RevIN, no patch padding, and no
+head dropout. It is a declared configuration, not an exact copy of all upstream
+defaults. Baseline LR sensitivity uses only origin-1 validation. A 120-epoch cap
+with patience 12 is recorded, and reaching or avoiding it is not proof of global
+optimization convergence. All output metrics concern the return channel.
 
-=========  ==========  =====================================================
-Model      K           Question it answers
-=========  ==========  =====================================================
-Ridge      1, 4, 8, 12 `D17` — is a transformer needed at all? Linear and
-                       genuinely multivariate, so it separates *does the
-                       information help* from *does attention help*
-DLinear    8           root §7 — the first thing an LTSF-literate reviewer
-                       looks for. Linear, decomposition-based, ~4.7k weights
-PatchTST   8           root §7 — SOTA and channel-independent, the other side
-                       of the debate §13.1 makes a Related Work pillar
-=========  ==========  =====================================================
-
-**What "K = 8" means for a channel-independent model, stated because it is not
-what it means elsewhere in this study.** DLinear and PatchTST forecast each
-channel from that channel's own history; that is the architecture's claim, not a
-shortcoming of this implementation. They are therefore trained with their
-published **all-channel** objective and their weights are **shared across
-channels**, which is the only route by which the other seven variates reach the
-target's forecast at all. Trained on the target channel alone they would be K=1
-wearing a K=8 label — the exact collapse `D40` was written to prevent — and the
-paper's central architectural comparison would quietly become
-univariate-versus-multivariate again. Both facts are recorded as fields in every
-``meta/*.json`` (``loss_channels``, ``channel_independent``) so no reader has to
-infer them. Ridge carries no such caveat: every one of its ``L x K`` inputs
-enters the target's forecast, so its K label means what K means in §5.2.
-
-**Capacity is held fixed rather than tuned.** PatchTST takes iTransformer's
-``d_model``, ``d_ff``, ``e_layers``, ``n_heads`` and ``dropout`` and reuses
-:class:`itransformer_btc.model.EncoderLayer` itself, so the two models differ in
-**what a token is** — a patch of one variate against the whole lookback of each
-variate — and in nothing else. That is the cleanest available form of the
-contrast, and it extends §6.2/`D38`'s no-tuning posture to the baselines instead
-of quietly exempting them.
-
-**Scale space is identical to the ladder's** (root §6.3, §11). Every model reads
-the same ``StandardScaler`` output fitted on the same 21-month sub-block. What
-differs is internal normalisation, and it differs the way the published models
-do: PatchTST normalises per window (RevIN — the same operation ``use_norm=True``
-applies), DLinear and ridge do not, which is precisely the case §6.3 says the
-outer scaler exists to serve.
-
-**Not built here, and not silently dropped.** ARIMA, LSTM, naive-persist and
-seasonal-naive are deferred from this minimal set. Naive-RW needs no run at all —
-:func:`itransformer_btc.metrics.block_metrics` computes it from ``naive_rw_z`` on
-exactly the rows the model was scored on. If the other four are eventually cut,
-root §7 must be edited with a written reason rather than left standing over
-models nobody built.
+ARIMA remains outside this study's implemented scope; ADF does not establish
+that AIC would select an ARIMA(0,0,0). LSTM and naive comparators ARE implemented.
 
 Upstream
 --------
@@ -95,8 +48,7 @@ from", so it is drawn per model rather than left to a blanket acknowledgement.
   3rd ed. OTexts, 2021.
 
 :data:`itransformer_btc.config.SOURCE_PROVENANCE` carries every row in the same
-form, with the licence and the full list of departures.
-"""
+form, with the licence and the full list of departures."""
 
 from __future__ import annotations
 
@@ -122,25 +74,18 @@ from itransformer_btc.train import (
     set_seed,
     train_one,
 )
+from itransformer_btc.train import TrainSchedule
 
 
 class BaselineModule(nn.Module):
-    """Shared plumbing for the two channel-independent baselines.
-
-    ``forward`` returns all N channels because that is what the published
-    objective supervises; ``forecast_target`` is the projection root §10.4's
-    prediction file actually holds. Channel ``TARGET_INDEX`` is ``r`` at every
-    rung — the ladder pins it there, see
-    :data:`itransformer_btc.features.VARIATE_ORDER` — so this is one constant
-    rather than a lookup.
-    """
+    """Shared parameter counting and explicit target-only input selection for channel-independent baselines."""
 
     def n_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def forecast_target(self, x: Tensor) -> Tensor:
         """``(B, L, N) -> (B, H)`` on the target channel."""
-        return self(x)[:, :, TARGET_INDEX]
+        return self(x[:, :, TARGET_INDEX:TARGET_INDEX+1] if self.cfg.loss_target() == "target" else x)[:, :, 0 if self.cfg.loss_target() == "target" else TARGET_INDEX]
 
 
 # -- ridge -------------------------------------------------------------------
@@ -321,20 +266,7 @@ class RidgeForecaster(nn.Module):
 
 @dataclass(frozen=True, slots=True)
 class DLinearConfig:
-    """Trend-seasonal decomposition plus two linear maps (Zeng et al., 2023).
-
-    Root §7 calls it mandatory for a reason worth stating: a missing DLinear is
-    the first thing a reviewer familiar with the LTSF literature flags, because
-    it is the model that showed a linear map beating several transformers on the
-    standard benchmarks. Against a null result it does more than that — if ~4.7k
-    weights also fail here, the failure belongs to the problem and not to
-    attention.
-
-    Weights are **shared across channels**, never per-channel. The published
-    implementation offers both; only the shared form lets the all-channel
-    objective carry information from the other seven variates into the target's
-    forecast, which is what makes the K=8 label true (see this module's header).
-    """
+    """Shared trend/seasonal linear maps; target objective by default, all-channel sensitivity explicit. The validation-selected learning rate and resolved schedule are saved."""
 
     seq_len: int = SEQ_LEN
     pred_len: int = PRED_LEN
@@ -345,8 +277,17 @@ class DLinearConfig:
     #: header. A reader who does not know the objective cannot read
     #: ``best_val_mse``, which is an all-channel figure for this model and a
     #: target-channel one for the ladder.
-    loss_channels: str = "all"
+    loss_channels: str = "target"
     channel_independent: bool = True
+
+    lr: float = 1e-3
+    max_epochs: int = 120
+    patience: int = 12
+    lr_halve_every: int = 20
+
+    def schedule(self) -> "TrainSchedule":
+        return TrainSchedule(lr=self.lr, max_epochs=self.max_epochs,
+                             patience=self.patience, lr_halve_every=self.lr_halve_every)
 
     def build(self) -> "DLinear":
         return DLinear(self)
@@ -364,6 +305,7 @@ class DLinearConfig:
         """Root §6.2's schedule; nothing is selected, so the config returns as given."""
         model, outcome = train_one(tensors, spec, self, device=device)
         return model, self, outcome
+
 
 
 class SeriesDecomposition(nn.Module):
@@ -432,19 +374,7 @@ class DLinear(BaselineModule):
 
 @dataclass(frozen=True, slots=True)
 class PatchTSTConfig:
-    """Patched, channel-independent transformer (Nie et al., 2023).
-
-    The other side of the channel-independence debate root §13.1 makes a Related
-    Work pillar, and the comparison `D40` says an LTSF-literate reviewer wants:
-    iTransformer at K=8 against PatchTST at K=8, on the same information, the same
-    windows and the same scale space.
-
-    Capacity is iTransformer's, field for field, and the encoder block is
-    literally :class:`itransformer_btc.model.EncoderLayer`. The two models
-    therefore differ in **what a token is** — a patch of one variate here, one
-    variate's entire lookback there — and in nothing else. Root §6.2/`D38`'s
-    no-tuning rule applies unchanged.
-    """
+    """Shared patched encoder with BatchNorm and residual attention. The supplied tensor has K channels; target-only training uses just the target. RevIN affine is disabled, padding is absent, head dropout is zero."""
 
     seq_len: int = SEQ_LEN
     pred_len: int = PRED_LEN
@@ -463,12 +393,21 @@ class PatchTSTConfig:
     #: per channel — so the two models are normalised alike and root §6.3's
     #: cross-model scale consistency holds.
     revin: bool = True
-    loss_channels: str = "all"
+    loss_channels: str = "target"
     channel_independent: bool = True
 
     @property
     def n_patches(self) -> int:
         return (self.seq_len - self.patch_len) // self.stride + 1
+
+    lr: float = 1e-3
+    max_epochs: int = 120
+    patience: int = 12
+    lr_halve_every: int = 20
+
+    def schedule(self) -> "TrainSchedule":
+        return TrainSchedule(lr=self.lr, max_epochs=self.max_epochs,
+                             patience=self.patience, lr_halve_every=self.lr_halve_every)
 
     def build(self) -> "PatchTST":
         return PatchTST(self)
@@ -488,6 +427,46 @@ class PatchTSTConfig:
         return model, self, outcome
 
 
+
+
+class PatchEncoderLayer(nn.Module):
+    """PatchTST post-norm encoder with BatchNorm and residual attention scores.
+
+    Follows the official supervised backbone configuration (GELU, post-norm,
+    residual attention); no reuse of the iTransformer layer. Attention dropout
+    is zero, residual/FFN dropout is cfg.dropout. RevIN affine is disabled.
+    """
+    def __init__(self, cfg: PatchTSTConfig):
+        super().__init__()
+        self.heads = cfg.n_heads
+        self.width = cfg.d_model // cfg.n_heads
+        if cfg.d_model % cfg.n_heads:
+            raise ValueError("PatchTST d_model must divide into n_heads")
+        self.q = nn.Linear(cfg.d_model, cfg.d_model)
+        self.k = nn.Linear(cfg.d_model, cfg.d_model)
+        self.v = nn.Linear(cfg.d_model, cfg.d_model)
+        self.out = nn.Linear(cfg.d_model, cfg.d_model)
+        self.norm1 = nn.BatchNorm1d(cfg.d_model)
+        self.norm2 = nn.BatchNorm1d(cfg.d_model)
+        self.projection_dropout = nn.Dropout(cfg.dropout)
+        self.dropout = nn.Dropout(cfg.dropout)
+        self.ffn = nn.Sequential(nn.Linear(cfg.d_model, cfg.d_ff), nn.GELU(),
+                                 nn.Dropout(cfg.dropout), nn.Linear(cfg.d_ff, cfg.d_model))
+
+    def forward(self, x: Tensor, previous_scores: Tensor | None = None):
+        b, n, d = x.shape
+        def heads(layer):
+            return layer(x).reshape(b, n, self.heads, self.width).transpose(1, 2)
+        q, k, v = heads(self.q), heads(self.k), heads(self.v)
+        scores = q @ k.transpose(-2, -1) / self.width**.5
+        if previous_scores is not None:
+            scores = scores + previous_scores
+        context = (scores.softmax(dim=-1) @ v).transpose(1, 2).reshape(b, n, d)
+        x = self.norm1((x + self.dropout(self.projection_dropout(self.out(context)))).transpose(1, 2)).transpose(1, 2)
+        x = self.norm2((x + self.dropout(self.ffn(x))).transpose(1, 2)).transpose(1, 2)
+        return x, scores
+
+
 class PatchTST(BaselineModule):
     """``(B, L, N) -> (B, H, N)``, each channel processed as its own sequence."""
 
@@ -502,30 +481,20 @@ class PatchTST(BaselineModule):
                 f"make this model's lookback shorter than the ladder's, and the "
                 f"comparison would no longer be on identical information."
             )
-        # EncoderLayer reads d_model, d_ff, n_heads, dropout and
-        # uniform_attention; its remaining fields are inert here and stay at
-        # their defaults. Reusing the block rather than reimplementing it is what
-        # makes "same capacity, different tokenisation" a fact and not a claim.
-        block = ITransformerConfig(
-            d_model=cfg.d_model,
-            d_ff=cfg.d_ff,
-            n_heads=cfg.n_heads,
-            dropout=cfg.dropout,
-        )
         self.embedding = nn.Linear(cfg.patch_len, cfg.d_model)
         self.position = nn.Parameter(torch.zeros(cfg.n_patches, cfg.d_model))
-        nn.init.normal_(self.position, std=0.02)
+        nn.init.uniform_(self.position, -0.02, 0.02)
         self.dropout = nn.Dropout(cfg.dropout)
-        self.layers = nn.ModuleList(EncoderLayer(block) for _ in range(cfg.e_layers))
+        self.layers = nn.ModuleList(PatchEncoderLayer(cfg) for _ in range(cfg.e_layers))
         self.head = nn.Linear(cfg.n_patches * cfg.d_model, cfg.pred_len)
 
     def forward(self, x: Tensor) -> Tensor:
         b, length, n = x.shape
         mean = std = None
         if self.cfg.revin:
-            mean = x.mean(dim=1, keepdim=True)
+            mean = x.mean(dim=1, keepdim=True).detach()
             x = x - mean
-            std = torch.sqrt(x.var(dim=1, keepdim=True, unbiased=False) + 1e-5)
+            std = torch.sqrt(x.var(dim=1, keepdim=True, unbiased=False) + 1e-5).detach()
             x = x / std
 
         # (B, L, N) -> (B*N, L). Folding the channels into the batch **is**
@@ -534,9 +503,10 @@ class PatchTST(BaselineModule):
         series = x.permute(0, 2, 1).reshape(b * n, length)
         patches = series.unfold(1, self.cfg.patch_len, self.cfg.stride)
         h = self.dropout(self.embedding(patches) + self.position)
+        scores = None
         for layer in self.layers:
-            h = layer(h)
-        out = self.head(h.reshape(b * n, -1)).reshape(b, n, self.cfg.pred_len)
+            h, scores = layer(h, scores)
+        out = self.head(h.transpose(1, 2).reshape(b * n, -1)).reshape(b, n, self.cfg.pred_len)
         out = out.permute(0, 2, 1)
 
         if self.cfg.revin:

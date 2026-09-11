@@ -77,7 +77,7 @@ from itransformer_btc.features import ladder_columns
 from itransformer_btc.segments import HOUR_MS
 from itransformer_btc.splits import window_starts
 
-#: Root §8.5's Stage 3b trigger, pre-registered numerically **before** measuring:
+#: Root §8.5's Stage 3b trigger, documented numerically **before** measuring:
 #: a gate without a number stated in advance is not a gate (`D02`).
 GATE_PR_FLOOR: float = 5.0
 

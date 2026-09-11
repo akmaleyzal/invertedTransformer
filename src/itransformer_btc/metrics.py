@@ -16,7 +16,7 @@ design said:
   spans -0.00818 … +0.01733 and **changes sign across origins**, so it is not a
   constant tilt a reader could mentally subtract.
 * **`D23`** — ``D(i,b)`` lives on the **skill** scale, not on RelMSE. On RelMSE
-  every pre-registered tau is arithmetically unreachable and RQ3 returns "no
+  every documented tau is arithmetically unreachable and RQ3 returns "no
   decay detected" by construction, before a single epoch runs.
 * **`D05` follow-on** — the decay denominator is the **within-origin mean**, not
   block 1. One 30-day block under heavy tails would sit in the denominator of
@@ -92,7 +92,7 @@ RUN_ID_PATTERN = re.compile(
 
 HOUR_MS = 3_600_000
 
-#: Root §3's pre-registered thresholds. The headline is 5%; the rest are
+#: Root §3's documented thresholds. The headline is 5%; the rest are
 #: sensitivities. Choosing tau after seeing the decay curve is p-hacking.
 TAU_HEADLINE: float = 0.05
 TAU_SENSITIVITY: tuple[float, ...] = (0.025, 0.05, 0.10, 0.50)
@@ -100,7 +100,7 @@ TAU_SENSITIVITY: tuple[float, ...] = (0.025, 0.05, 0.10, 0.50)
 #: Declared so `DecayResult.b_star` keeps its columns when every origin is
 #: excluded (`D55`). An inferred schema over zero rows yields a frame with no
 #: columns at all, and the caller's ``bs["b_star"]`` then raises rather than
-#: reporting the pre-registered null.
+#: reporting the documented null.
 B_STAR_SCHEMA: dict[str, pl.DataType] = {
     "origin": pl.Utf8,
     "tau": pl.Float64,
@@ -144,17 +144,71 @@ def _locate(run_id: str, roots: list[Path], kind: str, suffix: str) -> Path:
 
 
 def load_predictions(run_id: str, roots: list[Path]) -> pl.DataFrame:
-    """Read one run's raw predictions.
+    """Read predictions with explicit UTC target times and forecast-based blocks.
 
-    Roots are searched in order, so a working directory listed first shadows an
-    older attached dataset — which is what lets a single re-run cell take effect
-    without deleting the previous session's output.
+    A01: legacy input-start labels are corrected in memory, never on disk. Only
+    existing forecasts survive: the first L missing forecast hours cannot be
+    recovered by relabelling. ``legacy_block`` retains the original attribution.
     """
-    return pl.read_parquet(_locate(run_id, roots, "preds", ".parquet"))
+    from datetime import datetime, timezone
+    path = _locate(run_id, roots, "preds", ".parquet")
+    meta_path = path.parent.parent / "meta" / f"{run_id}.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    frame = pl.read_parquet(path)
+    length = int(meta["config"]["seq_len"])
+    horizon = int(meta["spec"]["pred_len"])
+    if length < 1 or horizon < 1:
+        raise ValueError(f"{run_id}: invalid lookback or horizon")
+    if meta.get("timestamp_semantics") == "forecast_origin":
+        required = {"input_start", "forecast_origin", "target_timestamp"}
+        if not required <= set(frame.columns):
+            raise ValueError(f"{run_id}: incomplete timestamp schema")
+    elif "timestamp_semantics" not in meta:
+        frame = frame.with_columns(
+            pl.col("block").alias("legacy_block"),
+            pl.col("timestamp").alias("input_start"),
+            (pl.col("timestamp") + length * HOUR_MS).alias("forecast_origin"),
+        ).with_columns(pl.col("forecast_origin").alias("timestamp"))
+        frame = frame.with_columns(
+            (pl.col("timestamp") + (pl.col("step").cast(pl.Int64) - 1) * HOUR_MS)
+            .alias("target_timestamp")
+        )
+        # All declared base origins are month starts; the fresh label appends +90d.
+        origin = datetime.fromisoformat(str(meta["origin"])[:7] + "-01").replace(tzinfo=timezone.utc)
+        origin_ms = int(origin.timestamp() * 1000)
+        frame = frame.with_columns(
+            (((pl.col("timestamp") - origin_ms) // (BLOCK_HOURS * HOUR_MS)) + 1)
+            .cast(pl.Int32).alias("block")
+        ).filter(pl.col("block").is_in(meta.get("block_labels", [1, 2, 3, 4, 5, 6])))
+    else:
+        raise ValueError(f"{run_id}: unknown timestamp semantics")
+    if frame.filter(
+        (pl.col("timestamp") != pl.col("forecast_origin")) |
+        (pl.col("forecast_origin") - pl.col("input_start") != length * HOUR_MS) |
+        (pl.col("target_timestamp") != pl.col("timestamp") +
+         (pl.col("step").cast(pl.Int64) - 1) * HOUR_MS)
+    ).height:
+        raise ValueError(f"{run_id}: inconsistent target timestamps")
+    required = ["block", "timestamp", "step", "forecast_origin", "input_start", "target_timestamp", "y_true", "y_pred"]
+    if frame.is_empty() or any(frame[n].null_count() for n in required):
+        raise ValueError(f"{run_id}: empty predictions or null prediction keys")
+    counts = frame.group_by("timestamp").agg(
+        pl.len().alias("n"), pl.col("step").n_unique().alias("unique"),
+        pl.col("step").min().alias("first"), pl.col("step").max().alias("last"),
+    )
+    if counts.filter((pl.col("n") != horizon) | (pl.col("unique") != horizon) |
+                     (pl.col("first") != 1) | (pl.col("last") != horizon)).height:
+        raise ValueError(f"{run_id}: incomplete or duplicated forecast horizon")
+    if frame.select(pl.any_horizontal(pl.col("y_true", "y_pred").is_null() |
+                                     ~pl.col("y_true", "y_pred").is_finite()).any()).item():
+        raise ValueError(f"{run_id}: non-finite predictions")
+    return frame.sort(["block", "timestamp", "step"])
 
 
 def load_meta(run_id: str, roots: list[Path]) -> dict:
-    return json.loads(_locate(run_id, roots, "meta", ".json").read_text())
+    """Read metadata paired with the selected prediction file, never another root."""
+    path = _locate(run_id, roots, "preds", ".parquet").parent.parent / "meta" / f"{run_id}.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # -- point metrics -----------------------------------------------------------
@@ -279,8 +333,20 @@ class DirectionalAccuracy:
     n_non_overlapping: int
 
 
-def directional_accuracy(frame: pl.DataFrame) -> DirectionalAccuracy:
-    """Compute all three DA variants for one run's predictions."""
+def directional_accuracy(
+    frame: pl.DataFrame, *, sigma_g: float = 1.0, mu_g: float = 0.0,
+) -> DirectionalAccuracy:
+    """Return direction after inverse scaling y = z*sigma_g + mu_g.
+
+    H-step and cumulative primary diagnostics use non-overlapping forecast
+    origins. Non-overlap alone does not establish temporal independence for PT.
+    Defaults describe already-raw input; artifact callers must pass the scaler."""
+    if not np.isfinite(sigma_g) or sigma_g <= 0 or not np.isfinite(mu_g):
+        raise ValueError("directional accuracy requires a finite mean and positive scale")
+    frame = frame.with_columns(
+        (pl.col("y_true") * sigma_g + mu_g).alias("y_true"),
+        (pl.col("y_pred") * sigma_g + mu_g).alias("y_pred"),
+    )
     last_step = int(frame.get_column("step").max())
 
     step1 = frame.filter(pl.col("step") == 1)
@@ -324,30 +390,15 @@ def directional_accuracy(frame: pl.DataFrame) -> DirectionalAccuracy:
 
 
 def assert_same_windows(left: pl.DataFrame, right: pl.DataFrame, what: str) -> None:
-    """`D45` — two models may only be compared on identical evaluated windows.
-
-    Naive-RW needs no 96-bar lookback, so unless it is restricted to the window
-    set its comparator actually evaluated, RelMSE is a ratio across two different
-    samples. Test-window survival is conditioned on *future* gaps and outages
-    cluster on stress, so the two samples would differ precisely in their
-    high-volatility content.
-
-    Raises:
-        ValueError: If the evaluated ``(block, timestamp)`` sets differ.
-    """
-    def _key(frame: pl.DataFrame) -> np.ndarray:
-        pairs = frame.select(["block", "timestamp"]).unique().sort(["block", "timestamp"])
-        return (
-            pairs.get_column("block").to_numpy().astype(np.int64) * (1 << 44)
-            + pairs.get_column("timestamp").to_numpy().astype(np.int64) // HOUR_MS
-        )
-
-    a, b = _key(left), _key(right)
-    if len(a) != len(b) or not np.array_equal(a, b):
-        raise ValueError(
-            f"{what}: evaluated window sets differ ({len(a)} vs {len(b)} "
-            f"windows). RelMSE across two samples is not a ratio."
-        )
+    """Compare every forecast/step key, including actual target times (A01)."""
+    columns = ["block", "timestamp", "step"]
+    if "target_timestamp" in left.columns or "target_timestamp" in right.columns:
+        if not all("target_timestamp" in f.columns for f in (left, right)):
+            raise ValueError(f"{what}: target timestamp contract missing on one side")
+        columns.append("target_timestamp")
+    a, b = [f.select(columns).sort(columns) for f in (left, right)]
+    if a.is_duplicated().any() or b.is_duplicated().any() or not a.equals(b):
+        raise ValueError(f"{what}: evaluated window sets differ ({a.height} vs {b.height} points)")
 
 
 def block_metrics(frame: pl.DataFrame, naive_z: float) -> pl.DataFrame:
@@ -384,48 +435,77 @@ def block_metrics(frame: pl.DataFrame, naive_z: float) -> pl.DataFrame:
     )
 
 
-def gather_grid(run_ids: list[str], roots: list[Path]) -> pl.DataFrame:
-    """Per (run, block) metrics for many runs — the input to every RQ estimator.
+def evaluation_windows(run_ids: list[str], roots: list[Path]) -> pl.DataFrame:
+    """Common forecast times per origin, horizon and block across supplied runs.
 
-    Returns:
-        Long frame with ``run_id, model, origin_index, origin, k, pred_len,
-        seed, block, n_windows, mse, mae, mse_naive, rel_mse, r2_oos, sigma_g``.
-
-    Raises:
-        FileNotFoundError: If any run is absent. A quietly short grid produces a
-            table whose cells came from different arms, which is worse than no
-            table.
+    The intersection is exploratory for legacy artifacts. It does not recover
+    forecasts absent from an arm or outcomes absent from the data.
     """
-    rows: list[pl.DataFrame] = []
-    missing: list[str] = []
-    for run_id in run_ids:
-        try:
-            preds = load_predictions(run_id, roots)
-            meta = load_meta(run_id, roots)
-        except FileNotFoundError:
-            missing.append(run_id)
-            continue
+    common = {}
+    vintages = set()
+    for run_id in sorted(run_ids):
         parts = parse_run_id(run_id)
-        rows.append(
-            block_metrics(preds, float(meta["naive_rw_z"])).with_columns(
-                pl.lit(run_id).alias("run_id"),
-                pl.lit(str(parts["model"])).alias("model"),
-                pl.lit(int(parts["origin_index"])).cast(pl.Int32).alias("origin_index"),
-                pl.lit(str(meta["origin"])).alias("origin"),
-                pl.lit(int(parts["k"])).cast(pl.Int32).alias("k"),
-                pl.lit(int(parts["pred_len"])).cast(pl.Int32).alias("pred_len"),
-                pl.lit(int(parts["seed"])).cast(pl.Int32).alias("seed"),
-                pl.lit(float(meta["sigma_g"])).alias("sigma_g"),
-            )
-        )
-    if missing:
-        raise FileNotFoundError(
-            f"{len(missing)} of {len(run_ids)} runs are absent, first few: "
-            f"{missing[:5]}. Complete the grid or pass the subset explicitly — "
-            f"a silently short grid mixes arms inside one table."
-        )
-    if not rows:
-        raise ValueError("no runs gathered")
+        meta = load_meta(run_id, roots)
+        vintage = (meta.get("input_sha256"), meta.get("code_sha256"))
+        if any(not v or v == "unknown" for v in vintage):
+            raise ValueError(f"{run_id}: missing analysis provenance")
+        vintages.add(vintage)
+        frame = load_predictions(run_id, roots)
+        labels = meta.get("block_labels", [1, 2, 3, 4, 5, 6])
+        for b in labels:
+            key = (parts["origin_index"], parts["pred_len"], int(b))
+            stamps = set(frame.filter(pl.col("block") == b)["timestamp"].unique().to_list())
+            common[key] = common[key] & stamps if key in common else stamps
+    if len(vintages) != 1:
+        raise ValueError("analysis mixes code or input vintages")
+    if any(not stamps for stamps in common.values()):
+        raise ValueError("a required origin/horizon/block has no common forecast times")
+    return pl.DataFrame([
+        {"origin_index": i, "pred_len": h, "block": b, "timestamp": t}
+        for (i, h, b), stamps in sorted(common.items()) for t in sorted(stamps)
+    ])
+
+
+def gather_grid(run_ids: list[str], roots: list[Path], *,
+                windows: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Mean step errors on identical actual targets; average seeds afterwards.
+
+    Common times and per-block hashes make downstream sample equality checkable.
+    Forecast files and their original metadata are never modified.
+    """
+    import hashlib
+    if windows is None:
+        windows = evaluation_windows(run_ids, roots)
+    rows = []
+    raw_targets = {}
+    for run_id in sorted(run_ids):
+        parts = parse_run_id(run_id)
+        meta = load_meta(run_id, roots)
+        keep = windows.filter((pl.col("origin_index") == parts["origin_index"]) &
+                              (pl.col("pred_len") == parts["pred_len"]))
+        frame = load_predictions(run_id, roots).join(
+            keep.select("block", "timestamp"), on=["block", "timestamp"], how="semi"
+        ).sort(["block", "timestamp", "step"])
+        hashes = []
+        for (b,), block_frame in frame.group_by("block", maintain_order=True):
+            key = (parts["origin_index"], parts["pred_len"], b)
+            values = block_frame["y_true"].to_numpy().astype(np.float64) * float(meta["sigma_g"]) + float(meta["mu_g"])
+            if key in raw_targets and not np.allclose(values, raw_targets[key], rtol=1e-5, atol=1e-8):
+                raise ValueError(f"{run_id}: actual raw targets disagree")
+            raw_targets[key] = values
+            keys = block_frame.select("timestamp", "step", "target_timestamp").to_numpy().astype("<i8")
+            hashes.append({"block": int(b), "evaluation_keys_sha256": hashlib.sha256(keys.tobytes()).hexdigest()})
+        rows.append(block_metrics(frame, float(meta["naive_rw_z"])).join(
+            pl.DataFrame(hashes), on="block"
+        ).with_columns(
+            pl.lit(run_id).alias("run_id"), pl.lit(str(parts["model"])).alias("model"),
+            pl.lit(int(parts["origin_index"])).cast(pl.Int32).alias("origin_index"),
+            pl.lit(str(meta["origin"])).alias("origin"),
+            pl.lit(int(parts["k"])).cast(pl.Int32).alias("k"),
+            pl.lit(int(parts["pred_len"])).cast(pl.Int32).alias("pred_len"),
+            pl.lit(int(parts["seed"])).cast(pl.Int32).alias("seed"),
+            pl.lit(float(meta["sigma_g"])).alias("sigma_g"),
+        ))
     return pl.concat(rows)
 
 
@@ -443,8 +523,14 @@ def seed_average(grid: pl.DataFrame) -> pl.DataFrame:
     rule can bind the error bar to the aggregation level (`D30`) — seed std is a
     Monte-Carlo diagnostic, never the uncertainty on an origin-aggregated row.
     """
+    identity = ["model", "origin_index", "origin", "k", "pred_len", "block"]
+    extra = []
+    if "evaluation_keys_sha256" in grid.columns:
+        if grid.group_by(identity).agg(pl.col("evaluation_keys_sha256").n_unique().alias("n")).filter(pl.col("n") != 1).height:
+            raise ValueError("seeds were evaluated on different target calendars")
+        extra = [pl.col("evaluation_keys_sha256").first()]
     return (
-        grid.group_by(["model", "origin_index", "origin", "k", "pred_len", "block"])
+        grid.group_by(identity)
         .agg(
             pl.col("mse").mean().alias("mse"),
             pl.col("mae").mean().alias("mae"),
@@ -453,6 +539,7 @@ def seed_average(grid: pl.DataFrame) -> pl.DataFrame:
             pl.col("n_windows").first().alias("n_windows"),
             pl.col("sigma_g").first().alias("sigma_g"),
             pl.col("mse").count().alias("n_seeds"),
+            *extra,
         )
         .with_columns(
             (pl.col("mse") / pl.col("mse_naive")).alias("rel_mse"),
@@ -476,7 +563,7 @@ def amplification(
 
     **K=8, never K=12.** K=12 carries deliberate redundancy (root §5.2), so
     using it would confound decay with that redundancy — which is why the pair
-    is a parameter with a pre-registered default rather than a free choice.
+    is a parameter with a documented default rather than a free choice.
 
     Both models are evaluated on the same block, so period difficulty cancels in
     the ratio, and it cancels *well*: ``MSE_model`` and ``MSE_naive`` on one
@@ -525,7 +612,7 @@ def attention_amplification(
     decaying ``A(b)`` is equally consistent with "cross-variate attention
     overfits regime-specific structure" — a capacity story — as with the
     information story RQ2 claims. This contrast holds information fixed and
-    varies only what attention selects, at runs Figure 5 needs anyway.
+    varies attention selection, Q/K use and attention-weight dropout, at runs Figure 5 needs anyway.
     """
     sel = seed_avg.filter((pl.col("k") == k) & (pl.col("pred_len") == pred_len))
     uniform = (
@@ -605,36 +692,24 @@ def decay(
     model: str = "itr",
     pred_len: int = 24,
 ) -> DecayResult:
-    """``D(i,b)`` on the **skill** scale (`D23`), normalised within origin (`D05`).
+    """Exploratory skill loss relative to the FIRST test block (A07).
 
-    ``D(i,b) = [mean_b' R2_oos(i,b') - R2_oos(i,b)] / mean_b' R2_oos(i,b')``
-
-    On the RelMSE scale the pre-registered thresholds are unreachable: with
-    ``RelMSE(1) = 0.996``, even *total* destruction of the model's edge gives
-    ``D = 1/0.996 - 1 = 0.402%``, so tau = 2.5% would require the model to become
-    2% worse than forecasting zero. RQ3 would return "no decay detected"
-    regardless of the data — a result fixed by a units mismatch rather than by
-    the market. On the skill scale ``D`` runs from 0 (no decay) through 1 (edge
-    fully gone) and the taus are commensurate with it.
-
-    The denominator is the within-origin **mean** rather than block 1's value
-    (`D05` follow-on): block 1 is one 30-day block under heavy tails and
-    volatility clustering, and it would otherwise sit in the denominator of five
-    quantities and make their errors perfectly correlated.
-
-    **Origins with non-positive mean skill are excluded and named**, never
-    silently dropped: ``D`` is a proportion of an edge, and an origin with no
-    edge has no proportion of one. Root §10.3's first measured run returned
-    ``R2_oos = -0.0183``, so this guard may well be the common case rather than
-    the edge case §9.1 assumed.
-    """
+    D(i,b) = (R2(i,1)-R2(i,b))/R2(i,1). The block-1 estimate is noisy and
+    shared by later ratios. Non-positive reference skill is excluded and named.
+    This post-audit definition cannot estimate an optimal retraining policy."""
     sel = seed_avg.filter(
         (pl.col("model") == model)
         & (pl.col("k") == k)
         & (pl.col("pred_len") == pred_len)
     ).sort(["origin_index", "block"])
 
-    reference = sel.group_by("origin").agg(pl.col("r2_oos").mean().alias("r2_ref"))
+    if sel.group_by("origin").agg(pl.col("block").n_unique().alias("n")).filter(pl.col("n") != 6).height:
+        raise ValueError("decay requires all six blocks per origin")
+    reference = sel.filter(pl.col("block") == 1).select(
+        "origin", pl.col("r2_oos").alias("r2_ref")
+    )
+    if reference.height != sel.get_column("origin").n_unique():
+        raise ValueError("decay requires exactly one first-block reference per origin")
     joined = sel.join(reference, on="origin", how="left")
 
     excluded = tuple(
@@ -1084,7 +1159,7 @@ def panel_beta1(
         panel: Long frame with ``origin``, ``block`` and ``value``. Must be
             balanced — every origin carries the same block set.
         value: Dependent variable column.
-        B: Bootstrap replications. 99,999 as pre-registered.
+        B: Bootstrap replications. 99,999 as documented.
         seed: Bootstrap seed, recorded so the p-value is regenerable (root §12).
 
     **Without ``alpha_i``, beta1 absorbs origin-level difficulty** (`D06`). With
@@ -1100,7 +1175,7 @@ def panel_beta1(
     and is **one-sided at alpha = 0.05 declared in advance**. WCU is severely
     size-distorted at small G (MacKinnon, Nielsen & Webb 2023), and the
     asymptotic refinement comes from bootstrapping *t* (Cameron, Gelbach &
-    Miller 2008). A side chosen after seeing the sign is not pre-registered.
+    Miller 2008). A side chosen after seeing the sign is not documented.
     """
     a, x = _balanced_matrix(panel, value)
     g, n_blocks = a.shape
@@ -1176,7 +1251,7 @@ class EquivalenceResult:
 def tost_equivalence(
     deltas: np.ndarray, margin: float, alpha: float = 0.05
 ) -> EquivalenceResult:
-    """Two one-sided tests — RQ1's pre-registered equivalence check (`D49`).
+    """Two one-sided tests — RQ1's documented equivalence check (`D49`).
 
     RQ1's claim that the 8->12 rung is flat is an assertion of **no effect**, and
     a non-significant ΔMSE is a failure to reject, not evidence of equivalence.
@@ -1206,69 +1281,57 @@ def tost_equivalence(
 
 
 def j_test(
-    y: np.ndarray, x_a: np.ndarray, x_b: np.ndarray, groups: np.ndarray
+    y: np.ndarray, x_a: np.ndarray, x_b: np.ndarray, groups: np.ndarray,
+    *, clusters: np.ndarray | None = None,
 ) -> tuple[float, float]:
-    """Davidson-MacKinnon J-test of model A against model B (`D32`).
+    """Davidson-MacKinnon J diagnostic with CR1 covariance and t(G-1).
 
-    RQ1 is a **non-nested** comparison: "benefit tracks K" and "benefit tracks
-    K_eff" are two different regressors for the same outcome, and neither nests
-    the other. Fitting both and comparing R-squared answers nothing; the J-test
-    augments A with B's fitted values and asks whether they still carry
-    information.
-
-    All three inputs are within-transformed by ``groups`` first — the (origin x
-    block) fixed effects of §9.1's specification — so the comparison is
-    identified from within-cell variation across rungs, which is the only
-    variation that distinguishes the two theories.
-
-    Returns:
-        ``(t statistic on B's fitted values, two-sided p)``. A significant t
-        means A alone is inadequate. Run it both ways: if both reject, neither
-        explanation is sufficient; if neither does, the data cannot separate
-        them, which at ``corr(K, K_eff) ~ 0.97`` is the outcome to expect and to
-        report plainly.
+    ``groups`` identify fixed effects; ``clusters`` identify origins. If omitted,
+    each fixed-effect group is a cluster. Overlap BETWEEN origins remains a
+    design limitation: this diagnostic is not confirmatory inference (A03).
     """
+    y, x_a, x_b = [np.asarray(v, dtype=np.float64) for v in (y, x_a, x_b)]
+    groups = np.asarray(groups)
+    clusters = groups if clusters is None else np.asarray(clusters)
+    if any(v.ndim != 1 or len(v) != len(y) for v in (y, x_a, x_b, groups, clusters)):
+        raise ValueError("J-test arrays must be one-dimensional with equal lengths")
+    if not all(np.all(np.isfinite(v)) for v in (y, x_a, x_b)):
+        raise ValueError("J-test inputs must be finite")
     def _demean(v: np.ndarray) -> np.ndarray:
-        v = np.asarray(v, dtype=np.float64)
-        out = v.astype(np.float64).copy()
-        for g in np.unique(groups):
-            mask = groups == g
-            out[mask] = v[mask] - v[mask].mean()
+        out = v.copy()
+        for group in np.unique(groups):
+            mask = groups == group
+            out[mask] -= v[mask].mean()
         return out
-
-    yd, ad, bd = _demean(y), _demean(x_a), _demean(x_b)
-    fitted_b = bd * (float(bd @ yd) / float(bd @ bd))
-
-    design = np.column_stack([ad, fitted_b])
-    coef, *_ = np.linalg.lstsq(design, yd, rcond=None)
-    resid = yd - design @ coef
-    dof = len(yd) - design.shape[1] - len(np.unique(groups))
-    if dof <= 0:
+    yd, ad, bd = [_demean(v) for v in (y, x_a, x_b)]
+    n, g = len(y), len(np.unique(clusters))
+    dof = n - 2 - len(np.unique(groups))
+    if g < 2 or dof <= 0 or not bd @ bd > 0:
         return float("nan"), float("nan")
-    sigma2 = float(resid @ resid) / dof
-    cov = sigma2 * np.linalg.pinv(design.T @ design)
-    se = math.sqrt(max(cov[1, 1], 0.0))
+    fitted_b = bd * float((bd @ yd) / (bd @ bd))
+    design = np.column_stack([ad, fitted_b])
+    if np.linalg.matrix_rank(design) < 2:
+        return float("nan"), float("nan")
+    coef = np.linalg.lstsq(design, yd, rcond=None)[0]
+    resid = yd - design @ coef
+    bread = np.linalg.pinv(design.T @ design)
+    scores = np.array([design[clusters == c].T @ resid[clusters == c]
+                       for c in np.unique(clusters)])
+    cov = (g / (g - 1)) * ((n - 1) / dof) * bread @ (scores.T @ scores) @ bread
+    se = math.sqrt(max(float(cov[1, 1]), 0.0))
     if se <= 0:
         return float("nan"), float("nan")
-    t = float(coef[1] / se)
-    return t, 2.0 * _upper_tail(abs(t), dof)
+    statistic = float(coef[1] / se)
+    return statistic, 2.0 * _upper_tail(abs(statistic), g - 1)
 
 
 def minimum_detectable_beta1(
     within_slopes: np.ndarray, alpha: float = 0.05, power: float = 0.80
 ) -> float:
-    """The MDE root §13.2 calls the most damaging omission on its list.
+    """Plug-in sensitivity of beta1 under independent-origin assumptions.
 
-    Every design choice in this study implies someone reasoned about precision,
-    and no number was written down. If the MDE exceeds the plausible magnitude
-    of ``A``, RQ2 must be repositioned as descriptive **before** the grid runs —
-    otherwise a non-significant beta1 is indistinguishable from a design that
-    could never have detected decay.
-
-    Computed from the between-origin dispersion of the within-slope, which is
-    exactly what the Stage 5 pilot estimates. Returned negative, since the
-    alternative is one-sided and downward.
-    """
+    The caller supplies slopes. In this study these are observed TEST slopes,
+    so the computed value is post-analysis sensitivity, not prospective power."""
     g = len(within_slopes)
     if g < 2:
         return float("nan")
@@ -1312,7 +1375,10 @@ def directional_accuracy_table(run_ids: list[str], roots: list[Path]) -> pl.Data
     for run_id in run_ids:
         parts = parse_run_id(run_id)
         meta = load_meta(run_id, roots)
-        da = directional_accuracy(load_predictions(run_id, roots))
+        da = directional_accuracy(
+            load_predictions(run_id, roots),
+            sigma_g=float(meta["sigma_g"]), mu_g=float(meta["mu_g"]),
+        )
         rows.append(
             {
                 "run_id": run_id,
@@ -1351,29 +1417,11 @@ def raw_scale_table(seed_avg: pl.DataFrame) -> pl.DataFrame:
 
 
 def falsification_relmse(seed_avg: pl.DataFrame) -> pl.DataFrame:
-    """``aged - fresh`` on **RelMSE**, per (origin, block) -- `D60i`.
+    """Aged-minus-fresh block RelMSE on a verified common target calendar.
 
-    Root §8.1's falsification arm is the only design in the study that identifies
-    decay directly, and the number reported for it was a units artefact. The
-    notebook printed ``mean(aged - fresh) = -0.053341`` as a raw scaler-space MSE
-    difference. The two arms are fitted at origins 90 days apart and therefore
-    carry **different sigma_g** -- 0.009151 against 0.007297 at origin 1 -- so
-    that difference compares numbers in different units. The matching naive
-    baselines differ by -0.053196, i.e. about **99.7% of it is scaler drift**, and
-    the sign reads backwards, appearing to say the aged model beat the fresh one.
-
-    Root §9.1 already forbade the comparison by requiring RelMSE "to control for
-    period difficulty". The arm was simply never brought under the rule, and the
-    corrected figure lived only in prose. **The raw-MSE figure must not appear in
-    the manuscript**, and the general rule this defect bought is that any
-    cross-origin model comparison is on RelMSE or ``R2_oos``, never on
-    scaler-space MSE.
-
-    Returns:
-        ``origin_index, origin, block, rel_aged, rel_fresh, gap_rel_mse`` over the
-        cells the arm covers -- blocks 4-6 at each origin, which are the same
-        calendar hours the aged model was scored on.
-    """
+    Different training scalers require scale-free losses. The fresh arm changes
+    BOTH training and validation windows and has one seed versus five aged.
+    This combined intervention does not identify a pure causal ageing effect."""
     sel = seed_avg.filter(pl.col("pred_len") == 24)
     aged = (
         sel.filter((pl.col("model") == "itr") & (pl.col("k") == 8))
@@ -1392,40 +1440,14 @@ def falsification_relmse(seed_avg: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def per_origin_relmse(
-    seed_avg: pl.DataFrame, model: str, k: int | None = None
-) -> pl.DataFrame:
-    """One RelMSE per origin for one arm: window-weighted over its test blocks.
-
-    Seed-averaged MSEs first, ratio second, exactly as `D42` requires --- the two
-    orders differ by Jensen, and the per-seed form would additionally have to pair
-    seed 42 of one arm with seed 42 of another, which are independent training
-    runs of different models.
-
-    Args:
-        seed_avg: :func:`seed_average`'s output.
-        model: Model tag.
-        k: Rung, when the tag carries more than one.
-
-    Returns:
-        ``origin, rel_mse, n_windows``, sorted by origin.
-    """
-    part = seed_avg.filter(
-        (pl.col("model") == model) & (pl.col("pred_len") == PRED_LEN)
-    )
+def per_origin_relmse(seed_avg: pl.DataFrame, model: str, k: int | None = None) -> pl.DataFrame:
+    """Equal-weight block RelMSE, matching the headline and comparison panel."""
+    part = seed_avg.filter((pl.col("model") == model) & (pl.col("pred_len") == PRED_LEN))
     if k is not None:
         part = part.filter(pl.col("k") == k)
-    return (
-        part.group_by("origin")
-        .agg(
-            (pl.col("mse") * pl.col("n_windows")).sum().alias("_num"),
-            (pl.col("mse_naive") * pl.col("n_windows")).sum().alias("_den"),
-            pl.col("n_windows").sum().alias("n_windows"),
-        )
-        .with_columns((pl.col("_num") / pl.col("_den")).alias("rel_mse"))
-        .drop(["_num", "_den"])
-        .sort("origin")
-    )
+    return part.group_by("origin").agg(
+        pl.col("rel_mse").mean(), pl.col("n_windows").sum()
+    ).sort("origin")
 
 
 def paired_contrast(
@@ -1433,39 +1455,21 @@ def paired_contrast(
     left: tuple[str, int | None],
     right: tuple[str, int | None],
 ) -> dict:
-    """Paired difference in RelMSE between two arms, across the origins they share.
+    """Exploratory paired contrast of mean seed loss, equal blocks and origins.
 
-    **The contrast the marginal columns cannot give you** (`D82`). Table 4 and
-    Table 9 print each arm's mean RelMSE with its standard error *across* origins,
-    and a reader differencing two such rows is comparing marginal spreads when the
-    arms are evaluated on the same fifteen origins with the same naive baselines.
-    The paired standard error is roughly half the marginal one here, so overlapping
-    error bars in those tables say nothing about whether the arms differ.
-
-    It is what RQ1's matched-K pair needs in particular. ``itro`` and ``itrr`` hold
-    K = 8, the target and the seeds fixed and move only the participation ratio, so
-    their difference is the direct K-versus-K_eff contrast the ladder can only
-    infer through a panel at ``corr(K, K_eff) = 0.828``. Reporting them as two
-    separate rows against the ladder leaves that difference uncomputed.
-
-    Sign convention: **positive means the left arm is worse**, since a higher
-    RelMSE is a worse forecast.
-
-    The origin is the inferential unit (`D30`) and RelMSE is scale-free, so this
-    never compares scaler-space MSEs fitted under different ``sigma_g`` (`D60i`).
-    It is a **post-hoc** statistic with no multiplicity control of its own: it
-    guides what belongs in the paper, and root §9.2's pre-registered machinery is
-    what a confirmatory claim goes through.
-
-    Args:
-        seed_avg: :func:`seed_average`'s output.
-        left: ``(model_tag, k)``; ``k`` may be None when the tag has one rung.
-        right: The arm it is measured against.
-
-    Returns:
-        ``left, right, mean_diff, se, t, p_two_sided, ci_low, ci_high,
-        n_origins, left_better``. ``p_two_sided`` is referred to ``t(G-1)``.
-    """
+    Positive means left is worse. Calendar hashes must agree when supplied.
+    The t(G-1) interval/p-value assumes independent origins, which the overlapping
+    study does not establish. Feature content and PR both change in matched-K."""
+    if "evaluation_keys_sha256" in seed_avg.columns:
+        parts = []
+        for tag, k in (left, right):
+            part = seed_avg.filter((pl.col("model") == tag) & (pl.col("pred_len") == PRED_LEN))
+            if k is not None:
+                part = part.filter(pl.col("k") == k)
+            parts.append(part.select("origin_index", "block", "evaluation_keys_sha256"))
+        check = parts[0].join(parts[1], on=["origin_index", "block"], suffix="_right")
+        if check.filter(pl.col("evaluation_keys_sha256") != pl.col("evaluation_keys_sha256_right")).height:
+            raise ValueError("paired contrast uses different actual targets")
     a = per_origin_relmse(seed_avg, left[0], left[1])
     b = per_origin_relmse(seed_avg, right[0], right[1])
     joined = a.join(b, on="origin", how="inner", suffix="_right").sort("origin")
@@ -1505,6 +1509,7 @@ def paired_contrast(
         "ci_high": mean + half,
         "n_origins": g,
         "left_better": int((diff < 0).sum()),
+        "inference_status": "exploratory; independent-origin t approximation only",
     }
 
 

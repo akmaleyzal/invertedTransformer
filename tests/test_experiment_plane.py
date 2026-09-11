@@ -55,18 +55,21 @@ def test_manifest_is_deduplicated_by_run_id() -> None:
     cells = runner.manifest()
     ids = [c.run_id for c in cells]
     assert len(ids) == len(set(ids))
-    assert len(cells) == 1_620
+    assert len(cells) == 2_130
+    assert len(runner.manifest(historical=True)) == 1_620
 
     counts: dict[str, int] = {}
     for cell in cells:
         counts[cell.arm] = counts.get(cell.arm, 0) + 1
     assert counts == {
-        "main": 300, "uniform": 75, "fresh": 15, "horizon": 240,
+        "main": 300, "uniform": 75, "fresh": 75, "horizon": 240,
         "ridge": 60, "dlinear": 75, "patchtst": 75,
         "lstm": 75, "persist": 15, "seasonal": 15,
         "orthogonal": 75, "redundant": 75, "look048": 75, "look192": 75,
         "tuned": 75,
         "attention": 75, "longsched": 150, "capacity": 75,
+        "valrefresh": 75, "repr_identity": 75, "repr_whiten": 75, "repr_correlate": 75,
+        "dlinear_all": 75, "patchtst_all": 75,
     }
     assert 300 + 75 + 15 + 192 - 534 == 48
 
@@ -96,11 +99,12 @@ def test_robustness_arms_cannot_collide_with_a_completed_run() -> None:
     robust = runner.manifest(runner.ROBUSTNESS_ARMS)
     new = {c.run_id for c in robust}
     # attention 75 + longsched 150 + capacity 75 + `D70`'s five arms at 75 each.
-    assert len(new) == 75 + 150 + 75 + 5 * 75
+    assert len(new) == 75 + 150 + 75 + 11 * 75
     assert not (old & new)
     assert {c.run_id[:4] for c in robust} == {
         "itra", "itrl", "itrc",           # `D62`
         "itro", "itrr", "l048", "l192", "itrt",  # `D70`
+        "itrv", "repi", "repw", "repc", "dlin", "ptst",  # audit controls
     }
 
 
@@ -331,9 +335,9 @@ def test_decay_is_on_the_skill_scale_and_guards_its_denominator() -> None:
     assert result.excluded_origins == ("dead",)
     assert set(result.table.get_column("origin").to_list()) == {"good"}
 
-    # Mean skill is 0.05, so D(1) = (0.05 - 0.10)/0.05 = -1 and D(6) = +1.
+    # A07: block-1 skill is 0.10; D(1)=0 and D(6)=1.
     d = result.table.sort("block").get_column("D").to_list()
-    assert d[0] == pytest.approx(-1.0)
+    assert d[0] == pytest.approx(0.0)
     assert d[-1] == pytest.approx(1.0)
 
     censored = result.b_star(tau=5.0)

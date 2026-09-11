@@ -84,7 +84,7 @@ def run_cell(source: str, **scope: object) -> tuple[str, dict]:
         **{k: v for k, v in vars(metrics).items() if not k.startswith("__")},
         "pl": pl,
         "np": np,
-        "GRID_COMPLETE": True,
+        "ANALYSIS_READY": True,
         **scope,
     }
     buffer = io.StringIO()
@@ -93,114 +93,30 @@ def run_cell(source: str, **scope: object) -> tuple[str, dict]:
     return buffer.getvalue(), ns
 
 
-# -- RQ3: the three panel states it has to tell apart ------------------------
+
+def evaluation_step(slug):
+    nb = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+    return next("".join(c["source"]) for c in nb["cells"]
+                if c.get("metadata", {}).get("itbtc", {}).get("step") == slug)
 
 
-def test_rq3_reports_undefined_when_every_origin_lacks_an_edge(cells) -> None:
-    """`D55`, and the shape the completed grid actually returned.
-
-    R2_oos was negative at all four rungs and all fifteen origins, so ``decay``
-    excluded every origin. The cell must print the pre-registered null instead of
-    raising, and must **not** call it censoring: a censored origin has an edge
-    that never decays past tau, whereas here there is no edge to take a
-    proportion of. One wording for both would claim skill the grid never found.
-    """
-    out, ns = run_cell(cell_containing(cells, "--- RQ3"),
-                       seed_avg=panel({1: -0.0205, 8: -0.0180}))
-
-    # Assert the claim, not the spelling: the cell *quotes* the censored wording
-    # in order to forbid it, so a bare substring check would fail on the very
-    # sentence that gets this right.
-    assert "UNDEFINED" in out
-    assert "RQ3 RETURNS NO ANSWER" in out
-    assert "the decay estimand is undefined" in out
-    assert "censored >6" not in out          # the per-tau result lines
-    assert "crossings" not in out            # the estimated branch's format
-    assert {r["status"] for r in ns["b_star_rows"]} == {"undefined"}
-    assert len(ns["b_star_rows"]) == len(metrics.TAU_SENSITIVITY)
-
-    # Every tau, including the headline, and the excluded origins named.
-    for tau in metrics.TAU_SENSITIVITY:
-        assert f"tau={tau:>6.1%}" in out
-    assert "2020-01" in out and "2025-11" in out
+@pytest.mark.parametrize("slug", ["rq1", "rq2", "rq3", "save"])
+def test_estimator_cells_skip_cleanly_on_a_partial_grid(slug):
+    out, _ = run_cell(evaluation_step(slug), ANALYSIS_READY=False)
+    assert "skipped" in out.lower()
 
 
-def test_rq3_reports_censoring_when_an_edge_exists_but_never_decays(cells) -> None:
-    """The state the estimator was designed for, and the wording root §3 fixes.
-
-    Positive skill, flat across blocks: b* is right-censored at 6 in every
-    origin. Here — and only here — "no decay detected within 180 days" is the
-    honest sentence.
-    """
-    out, ns = run_cell(cell_containing(cells, "--- RQ3"),
-                       seed_avg=panel({1: 0.004, 8: 0.004}))
-
-    assert "censored >6" in out
-    assert "no decay detected within 180 days" in out
-    assert "UNDEFINED" not in out
-    assert {r["status"] for r in ns["b_star_rows"]} == {"estimated"}
-    assert all(r["n_origins"] == len(ORIGINS) for r in ns["b_star_rows"])
-
-
-def test_rq3_never_prints_a_nan_as_though_it_were_a_statistic(cells) -> None:
-    """With zero crossings in both arms the log-rank statistic is 0/0.
-
-    Printing ``chi2=nan p=nan`` there is the same defect as `D55`: a number that
-    reads like a computed result but is not one, which root §12 calls a
-    documented failure rather than a footnote.
-
-    The check is on nan *formatted as a statistic*, not on the three letters:
-    the cell's own explanation says the word, which is the sentence doing this
-    correctly.
-    """
-    for skills in ({1: -0.0205, 8: -0.0180}, {1: 0.004, 8: 0.004}):
-        out, _ = run_cell(cell_containing(cells, "--- RQ3"), seed_avg=panel(skills))
-        assert "chi2=nan" not in out
-        assert "p=nan" not in out
-        assert "log-rank K=8 vs K=1 UNAVAILABLE" in out
-
-
-def test_rq3_computes_the_log_rank_when_both_arms_have_crossings(cells) -> None:
-    """The positive path still runs — the guards must not have disabled H3.
-
-    Skill decays within each origin, so D(i,b) crosses tau and b* is an event
-    rather than a censoring in both arms.
-    """
-    rows = [
-        {
-            "model": "itr", "origin_index": i, "origin": origin, "k": k,
-            "pred_len": 24, "block": block, "mse": 1.0 - r2, "mse_naive": 1.0,
-            "n_windows": 720, "r2_oos": r2,
-        }
-        for i, origin in enumerate(ORIGINS, start=1)
-        for k in (1, 8)
-        # Decays 0.010 -> 0.001 across the six blocks, so late blocks sit far
-        # below the within-origin mean and D crosses every pre-registered tau.
-        for block, r2 in enumerate([0.010, 0.008, 0.006, 0.004, 0.002, 0.001], start=1)
-    ]
-    out, ns = run_cell(cell_containing(cells, "--- RQ3"), seed_avg=pl.DataFrame(rows))
-
-    assert "log-rank K=8 vs K=1 at tau=5%" in out
-    assert "UNAVAILABLE" not in out
-    assert all(r["status"] == "estimated" for r in ns["b_star_rows"])
-    assert any(r["events"] > 0 for r in ns["b_star_rows"])
-
-
-# -- the D54e guard ----------------------------------------------------------
-
-
-@pytest.mark.parametrize("marker", ["--- RQ1", "--- RQ2", "--- RQ3"])
-def test_estimator_cells_skip_cleanly_on_a_partial_grid(cells, marker) -> None:
-    """`D54e`. A partial session is the expected case, and it must exit clean.
-
-    The estimators stay strict — a half-panel beta1 is a different estimand, not
-    a noisier one — so the cell must not call them at all. Passing no panel at
-    all is the strongest form of the check: if the guard leaked, the body would
-    raise ``NameError`` on ``seed_avg`` rather than print.
-    """
-    out, _ = run_cell(cell_containing(cells, marker), GRID_COMPLETE=False)
-    assert "SKIPPED" in out
-    assert "Resume in the next session" in out
+@pytest.mark.parametrize("skills,excluded", [({1: -.02, 8: -.018}, 15),
+                                          ({1: .004, 8: .004}, 0)])
+def test_rq3_cell_reports_reference_and_withholds_optimal_cadence(skills, excluded):
+    out, ns = run_cell(evaluation_step("rq3"), seed_avg=panel(skills),
+                      research_results={"rq3": {"reference": "block 1",
+                       "logrank_status": "withheld", "optimal_cadence_estimated": False}})
+    assert len(ns["dec"].excluded_origins) == excluded
+    assert "block 1" in out
+    assert "withheld" in out
+    assert "does not estimate an optimal retraining cadence" in out
+    assert "chi2=nan" not in out
 
 
 #: The smallest byte string that satisfies the notebook's magic check: a parquet

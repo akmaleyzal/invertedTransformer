@@ -41,14 +41,10 @@ needs_grid = pytest.mark.skipif(
 # -- which statistic (`D29`) -------------------------------------------------
 
 
-def test_nested_pairs_are_recognised() -> None:
-    """The comparisons that carry the paper are nested: the ladder is cumulative,
-    so K=1's feature set is a strict subset of K=8's under one architecture, and
-    standard DM is not asymptotically N(0,1) there."""
-    assert is_nested(("itr", 1), ("itr", 8))
-    assert is_nested(("rdg", 1), ("rdg", 8))
-    assert is_nested(("itr", 8), NAIVE)
-    assert is_nested(NAIVE, ("dlin", 8))
+def test_feature_subsets_do_not_automatically_establish_model_nesting():
+    for a, b in [(("itr", 1), ("itr", 8)), (("rdg", 1), ("rdg", 8)),
+                 (("itr", 8), NAIVE), (NAIVE, ("dlin", 8))]:
+        assert not is_nested(a, b)
 
 
 def test_cross_architecture_pairs_are_not_nested() -> None:
@@ -134,7 +130,7 @@ def test_build_panel_aligns_every_model_on_identical_windows() -> None:
     panel = build_panel(keys, [ARTIFACTS], origin_indices=(1,))
     assert panel.origin_indices == (1,)
     n = len(panel.y_true[1])
-    assert n == 88_992
+    assert n == 88_560  # A01: remove forecasts issued after the six-block endpoint
     for key in keys:
         assert len(panel.y_pred[(key, 1)]) == n
     assert np.isclose(panel.y_pred[(NAIVE, 1)].std(), 0.0), "Naive-RW is constant in z"
@@ -147,17 +143,11 @@ def test_missing_cell_is_a_loud_failure_not_a_short_matrix() -> None:
 
 
 @needs_grid
-def test_nested_differential_carries_the_clark_west_adjustment() -> None:
-    """The adjustment term is non-negative by construction, so a nested pair's
-    differential must sit at or above its unadjusted twin everywhere."""
+def test_differential_compares_mean_seed_losses_without_cw_adjustment():
     panel = build_panel([("itr", 1), ("itr", 8)], [ARTIFACTS], origin_indices=(1,))
-    adjusted = differential(panel, ("itr", 1), ("itr", 8), 1)
-    y = panel.y_true[1]
-    small = panel.y_pred[(("itr", 1), 1)]
-    large = panel.y_pred[(("itr", 8), 1)]
-    plain = (np.square(y - small) - np.square(y - large)).reshape(-1, 24).mean(axis=1)
-    assert (adjusted >= plain - 1e-12).all()
-    assert adjusted.mean() > plain.mean()
+    actual = differential(panel, ("itr", 1), ("itr", 8), 1)
+    expected = (panel.seed_losses[("itr", 1), 1] - panel.seed_losses[("itr", 8), 1]).reshape(-1, 24).mean(axis=1)
+    np.testing.assert_allclose(actual, expected)
 
 
 @needs_grid
@@ -175,10 +165,11 @@ def test_pair_matrix_names_its_statistic_per_pair_and_states_t_and_h() -> None:
             table.get_column("statistic_name"),
         )
     )
-    assert named[("itr-K1", "itr-K8")] == "Clark-West"
+    assert named[("itr-K1", "itr-K8")] == "unadjusted forecast-loss diagnostic"
     # Oriented restricted-model-first, so the key is not the enumeration order.
-    assert named[("Naive-RW", "itr-K1")] == "Clark-West"
-    assert named[("itr-K8", "ptst-K8")] == "DM-HLN"
+    assert named[("itr-K1", "Naive-RW")] == "unadjusted forecast-loss diagnostic"
+    assert named[("itr-K8", "ptst-K8")] == "unadjusted forecast-loss diagnostic"
+    assert all("exploratory" in x for x in table["inference_status"])
 
     assert (table.get_column("h") == 24).all()
     assert (table.get_column("T_min").to_numpy() <= 720).all()
@@ -197,7 +188,8 @@ def test_mcs_table_ranks_by_mean_loss_and_reports_origin_dispersion() -> None:
     table = mcs_table(panel, B=499, seed=17)
     assert table.get_column("rank").to_list() == [1, 2, 3, 4]
     assert (np.diff(table.get_column("mean_loss").to_numpy()) > 0).all()
-    assert (table.get_column("se_across_origins").to_numpy() > 0).all()
+    assert (table.get_column("se_across_origins").to_numpy() >= 0).all()
+    assert table.filter(table["model"] == "Naive-RW")["mean_loss"].item() == pytest.approx(1.)
     assert table.get_column("in_mcs_90").any()
 
 
@@ -209,31 +201,20 @@ def test_label_names_the_sentinel_readably() -> None:
 # -- orientation, which decides the sign of every nested statistic ------------
 
 
-def test_nesting_order_puts_the_restricted_model_first() -> None:
-    """Clark-West is ``(y - y_small)^2 - (y - y_large)^2 + (y_small - y_large)^2``.
-    The adjustment is symmetric and the first two terms are not, so swapping the
-    roles reports ``-(first two) + adjustment`` -- not a Clark-West statistic.
-
-    Against Naive-RW the error is loud in the wrong direction: every model would
-    return a large positive statistic and appear to beat the baseline while its
-    own sample MSE is worse.
-    """
+def test_nesting_order_never_invents_restrictions_for_the_studied_procedures():
     from itransformer_btc.comparisons import nesting_order
-
-    assert nesting_order(("itr", 8), NAIVE) == (NAIVE, ("itr", 8))
-    assert nesting_order(NAIVE, ("itr", 8)) == (NAIVE, ("itr", 8))
-    assert nesting_order(("itr", 8), ("itr", 1)) == (("itr", 1), ("itr", 8))
-    assert nesting_order(("rdg", 1), ("rdg", 8)) == (("rdg", 1), ("rdg", 8))
-    assert nesting_order(("itr", 8), ("ptst", 8)) is None
-    assert nesting_order(("itr", 8), ("itru", 8)) is None
+    for pair in [(("itr", 8), NAIVE), (NAIVE, ("itr", 8)),
+                 (("itr", 8), ("itr", 1)), (("rdg", 1), ("rdg", 8))]:
+        assert nesting_order(*pair) is None
 
 
 @needs_grid
-def test_differential_refuses_a_misoriented_nested_pair() -> None:
+def test_unadjusted_differential_changes_sign_when_the_pair_is_reversed():
     panel = build_panel([("itr", 8), NAIVE], [ARTIFACTS], origin_indices=(1,))
-    with pytest.raises(ValueError, match="nests the other way"):
-        differential(panel, ("itr", 8), NAIVE, 1)
-    assert differential(panel, NAIVE, ("itr", 8), 1).shape == (3708,)
+    a = differential(panel, ("itr", 8), NAIVE, 1)
+    b = differential(panel, NAIVE, ("itr", 8), 1)
+    np.testing.assert_array_equal(a, -b)
+    assert len(a) == len(panel.y_true[1]) // 24
 
 
 @needs_grid
@@ -247,7 +228,7 @@ def test_pair_matrix_orients_naive_rw_as_the_restricted_model() -> None:
         (pl_col_eq(table, "left", "Naive-RW")) | (pl_col_eq(table, "right", "Naive-RW"))
     )
     assert against_naive.height == 2
-    assert against_naive.get_column("left").to_list() == ["Naive-RW", "Naive-RW"]
+    assert against_naive.get_column("right").to_list() == ["Naive-RW", "Naive-RW"]
 
 
 def pl_col_eq(frame, column: str, value: str):

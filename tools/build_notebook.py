@@ -1,4 +1,9 @@
-"""Assemble ``notebooks/iTransformer.ipynb`` from ``src/itransformer_btc/``.
+"""LEGACY PRESENTATION TEMPLATE; never use it to overwrite iTransformer.ipynb.
+
+The notebook is authoritative. This module retains flattening/test helpers and
+a read-only --check command. Export src through the notebook's final cell.
+
+Assemble ``notebooks/iTransformer.ipynb`` from ``src/itransformer_btc/``.
 
 Root §15 says logic lives in the package and a notebook is a launcher. That rule
 is unchanged. What changed is *how the notebook carries the package*: it used to
@@ -2645,6 +2650,21 @@ def carry_outputs(notebook: dict, previous: dict) -> tuple[int, int, int]:
         ``(carried, dropped_changed, dropped_missing)`` — inherited, dropped
         because the source changed, and dropped because the cell is new here.
     """
+    # A13: an unchanged caller is not evidence of unchanged dependencies. The
+    # ordered program includes setup/config/input checks as well as definitions.
+    # Conservative invalidation also covers deletion and execution-order changes.
+    program = lambda nb: [
+        "".join(c["source"]) for c in nb.get("cells", [])
+        if c.get("cell_type") == "code"
+    ]
+    if program(notebook) != program(previous):
+        dropped = sum(bool(c.get("outputs")) for c in previous.get("cells", []))
+        for cell in notebook.get("cells", []):
+            if cell.get("cell_type") == "code":
+                cell["outputs"] = []
+                cell["execution_count"] = None
+        return 0, dropped, 0
+
     old: dict[tuple, dict] = {}
     by_source: dict[str, list[dict]] = {}
     for cell in previous.get("cells", []):
@@ -2693,94 +2713,20 @@ def carry_outputs(notebook: dict, previous: dict) -> tuple[int, int, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build notebooks/iTransformer.ipynb")
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="exit 1 if the committed notebook differs from what src/ implies",
+    # The notebook is authored directly. The legacy presentation template is
+    # retained only for its flattening helpers, never as a competing source.
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv == ["--check"]:
+        from notebook_to_src import check_projection
+        return check_projection(NOTEBOOK)
+    raise SystemExit(
+        "Notebook-first workflow: this legacy template cannot overwrite "
+        "notebooks/iTransformer.ipynb. Edit the notebook and use its final "
+        "sync cell; --check validates the exported projection."
     )
-    parser.add_argument(
-        "--preserve-outputs",
-        metavar="NOTEBOOK",
-        default=None,
-        help=(
-            "carry executed outputs from this notebook onto byte-identical "
-            "cells (`D86`). Defaults to the committed notebook itself, so a "
-            "rebuild that changes nothing keeps its evidence and --check stays "
-            "meaningful."
-        ),
-    )
-    parser.add_argument(
-        "--no-preserve-outputs",
-        action="store_true",
-        help="build clean, discarding every output the committed notebook has",
-    )
-    args = parser.parse_args(argv)
 
-    missing = [n for n in MODULE_ORDER if not (PACKAGE / n).exists()]
-    if missing:
-        raise SystemExit(f"missing package modules: {missing}")
-    extra = sorted(p.name for p in PACKAGE.glob("*.py") if p.name not in MODULE_ORDER)
-    if extra:
-        raise SystemExit(
-            f"{extra} exist in src/itransformer_btc/ but are absent from "
-            f"MODULE_ORDER, so the notebook would define an incomplete package "
-            f"while code_sha256 still named every file. Add them here, in "
-            f"dependency order — which is now execution order and must be right."
-        )
 
-    unsegmented = [n for n in MODULE_ORDER if n not in SECTION_MAP]
-    if unsegmented:
-        raise SystemExit(
-            f"{unsegmented} have MODULE_ORDER entries but no SECTION_MAP ones, "
-            f"so each would ship as one unsegmented cell while every other "
-            f"module is readable. Add their sections here (`D63`)."
-        )
-
-    notebook = build()
-
-    source = None
-    if not args.no_preserve_outputs:
-        candidate = Path(args.preserve_outputs) if args.preserve_outputs else NOTEBOOK
-        if candidate.exists():
-            source = candidate
-        elif args.preserve_outputs:
-            raise SystemExit(f"--preserve-outputs: {candidate} does not exist")
-    if source is not None:
-        previous = json.loads(source.read_text(encoding="utf-8"))
-        carried, changed, missing = carry_outputs(notebook, previous)
-        if not args.check:
-            print(
-                f"outputs from {source}: {carried} carried, "
-                f"{changed} dropped (source changed), {missing} not present there"
-            )
-
-    text = render(notebook)
-
-    if args.check:
-        current = NOTEBOOK.read_text(encoding="utf-8") if NOTEBOOK.exists() else ""
-        if current != text:
-            print(
-                f"{NOTEBOOK} is stale against src/itransformer_btc/. "
-                f"Run: python tools/build_notebook.py",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{NOTEBOOK} is current")
-        return 0
-
-    NOTEBOOK.parent.mkdir(parents=True, exist_ok=True)
-    # newline="\n" explicitly: Windows would otherwise translate to CRLF and the
-    # generator would emit platform-dependent bytes for identical content, so the
-    # same `src/` would produce a whole-file diff depending on who ran it.
-    NOTEBOOK.write_text(text, encoding="utf-8", newline="\n")
-    n_code = sum(1 for c in notebook["cells"] if c["cell_type"] == "code")
-    print(
-        f"wrote {NOTEBOOK}  "
-        f"({len(notebook['cells'])} cells, {n_code} code, "
-        f"{len(text) / 1e3:.0f} kB)  code_sha256 {package_digest()[:16]}"
-    )
-    return 0
 
 
 if __name__ == "__main__":

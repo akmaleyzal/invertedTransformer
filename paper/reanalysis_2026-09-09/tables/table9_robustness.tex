@@ -1,0 +1,23 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Exploratory arms, reported apart from RQ1--RQ3.}
+\label{tab:robustness}
+\begin{tabular}{llrrrrrrr}
+\toprule
+Arm & Model & $K$ & $R^2_{oos}$ & Grid same rung & $\Delta$ & Paired $\Delta$RelMSE & $p$ & Origins \\
+\midrule
+longsched & iTransformer (long schedule) & 1 & -0.0212 $\pm$ 0.0016 & -0.0203 & -0.0008 & 0.00082 & 0.0000 & 15 \\
+longsched & iTransformer (long schedule) & 8 & -0.0179 $\pm$ 0.0012 & -0.0177 & -0.0001 & 0.00014 & 0.0902 & 15 \\
+capacity & iTransformer (d\_ff 512) & 12 & -0.0188 $\pm$ 0.0012 & -0.0182 & -0.0006 & 0.00056 & 0.0124 & 15 \\
+attention & iTransformer (attn. captured) & 8 & -0.0177 $\pm$ 0.0012 & -0.0177 & 0.0000 & 0.00000 & 1.0000 & 15 \\
+orthogonal & iTransformer (orthogonal $K$=8) & 8 & -0.0179 $\pm$ 0.0012 & -0.0177 & -0.0002 & 0.00018 & 0.1368 & 15 \\
+redundant & iTransformer (redundant $K$=8) & 8 & -0.0192 $\pm$ 0.0014 & -0.0177 & -0.0015 & 0.00146 & 0.0000 & 15 \\
+look048 & iTransformer ($L$=48) & 8 & -0.0258 $\pm$ 0.0012 & -0.0177 & -0.0080 & 0.00804 & 0.0000 & 15 \\
+look192 & iTransformer ($L$=192) & 8 & -0.0134 $\pm$ 0.0010 & -0.0177 & 0.0044 & -0.00435 & 0.0000 & 15 \\
+tuned & iTransformer (tuned) & 8 & -0.0126 $\pm$ 0.0008 & -0.0177 & 0.0052 & -0.00518 & 0.0002 & 15 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Exploratory contrasts on common forecast times, mean seed loss and equal block weights. Matched-K subsets change feature identity as well as PR. Uniform attention has inactive Q/K; allocated parameter count does not match effective capacity. Missing legacy forecasts remain absent. Independent-origin p-values are diagnostics only. Historical ports: iTransformer lacks final encoder norm; PatchTST uses the earlier encoder; uniform dropout differs.
+\end{table}

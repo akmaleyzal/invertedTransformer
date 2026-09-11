@@ -24,9 +24,9 @@
 | `module_names` | 328 | ⚙️ 06 · Persiapan evaluasi dan eksekutor | — | — |
 | `code_digest` | 330 | ⚙️ 06 · Persiapan evaluasi dan eksekutor | — | — |
 | `invariants` | 333 | 🛠️ 07 · Pemeriksaan sebelum training | — | — |
-| `pilot` | 336 | 🛡️ 08 · Validasi dan pemilihan konfigurasi | — | `artifacts/preds/*.parquet`, `artifacts/meta/*.json` |
+| `pilot` | 336 | 🛡️ 08 · Validasi dan pemilihan konfigurasi | — | `artifacts/validation/*.json`, `artifacts/checkpoints/*.pt` |
 | `tune` | 338 | 🛡️ 08 · Validasi dan pemilihan konfigurasi | — | `artifacts/meta/tuning_selection.json` |
-| `grid` | 341 | 🚀 09 · Training grid walk-forward | `data/raw/BTCUSDT_1h.parquet` | `artifacts/preds/*.parquet`, `artifacts/meta/*.json`, `artifacts/attn/*.parquet` |
+| `grid` | 341 | 🚀 09 · Training grid walk-forward | `data/raw/BTCUSDT_1h.parquet` | `artifacts/preds/*.parquet`, `artifacts/meta/*.json`, `artifacts/attn/*.parquet`, `artifacts/checkpoints/*.pt`, `artifacts/weights/*.pt`, `artifacts/session_status.json` |
 | `rq1` | 344 | 📈 10 · Evaluasi model dan research questions | `artifacts/preds/*.parquet`, `artifacts/meta/*.json` | — |
 | `rq2` | 346 | 📈 10 · Evaluasi model dan research questions | `artifacts/preds/*.parquet`, `artifacts/meta/*.json` | — |
 | `rq3` | 348 | 📈 10 · Evaluasi model dan research questions | `artifacts/preds/*.parquet`, `artifacts/meta/*.json` | — |
@@ -254,14 +254,14 @@ Periksa invariansi skala, overfit satu batch, dan nilai Naive-RW pada setiap ori
 
 Jalankan pilot pada validation origin pertama, lalu pilih konfigurasi untuk arm tuning eksploratori.
 
-- **Langkah `pilot`** (sel 336) — 🛡️ Jalankan gerbang Stage 5 — pada validasi, bukan uji · menulis `artifacts/preds/*.parquet`, `artifacts/meta/*.json`
+- **Langkah `pilot`** (sel 336) — 🛡️ Jalankan gerbang Stage 5 — pada validasi, bukan uji · menulis `artifacts/validation/*.json`, `artifacts/checkpoints/*.pt`
 - **Langkah `tune`** (sel 338) — 🎛️ Pemilihan konfigurasi pada validasi · menulis `artifacts/meta/tuning_selection.json`
 
 ### 🚀 09 · Training grid walk-forward
 
 Latih seluruh manifes dengan resume otomatis, satu worker per device, dan batas waktu sesi.
 
-- **Langkah `grid`** (sel 341) — 🚀 Jalankan grid — 1.620 run, dua T4 · menulis `artifacts/preds/*.parquet`, `artifacts/meta/*.json`, `artifacts/attn/*.parquet` · membaca `data/raw/BTCUSDT_1h.parquet`
+- **Langkah `grid`** (sel 341) — 🚀 Jalankan grid — 1.620 run, dua T4 · menulis `artifacts/preds/*.parquet`, `artifacts/meta/*.json`, `artifacts/attn/*.parquet`, `artifacts/checkpoints/*.pt`, `artifacts/weights/*.pt`, `artifacts/session_status.json` · membaca `data/raw/BTCUSDT_1h.parquet`
 
 ### 📈 10 · Evaluasi model dan research questions
 
@@ -269,7 +269,7 @@ Baca prediksi tersimpan untuk menjawab RQ1, RQ2, dan RQ3 pada grid yang lengkap.
 
 - **Langkah `rq1`** (sel 344) — 1️⃣ RQ1 — K nominal atau K_eff? · membaca `artifacts/preds/*.parquet`, `artifacts/meta/*.json`
 - **Langkah `rq2`** (sel 346) — 2️⃣ RQ2 — apakah gap menyempit seiring umur model? · membaca `artifacts/preds/*.parquet`, `artifacts/meta/*.json`
-- **Langkah `rq3`** (sel 348) — 3️⃣ RQ3 — cadence retraining optimal? · membaca `artifacts/preds/*.parquet`, `artifacts/meta/*.json`
+- **Langkah `rq3`** (sel 348) — 3️⃣ RQ3 — crossing ambang skill (deskriptif) · membaca `artifacts/preds/*.parquet`, `artifacts/meta/*.json`
 
 ### 💾 11 · Simpan hasil, tabel, dan figure
 

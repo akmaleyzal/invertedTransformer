@@ -1,3 +1,5 @@
+> **Historical analysis only.** The content below describes earlier code/results and is preserved as evidence. It is superseded for current interpretation by [A01–A15 remediation](../../docs/AUDIT_REMEDIATION_2026-09-09.md) and the separate [corrected historical report](../../paper/reanalysis_2026-09-09/paper_numbers.json). Use [USAGE](../../USAGE.md) for the new Kaggle protocol. Do not treat old preregistration, nested-test, decay, gap-cause or architecture claims below as current project law.
+
 # RUN_ANALYSIS.md — deep read of the 1,620-run grid
 
 **Written 2026-09-02.** Covers the grid whose artifacts sit under `notebooks/outputs/`.

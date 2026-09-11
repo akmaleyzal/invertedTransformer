@@ -1,3 +1,5 @@
+> **Historical source list, not citation authority.** Use [the maintained bibliography](paper/references/references.bib) and [the reading-scope log](docs/LITERATURE_SCOPE_2026-09-10.md). A remembered reference, resolved identifier, abstract screening and full-paper reading are different evidence levels. Current novelty or methodological claims must not be inferred from this historical list.
+
 # Reference Library: iTransformer Bitcoin Forecasting Paper
 
 Companion to `research_specification_itransformer_btc.md`. This supersedes the earlier Indonesian reference file and expands it with four previously uncovered areas: non-stationarity handling, directional-accuracy testing, attention interpretability, and crypto market microstructure.

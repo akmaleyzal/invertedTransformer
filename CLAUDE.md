@@ -2,16 +2,42 @@
 
 Governing document for this repository. Read it before doing anything else.
 
-**Authoritative as of 2026-08-24.** It supersedes both source specifications
+**Authoritative as of 2026-09-10.** It supersedes both source specifications
 (`research_specification_itransformer_btc.md`, `reference_library_itransformer_btc.md`) — inputs, not
 authority — and the pre-2026-08-05 project entirely (§17). `docs/DIVERGENCE_REGISTER.md` carries the
 long-form evidence for every divergence; §14 is the index.
 
-**The grid has run and the answers are in.** The 684-run manifest completed 2026-08-11, the 894-run
-manifest on 2026-08-21, and **every pre-registered gate that could fail, failed**: Stage 5 did not
-reject at α = 0.05, RQ2's β₁ came back with the wrong sign and inside its own MDE, and RQ3's estimand
-is undefined at all fifteen origins because no arm has positive out-of-sample skill. Read §1's title
-decision first: it is no longer the title this document opened with.
+**The September 2026 research-workflow audit supersedes this document's conclusions, not its
+history.** `docs/RESEARCH_WORKFLOW_AUDIT_2026-09-09.md` read the working tree rather than the
+register and returned fifteen findings, A01–A15. `docs/AUDIT_REMEDIATION_2026-09-09.md` is the
+remediation ledger and maps each finding to its implementation, its check and the observation it
+still needs. `D90` is the register entry. Three consequences bind every section below.
+
+1. **The notebook is the implementation.** `notebooks/iTransformer.ipynb` carries the model, the
+   analysis and the Kaggle orchestration. `src/` is generated from it by its final sync cell and by
+   nothing else; the old template writer refuses to overwrite it. §15 states the direction of travel
+   and it now runs notebook → `src/`.
+2. **Every result number printed in the prose below is a historical number.** It comes from the
+   1,620-run grid, produced under an evaluation the audit found misaligned: forecast timestamps
+   shifted by the lookback so `L` arms were scored on different target hours (A01), per-seed losses
+   pooled before averaging (A05), direction and P&L taken in scaler space rather than on raw returns
+   (A10, A11). Those runs are preserved as evidence of what the old protocol produced. The corrected
+   recomputation of the same predictions is `paper/reanalysis_2026-09-09/paper_numbers.json`. **Read
+   a number from there; never from a sentence in this file.**
+3. **The revised protocol is 2,130 runs and has not been trained.** Its code, its manifest and its
+   tests exist and pass. No GPU observation of it exists. Nothing below may be read as a result of
+   it, and the historical 1,620 runs deliberately fail its resume gate because the architecture, the
+   prediction calendar, the objective and the sampling all changed (§10.2, A09, A12, A13).
+
+**Claims this document used to make and no longer supports.** Each is withdrawn on evidence, not on
+taste, and the register row names the finding: **"pre-registered"** as a property of the study — no
+dated external registration was ever produced, so post-audit protocol changes are declared
+exploratory (A06); **"first"** or novelty priority — `docs/LITERATURE_SCOPE_2026-09-10.md` is a
+bounded reading log and primary work on iTransformer, hourly BTC and walk-forward already exists
+(A15); **"no out-of-sample skill"** stated flat — the phrase binds only to the models, target,
+horizon, preprocessing, sample and aggregation actually tested (A15); **a causal effect of
+participation ratio alone** (A02); **an optimal retraining cadence** (A07); and **an executable,
+profitable spot strategy** (A11).
 
 ---
 
@@ -20,16 +46,31 @@ decision first: it is no longer the title this document opened with.
 **The deliverable is a manuscript, not a model.** No production inference path, no export bundle, no
 serving contract. The model is an experimental instrument.
 
-**Working title (`D60a`, 2026-08-20):** *A Pre-Registered Walk-Forward Evaluation of iTransformer and
-Linear Baselines for Hourly Bitcoin Return Forecasting: No Out-of-Sample Skill at Any Variate Count.*
+**Working title (`D90`, 2026-09-10):** *iTransformer for Hourly Bitcoin Returns: A Corrected
+Walk-Forward Reanalysis and Controlled Rerun Protocol.* It is the title `paper/manuscript.tex`
+carries, and it names what the repository can defend: a recomputation of preserved predictions under
+a corrected evaluation, plus a separately specified protocol that has not yet run.
 
-**Superseded title:** *Nominal Variates or Effective Dimensionality? A Walk-Forward Evaluation of
-iTransformer for Hourly Bitcoin Forecasting.* Retained, not deleted (§12 forbids losing provenance).
-§8.5 pre-registered the trigger — *"If K=8 does not beat K=1, reposition the title to the descriptive
-variant now, not in week nine"* — and Stage 5 returned Clark–West `S* = +0.8759, p = 0.1906`. The old
-title poses a comparative question whose premise is that added variates buy accuracy; at every rung
-`R²_oos` is negative, so the question has no numerator. The K-versus-K_eff horse race moves to §4.2 of
-the manuscript with `corr(K, K_eff) = 0.828` beside it.
+**Superseded titles, retained because §12 forbids losing provenance.**
+
+*A Pre-Registered Walk-Forward Evaluation of iTransformer and Linear Baselines for Hourly Bitcoin
+Return Forecasting: No Out-of-Sample Skill at Any Variate Count* (`D60a`, 2026-08-20). Two of its
+clauses failed the audit rather than the grid. **"Pre-Registered"** asserts a property of the
+*process* — that the questions and thresholds were fixed and deposited before the results were seen
+— and no dated external registration was ever produced, so the claim cannot be checked by a reader
+and is not made (A06). **"No Out-of-Sample Skill at Any Variate Count"** generalises past the
+evidence: a negative mean `R²_oos` over this sample, this aggregation and these arms does not
+establish the absence of skill at a variate count, let alone in Bitcoin (A15). Individual origins
+can carry positive skill while the mean is negative.
+
+*Nominal Variates or Effective Dimensionality? A Walk-Forward Evaluation of iTransformer for Hourly
+Bitcoin Forecasting* (the original). §8.5 pre-registered the repositioning trigger — *"If K=8 does
+not beat K=1, reposition the title to the descriptive variant now, not in week nine"* — and Stage 5
+returned Clark–West `S* = +0.8759, p = 0.1906`. That reading is itself now qualified: A04 finds the
+K ladder is not automatically a nested pair on a nonlinear learned model, so Clark–West is not the
+statistic that settles it. The K-versus-K_eff question survives as §4.2 of the manuscript, and A02
+moves it onto the three invertible-representation arms, where the information is held fixed and only
+the coordinates move.
 
 **Target venue:** Indonesian informatics journal (Sinta), IMRaD, 10–14 pages, 35–45 references, IEEE
 style. Scope is **spot-only, single-asset, feature-based**: BTCUSDT 1-hour klines from Binance and
@@ -54,16 +95,23 @@ nothing else. No futures, no second asset, no macro/on-chain/sentiment data.
 | Trust a result that looks too good | Assume leakage until proven otherwise |
 
 **Stage 1 ingest is exempt from the polars rule.** `spot_klines_btc.py` is pandas and stays that way.
-The ban is a *correctness* argument — polars' rolling API is backward-closed, so the `center=True`
-leak class is unrepresentable there and one keyword away in pandas. Stage 1 computes **no rolling
-window at all** (it paginates, coerces, de-duplicates, clips, counts gaps), so the argument has
-nothing to bite on. The ban applies in **full** from segmentation onward, i.e. everywhere in `src/`.
+Stage 1 computes **no rolling window at all** (it paginates, coerces, de-duplicates, clips, counts
+gaps). The ban applies in **full** from segmentation onward, i.e. everywhere in `src/`.
+
+**The reason for the ban was wrong and the ban stands anyway (`A14`).** This document asserted that
+polars' rolling API is backward-closed, so a `center=True` leak is *unrepresentable* there and one
+keyword away in pandas. It is not: `polars.Expr.rolling_mean` takes a `center` parameter and the
+official documentation shows `center=True`. What actually protects this project is that **every
+variate is a per-bar function** (§5.3) and that the chronology is asserted by test, not that a
+library could not express the mistake. Keeping polars remains a sound choice — one data plane, lazy
+scans, no silent index alignment — but it is a choice, and a safety argument that a reader can
+falsify by opening the API docs is worse than no argument at all.
 
 Timezone is **UTC everywhere**. Every timestamp is epoch-based and compared as an integer.
 
 ---
 
-## 3. Research questions — pre-registered
+## 3. Research questions — declared in advance of the grid, not externally registered
 
 Fixed before any model ran. Changing any of them after seeing results is a new experiment and must be
 declared as one.
@@ -74,11 +122,13 @@ declared as one.
 | **RQ2** | Does the multivariate-over-univariate gap narrow as time-since-training grows? | H2: it narrows. The microstructure-to-return mapping is regime-specific | `A(i,b) = [MSE_K1 − MSE_K8]/MSE_K1`; claim is **β₁ < 0** |
 | **RQ3** | What retraining cadence is optimal, and does it depend on K? | H3: larger K decays faster | `b* = min{b : D(b) > τ}` |
 
-**Measured answers (`D60b`, 2026-08-11).** The questions stand as pre-registered; these are what the
-grid returned. Recorded here so a reader who stops at §3 does not leave with hypotheses and no
-outcomes.
+**Measured answers (`D60b`, 2026-08-11).** The questions stand as they were declared before the grid
+ran; these are what it returned, under the **pre-audit** evaluation — read them beside §1's rule that
+every result number in this file is historical, and take the corrected figures from
+`paper/reanalysis_2026-09-09/`. Recorded here so a reader who stops at §3 does not leave with
+hypotheses and no outcomes.
 
-| Code | Pre-registered claim | Measured | Verdict |
+| Code | Claim as declared | Measured | Verdict |
 |---|---|---|---|
 | **RQ1** | benefit tracks K_eff; gains 1→4→8, flat 8→12 | ΔMSE 4→8 = **+0.000636**, 8→12 = **−0.000437**; TOST vs `Δ_eq = ±0.000159` gives p = (0.9734, 0.0002) | **Not shown equivalent.** The 8→12 rung is not flat — it is *worse*. J-test: K augmented by K_eff `t = +3.293, p = 0.0011`; K_eff augmented by K `t = −0.348, p = 0.7281`, so the K explanation is rejected and the K_eff explanation is not. H1 survives its own horse race **on a ladder where every rung has negative skill** |
 | **RQ2** | β₁ < 0, the gap narrows with model age | β₁ = **+0.000256**, WCR one-sided p = **0.7381**, G = 15, N = 90 | **Not supported, and the sign is wrong.** MDE at 80% power is **−0.000920** and the estimate lies inside it, so §9.2 requirement 6 fires: RQ2 is **descriptive** |
@@ -92,8 +142,8 @@ does not contain.
 **RQ2 compares K=1 against K=8, never K=12.** K=12 carries deliberate redundancy (§5.2); using it
 would confound decay with that redundancy.
 
-**Pre-registered thresholds, all fixed in advance — choosing any of them after seeing the curve is
-p-hacking:**
+**Thresholds, all fixed before the grid ran — choosing any of them after seeing the curve is
+p-hacking. Fixed in advance, not externally registered (`A06`):**
 
 - **τ**: headline **5%**, sensitivity at τ ∈ {2.5%, 5%, 10%, 50%}.
 - **τ is a fraction of skill lost, not of RelMSE (`D23`).** On the RelMSE scale every τ is
@@ -103,9 +153,14 @@ p-hacking:**
 - **Equivalence margin (`D49`).** RQ1's "flat 8→12" is an assertion of *no effect*, and a
   non-significant ΔMSE is a failure to reject, not equivalence. The rung counts as flat if two
   one-sided tests reject at α = 0.05 against `Δ_eq = 0.25 × ΔMSE₄→₈`.
-- **Answer space for RQ3.** Six 30-day blocks means `b*` resolves only to 30-day granularity out to
-  180 days. If no block crosses τ, the honest answer is *"no decay detected within 180 days"* — a
-  right-censored result, in those words. (Not the situation that occurred; see above.)
+- **Answer space for RQ3 — three outcomes, and they are not interchangeable (`A07`).** Six 30-day
+  blocks means `b*` resolves only to 30-day granularity out to 180 days, so the answer is one of:
+  **undefined**, when the block-1 reference skill is not positive and the ratio has no denominator;
+  **"no decay detected within 180 days"**, a right-censored result in those words, available *only*
+  when the reference is positive and no block crosses τ; or **crossed at block b**. The first two
+  read alike and are opposite claims — the second asserts an edge that survived, the first says there
+  was none to lose. The **Never** above is about using the second where the first is true, which is
+  the situation that occurred at all fifteen origins.
 
 **Mechanism behind H2** (economic, not just statistical): shifting participant composition —
 retail-dominated flow 2018–2020, the 2021 leverage cycle, institutional flow after spot-ETF approval
@@ -113,10 +168,24 @@ in 2024. Order-flow predictability should decay as market making tightens. Groun
 Markets Hypothesis (Lo 2004; Khuntia & Pattanayak 2018) and in the capacity–robustness trade-off
 (Han, Ye & Zhan 2024) independently.
 
-**Claimed contributions:** (1) first walk-forward evaluation of iTransformer on a crypto asset with
-explicit decay measurement; (2) separation of nominal variate count from effective dimensionality as
-competing explanations for cross-variate gains; (3) evidence-based retraining cadence under a
-pre-registered degradation threshold. Hedge (1) as "to the best of our knowledge" — §13.2.
+**Claimed contributions, rewritten after the audit (`A15`, `A02`, `A07`).** The three below replace
+an earlier list that claimed a priority, a causal separation and a cadence recommendation — none of
+which the evidence carries.
+
+1. **An auditable walk-forward evaluation of iTransformer on hourly BTCUSDT, with the alignment,
+   aggregation and accounting stated and testable.** Not "the first": primary work on iTransformer,
+   on hourly BTC and on walk-forward evaluation already exists, and
+   `docs/LITERATURE_SCOPE_2026-09-10.md` is a bounded reading log rather than a systematic search.
+   A priority claim needs a search log a reader can rerun; this study does not make one.
+2. **A design that separates information from its coordinates.** The `repi`/`repw`/`repc` arms hold
+   the K=8 information set fixed and vary only an invertible transform of it, so a difference
+   between them cannot be an information difference. It is still not a causal effect of
+   participation ratio alone — the transform also moves conditioning, optimisation and the geometry
+   the model fits (§5.4, `A02`).
+3. **An explicit separation of what was observed from what was only specified.** The 1,620 historical
+   runs are recomputed under corrected evaluation; the 2,130-run protocol is declared, implemented
+   and untrained. Reporting the second as if it were the first is the failure this contribution
+   exists to prevent.
 
 ---
 
@@ -352,8 +421,10 @@ and session dummies, cross-asset, on-chain, sentiment, and macro data.
 **Corollary — no feature uses a rolling window.** Pre-smoothing an F2 estimator over 24 bars is
 strictly *less* informative than the per-bar estimator: the model can compute that average itself and
 cannot recover what smoothing destroyed. Every variate is a pure per-bar function of the current bar,
-except `r`, which uses the current and previous close. This is a **structural safety property**: with
-no rolling window anywhere, the `center=True` leak class is unrepresentable.
+except `r`, which uses the current and previous close. This is the **structural safety property** the
+no-embargo argument leans on: with no rolling window anywhere, no test-period bar reaches a
+training-set feature value. It is a property of *these features*, not of the library — polars can
+express a centred window (`A14`, §2) — so it holds only as long as §5.3 does.
 
 **But the surface is not therefore closed (`D43`).** That closure claim is scoped to *feature
 construction* at the *train–test* boundary and fails at every other boundary: **train–validation**
@@ -413,6 +484,18 @@ does not correspond to what the architecture consumes, the second claimed contri
 measurement-validity failure rather than a finding — the question a methods referee will spend the
 review on.
 
+**`A02` — participation ratio is a property of coordinates, not a measure of information.** PR is
+computed from a correlation spectrum, so an **invertible** change of basis moves it while the
+information content is identical. Two consequences bind RQ1. The historical `itro`/`itrr` pair
+changes which variates are present as well as the PR, so a difference between them is an information
+difference and a PR difference at once. The revised `repi`/`repw`/`repc` arms hold the K=8
+information set fixed — identity, whitening, invertible correlating transform — preserve the target
+as channel 0, and disable instance normalisation; the transform, its inverse, the condition number,
+the eigenvalue floor and the PR are fitted on **training only** and persisted. Even so, the contrast
+is **not a causal effect of PR alone**: an invertible map also changes conditioning, the optimisation
+path and the function geometry the model reaches. PR is reported as a descriptor of the
+representation, never as a measure of predictive information.
+
 **`D04` — the instance-normalisation confound.** `use_norm=True` divides each window by its own
 per-variate σ over L, so F2 contributes *shape*, not *level*. The 8→12 rung can flatten for a reason
 unrelated to redundancy. PR must be measured on **window-normalised features as well as raw**, both
@@ -444,6 +527,26 @@ transpose → (B, H, N) → select target channel    → (B, H, 1)
 
 No causal mask. Masking applies to the time axis; this attention runs over the variate axis, where all
 tokens are contemporaneous. Causality is enforced upstream, in features and windowing.
+
+**The port was not faithful and now is (`A09`).** Two departures from the official implementation
+were silently changing what "iTransformer" names here. The encoder is missing its **final
+LayerNorm**, and the instance normalisation subtracted a mean that carried gradient. Both are fixed:
+the final encoder norm is present, and the mean used by `use_norm` is **detached**. The target loss
+stays on the return channel (`D39`). Uniform attention passes through the **same attention-weight
+dropout** as the learned path, and the unused Q/K projections are frozen so they cannot absorb
+gradient — otherwise the ablation differs from the model in more than the thing being ablated.
+
+**Equal allocated parameters is not equal trainable parameters, and neither is equal capacity.**
+§6.2's identical-count claim survives only as an allocation fact. The uniform-attention arm freezes
+projections, so its trainable count differs; and no count of any kind licenses "same effective
+capacity". State the allocated count, state what is frozen, and claim nothing beyond that.
+
+**Forward parity is checked against pinned upstream commits, and the check is bounded.**
+`.research/audit-repair-work/check_upstream_parity.py` compares weights against iTransformer
+`c2426e68ca13f74aaec08045c5c724d8ad328124` and PatchTST `204c21efe0b39603ad6e2ca640ef5896646ab1a9`.
+Four iTransformer eval cases reach a maximum absolute error of **7.16e-7**; four PatchTST
+target/all × eval/train cases match exactly, against a 2e-5 tolerance. That is **synthetic CPU
+forward parity** — not training equivalence, and not a CUDA verification.
 
 ### 6.2 Hyperparameters
 
@@ -562,6 +665,26 @@ univariate-versus-multivariate. Report the K of every model in Tables 3 and 4.
 | **DLinear** | **8** | mandatory | trend–seasonal decomposition + linear | ✅ 45 runs |
 | **PatchTST** | **8** | SOTA, channel-independent | patch 16, stride 8 | ✅ 45 runs |
 | **Ridge (multivariate)** | **1, 4, 8, 12** | `D17` | L2 on the same K features, α by validation | ✅ 60 runs |
+
+**The objective and the budget were both confounds, and the revised manifest separates them
+(`A09`).** Three changes, none of them cosmetic.
+
+- **Target-only and all-channel are now different arms.** `dlin` and `ptst` receive the **target
+  channel alone** on the model path — BatchNorm included, so the effective input is K=1 even though
+  a K=8 tensor is supplied — and their loss is therefore comparable to the ladder's. The published
+  all-channel objective moves to `dlina` and `ptsta` as a declared sensitivity. §13.2's disclosure
+  that their validation loss is "all-channel and not comparable" applies to the **historical** runs
+  and to `dlina`/`ptsta`, not to the revised `dlin`/`ptst`.
+- **PatchTST's port is corrected**: BatchNorm, residual attention logits, GELU, the correct flatten
+  order, the matching positional initialisation, and both the projection and residual dropouts.
+  `affine=False`, attention dropout 0, no end padding and head dropout 0 are stated adaptations.
+- **The budget no longer favours the ladder.** `D78` found DLinear at its epoch cap in 56 of 75 runs
+  and PatchTST in 39 of 75, so "DLinear is worst" was confounded with "DLinear is most truncated".
+  The neural baselines now get a **120-epoch cap, patience 12, LR halved every 20 epochs**, with the
+  learning rate chosen from {1e-4, 1e-3, 1e-2} on the **first origin's validation**, separately for
+  the target and all-channel objectives. Candidates and cap are logged. **Neither early stopping nor
+  a larger cap is evidence of convergence**: every new ranking is read beside achieved epochs and the
+  cap, and the historical ranking applies only to the old port, objective and budget.
 
 **Three of the four deferrals are closed (`D64`); ARIMA alone remains, and with a reason.** `D56`
 recorded in writing that nobody had built LSTM, naive-persist or seasonal-naive, and the record stood
@@ -704,18 +827,48 @@ the conclusion survives; the "12 for all b" was an idealisation of its own algeb
 `total span / training window ≈ 96/24 ≈ 4` independent training sets *regardless of spacing*; packing
 origins closer inflates G without adding information while worsening the overlap §9.2 must disclose.
 
-**Falsification arm, pre-registered.** For every origin, train a **fresh** model at `o_i + 90 days`
-and evaluate it on the *same* calendar blocks 4–6 as the aged model. If the aged-minus-fresh gap is
-zero while β₁ < 0, β₁ is calendar, not age. Only design that identifies decay directly; one extra run
-per origin. **Report the gap on RelMSE, never on scaler-space MSE** — see `D60i` in §9.2.
+**Falsification arm, declared before the grid.** For every origin, train a **fresh** model at
+`o_i + 90 days` and evaluate it on the *same* calendar blocks 4–6 as the aged model. If the
+aged-minus-fresh gap is zero while β₁ < 0, β₁ is calendar, not age. **Report the gap on RelMSE, never
+on scaler-space MSE** — see `D60i` in §9.2.
+
+**One arm could not tell retraining from reselection, so there are now two (`A08`).** A fresh model
+at `o_i + 90 d` moves its training window *and* its validation window *and* the checkpoint early
+stopping picks. The difference it measures is therefore a difference of **procedures**, and calling
+it model age reads a cause into a bundle. Two changes:
+
+- **`itrf` carries five seeds**, not one, so the gap gets the same Monte-Carlo treatment as every
+  quantity it is compared against.
+- **`itrv`, validation refresh**, keeps the old training window and moves only validation and
+  selection onto the fresh arm's calendar. `itrf − itrv` isolates the training move; `itrv − itr`
+  isolates the selection move. Both are scored on the original B4–B6 targets.
+
+A third cell — new training with the *old* overlapping validation — is deliberately **not** built: it
+would select on data its own training window contains. And metadata now separates three times that
+were one field: selection/deployment time, planned training cutoff, and the **actual** last training
+target. None of this identifies why the market changed; it identifies which procedure changed.
 
 **Rolling, not expanding**, because with an expanding window the training set size changes at each
 origin and model age cannot be separated from training data volume. **Caveat (`D45`):** gap density is
 monotone in calendar time, so per-origin training loss runs **11.2% at origin 6 down to 0.0% at
 origins 14–15** and the surviving count ranges **13,558 … 15,217** — partially reintroducing the
-volume variation the fixed window was chosen to eliminate. Control by **subsampling every origin's
-training set to 13,558 windows** and report the uncontrolled version as sensitivity. Per-origin
-figures: `docs/ORIGIN_WINDOW_BUDGET.md`.
+volume variation the fixed window was chosen to eliminate. Per-origin figures:
+`docs/ORIGIN_WINDOW_BUDGET.md`.
+
+**Every revised run trains on exactly 11,500 windows (`A12`).** The historical grid did not fix the
+count, so training-set size varied with gap density — monotone in calendar time — and moved with the
+same axis as model age. The runner now draws **11,500 windows without replacement, seed 1729**, from
+the training time index alone; the scaler is fitted **before** subsampling, on the purged training
+bars. Available and selected counts, the seed and a digest of the selected timestamps are logged. The
+draw is identical when only `K` changes and the valid times are the same; changing `L` or `H` changes
+the candidate set and therefore the draw, which is correct and must not be worked around.
+
+Checked across the whole revised manifest: **72 unique training configurations, available
+11,689–15,265**, all at or above 11,500 —
+[`window_budget.json`](../.research/audit-repair-work/window_budget.json). Equal calendar length is
+not equal observation count; coverage does not return a missing outcome and does not establish
+ignorability. The gap language is now **missing-bar gaps whose cause is unverified**, because
+"exchange downtime" was an inference the artifacts do not carry.
 
 **Cluster dependence (`D28`).** A 24-month window advanced 5 months means consecutive origins share 19
 of 24 months — **79.2%** of their training data; two apart 58.3%, three apart 37.5%, four apart 16.7%.
@@ -824,8 +977,18 @@ a future session can miss.
 measure: at origin 1, on leak-free validation data, eight variates do not beat one at α = 0.05. The
 gate then did its job — it repositioned a claim before fifteen origins of test blocks were opened,
 which is the entire reason `D27` moved it off the test set. Record it in §13.2 as a **selection
-event**, separate from the DSR trial count. **MDE published as required: −0.000920** at 80% power,
-α = 0.05, against an observed **+0.000256** — inside the MDE, which is §9.2 requirement 6's trigger.
+event**, separate from the DSR trial count. **MDE: −0.000920** at 80% power, α = 0.05, against an
+observed **+0.000256** — inside the MDE, which is §9.2 requirement 6's trigger.
+
+**That MDE is a post-analysis quantity and must carry the label (`A06`).** It was computed from the
+between-origin dispersion of the **observed TEST slope**, so it describes the precision this sample
+turned out to have. It is **not** prospective power: a power calculation fixes its inputs before the
+data is seen, and this one could not have been written down before the grid ran. Printing it beside
+a null is still the right thing to do — a null with no precision statement invites the reader to
+infer power that does not exist — but it is labelled *post-analysis*. The same applies to the
+equivalence margin, which is defined as a fraction of a measured effect. The pilot itself is clean on
+its own terms: validation only, mean best target-validation MSE across seeds, and the validation fit
+cache never calls test inference.
 
 **The Stage 5 gate runs on validation, not on test (`D27`).** §11's final item requires test blocks be
 opened once, after the design is frozen; a gate that repositions the title on a test-block result
@@ -840,6 +1003,32 @@ hold-out, exclude it from every table and from the regression, and state the red
 ## 9. Metrics and statistical tests
 
 ### 9.1 Metrics
+
+**Three definitions move before the table can be read (`D90`).**
+
+**The forecast origin is the first target bar, and the comparison calendar is an intersection
+(`A01`).** For lookback `L` and horizon `H`, `timestamp == forecast_origin` is the opening time of
+the first target bar; `input_start = forecast_origin − L hours` and
+`target_timestamp = forecast_origin + (step − 1) hours`. The last input bar has closed by the moment
+the forecast is issued. Test blocks are assigned by **issuance time, not by input start** — the old
+assignment shifted with `L`, so `l048`, `itr` and `l192` were being scored on different target hours
+and their differences were partly a change of sample. The legacy reader re-derives timestamps and
+reallocates blocks **in memory**; the evaluator then takes the target hours actually present for
+**every run in the comparison** and checks the horizon is complete and the realised return agrees
+after inverse scaling. This shrinks the sample and stays conditional on availability. Forecasts that
+were never persisted cannot be recovered by relabelling.
+
+**Loss is averaged per seed, then across seeds (`A05`).** The headline is the mean squared error per
+step **within each seed**, then the mean over seeds, then `RelMSE` against a zero raw-return forecast
+**on that block**, then equal weight over blocks and equal weight over origins. The MSE of an
+ensemble mean prediction is a different object and is never substituted for it. The evaluation
+calendar is hashed into every paired contrast, so two arms cannot be compared across different
+surviving samples without it showing.
+
+**Direction and P&L are taken on raw returns (`A10`).** Reconstruct `r = zσ_g + μ_g`; the cumulative
+`H`-step forecast is `σ_g·Σz + H·μ_g`. Sign, sum and every economic quantity are taken **after** that
+inverse transform. Taking a sign in scaler space folds `μ_g` into the decision and made the drift,
+not the forecast, the thing being evaluated.
 
 | Metric | Definition | Role |
 |---|---|---|
@@ -863,6 +1052,15 @@ because `MSE_model` and `MSE_naive` on the same block correlate near 1.
 5%, 10%, 50%} are commensurate. **Guard the denominator:** an origin with `R²_oos(i,1) ≤ 0` contributes
 no `b*` and is excluded, stated as such — never silently dropped.
 
+**The guard is on the sign of the reference, and rising skill is not a decay event (`A07`).** `D(i,b)`
+is defined only where the block-1 reference skill is **positive**. With a negative reference the
+ratio still evaluates to a number, and that number grows as the model gets *better* — so a threshold
+crossing would fire on improvement. Three outcomes are therefore distinct and must be reported by
+name: **undefined** (non-positive reference), **no crossing observed within six blocks** (positive
+reference, threshold never reached), and **crossed at block b**. Collapsing the first two into "no
+decay detected" asserts an edge the data does not contain. A crossing is a discrete description of
+six blocks; it is **not** an optimal retraining cadence, and §13.2 carries that as a disclosure.
+
 **The guard is not an edge case. It is the only case (`D60b`).** All **15 of 15** origins have mean
 `R²_oos ≤ 0` and are excluded by name; `decay_panel.parquet` has **zero rows**; `b*` is **UNDEFINED**
 at every τ; the log-rank test is unavailable because neither arm has a surviving origin, so **H3 is
@@ -875,7 +1073,10 @@ detected within 180 days"*.
 **right-censored at 6**. That is interval-censored survival data: report the **median `b*` with its
 CI** per τ from a Turnbull/Kaplan–Meier estimator on the 30-day grid, and test H3 with a log-rank test
 across K or an interval-censored AFT model with K as covariate. Table 5 carries the interval, never a
-bare integer; the abstract's recommended cadence *is* that interval. `min{·}` does not commute with
+bare integer. **The interval is not a recommendation (`A07`).** `b*` describes where a positive
+block-1 skill has lost a fraction τ of itself across six 30-day blocks; naming it a retraining
+cadence turns a description into a policy the design cannot support, and the abstract therefore
+carries no cadence at all. `min{·}` does not commute with
 averaging, so pooling MSEs across origins and *then* taking the minimum is a different estimand and is
 forbidden.
 
@@ -924,21 +1125,35 @@ loss (T = 30 per block) rather than recovering it from the invalid sample.
 
 ### 9.2 Mandatory tests
 
-**Diebold–Mariano for every comparative claim — but not the same DM for every pair (`D29`).** The
-comparisons that carry the paper are **nested**: the ladder is cumulative, Naive-RW (`ŷ = 0`) is
-nested inside every model in §7, Ridge-K1 inside Ridge-K8. Under the null of equal population
-predictive ability with nested models and estimated parameters, the loss differential has a mean
-shifted away from zero and the statistic is not asymptotically N(0,1) (Clark & McCracken 2001;
-McCracken 2007). Standard DM is therefore systematically **undersized against the alternative this
-study exists to establish**.
+**Every test in this section is a diagnostic, and none of them rejects a confirmatory hypothesis
+(`A03`, `D90`).** A 24-month window advanced 5 months makes consecutive origins share 79.2% of their
+training data, and each origin's test period lies inside the training window of later ones (`D28`).
+Clustered standard errors, the independent-origin bootstrap, TOST, Pesaran–Timmermann, Romano–Wolf
+and the Model Confidence Set all assume a between-cluster independence this design does not have.
+Computing them is still worth doing — they bound what the data could support — but they are reported
+as **exploratory diagnostics**, and a multiplicity correction does not repair dependence it never
+modelled. The stride-5 sensitivity uses the five G = 3 triples and reports their spread; it does not
+invent an effective G, and three clusters do not become precision by being called independent.
+
+**Diebold–Mariano for every comparative claim, and nesting is not assumed (`D29`, corrected by
+`A04`).** This document used to route the ladder, every model-versus-Naive-RW pair and Ridge-K1
+versus Ridge-K8 through Clark–West on the grounds that they are nested. For Naive-RW — a fixed
+`ŷ_raw = 0` with no estimated parameter — the nesting is real. For **K=1 versus K=8 on a nonlinear
+learned model it is not established**: a larger feature set does not make the smaller model a
+parameter restriction of the larger one once the map is nonlinear and both are fitted by early-
+stopped SGD, and Clark–West's adjustment is derived for the restriction case. Applying it anyway
+adds `Σ(ŷ_small − ŷ_large)²` back to the differential and so **moves the statistic toward the larger
+model by construction** — which is why it can read positive at rungs whose `R²_oos` is negative.
 
 | Pair type | Statistic |
 |---|---|
-| **Nested** — K=1 vs K=8, any model vs Naive-RW, Ridge-K1 vs Ridge-K8 | **Clark–West (2007)** adjusted statistic (add `Σ(ŷ_small − ŷ_large)²` back to the differential), or Clark–McCracken ENC-NEW/MSE-F with their non-standard critical values. Name which |
-| **Non-nested** — iTransformer vs DLinear vs PatchTST vs LSTM | standard DM with the HLN correction below |
+| **Nested by construction** — any model against Naive-RW (`ŷ_raw = 0`, no estimated parameter) | **Clark–West (2007)**, or Clark–McCracken ENC-NEW/MSE-F with their non-standard critical values. Name which. Reported as a diagnostic, never as the headline |
+| **Everything else, the K ladder included** — iTransformer vs DLinear vs PatchTST vs LSTM, K=1 vs K=8, Ridge-K1 vs Ridge-K8 | loss differential with the HLN correction below and **no automatic nesting adjustment**. If a nesting claim is made for a specific pair, it is argued for that pair |
 
 Acknowledge Diebold (2015), which argues DM remains valid when *forecasts* rather than models are the
-object, and take a position rather than leaving it silent.
+object, and take a position rather than leaving it silent. On this design that position is the
+narrower one: the pair matrix compares forecasts, the origins are not independent draws, and the
+p-values are read as description.
 
 **The variance estimator is rectangular, not Bartlett (`D34`).** At H > 1 forecast errors overlap, so
 use the **truncated (rectangular)** long-run variance estimator
@@ -1090,6 +1305,11 @@ aggregated estimate. Never a single number.**
 
 ### 10.2 Run accounting
 
+**The table below is the manifest that ran, and it is history (`D90`).** It grew to 1,620 runs and
+those runs are preserved. The manifest the code now emits is **2,130**, it has **not been trained**,
+and the two are not interchangeable — the revised arms are listed after the historical table and the
+resume gate rejects the old runs on purpose (`A13`).
+
 | Arm | Tag | Runs | Composition |
 |---|---|---|---|
 | Main grid | `itr` | 300 | 15 origins × 4 K × 5 seeds (`D49`) |
@@ -1124,6 +1344,35 @@ Per arm: `itr` 540 · `itrl` 150 · `dlin` `itra` `itrc` `itro` `itrr` `itrt` `i
 `lstm` `ptst` 75 each · `rdg` 60 · `itrf` `npst` `nsea` 15 each. The counts above this row are the
 manifest as it *grew*; these are what ran. **`notebooks/outputs/RUN_ANALYSIS.md` is the authority on
 what the grid returned**, and its own provenance table names the superseded `36fa9c77…` vintage.
+
+**The revised manifest — 2,130 runs, none of them trained (`D90`).** Five changes to the arm list,
+each traceable to an audit finding. Every historical `run_id` fails the new resume gate because the
+architecture, the prediction calendar, the objective or the sampling moved under it; that rejection
+is the mechanism, not a bug to route around (§10.5).
+
+| Arm | Tag | Runs | Was | Why it changed |
+|---|---|---|---|---|
+| Fresh at `o_i + 90 d` | `itrf` | **75** | 15 | Five seeds, so the aged-minus-fresh gap carries the same Monte-Carlo treatment as everything it is compared against (`A08`) |
+| Validation refresh | `itrv` | **75** | — | Keeps the old training window and moves **only** validation and selection onto the fresh arm's calendar. Without it, `itrf` confounds "retrained" with "reselected" (`A08`) |
+| Representation — identity | `repi` | **75** | — | K=8 information, identity transform, `use_norm=False`. The reference coordinate for the pair below (`A02`) |
+| Representation — whitened | `repw` | **75** | — | Same information, invertible whitening. Differs from `repi` in coordinates only |
+| Representation — correlated | `repc` | **75** | — | Same information, invertible correlating transform. `repw` vs `repi` and `repc` vs `repw` are the contrasts |
+| DLinear, all-channel | `dlina` | **75** | — | The published all-channel objective, separated from the target-only arm instead of standing in for it (`A09`) |
+| PatchTST, all-channel | `ptsta` | **75** | — | Same separation. `dlin`/`ptst` are now **target-only**, so their loss is comparable to the ladder's |
+| **Total** | | **2,130** | 1,620 | +510: `itrf` +60, `itrv` +75, three representation arms +225, two all-channel arms +150 |
+
+Unchanged at 75 each: `itru` `itra` `itrc` `itro` `itrr` `itrt` `l048` `l192` `lstm` `dlin` `ptst`.
+`itr` 540, `itrl` 150, `rdg` 60, `npst` `nsea` 15 each. The composition is emitted by
+`runner.manifest()` and asserted at 2,130 in `tests/test_experiment_plane.py`; read it from there
+rather than from this table, which can only ever be a transcription.
+
+**The representation arms are what carry RQ1 now, and the matched-K pair is demoted (`A02`).**
+`itro`/`itrr` change *which variates are present* as well as the participation ratio, so a
+difference between them is an information difference and a PR difference at once — the confound the
+pair was built to remove. `repi`/`repw`/`repc` hold the information set identical and move only an
+invertible transform of it. That still is **not** a causal effect of PR alone: an invertible map
+changes conditioning, optimisation path and the function class the model reaches, so the arms bound
+the claim rather than isolate it.
 
 **`D70`'s five arms are exploratory, declared before running, and reported whatever they show** —
 §13.2's commitment, which an arm reported only when it agrees with the headline does not meet. None
@@ -1263,18 +1512,43 @@ avoidable mistake.
 
 ### 10.5 Continuation across sessions
 
-**Idempotence.** A run is complete **only when both files exist and `meta.status == "complete"`.**
-Anything else is re-run from scratch. Intra-run checkpointing is deliberately omitted: at ~35 s per run
-it costs far more complexity than it saves.
+**Idempotence, through one gate that every caller shares (`A13`).** A run counts as complete only
+when `pending`, the serial executor and the parallel executor **all agree**, because they now ask the
+same question: actual code and input digests, the requested configuration, the resolved schedule, the
+prediction columns, the schema, and the prediction and weight hashes. `meta` is written **last**,
+after the artifact files land atomically, so a half-written run can never present as finished.
+Anything that fails the gate is re-run from scratch.
+
+A hash proves byte agreement, not authorship. **Use the outputs this study produced**; an artifact
+that hashes correctly because it was copied from elsewhere still did not come from this grid.
 
 **Resume.** Discover completed `run_id`s by globbing `/kaggle/input/*/preds/` ∪
 `/kaggle/input/*/*/preds/` ∪ `/kaggle/working/preds/` — **never a hard-coded dataset slug**, so the
 Kaggle Dataset name is free to change. Subtract from the manifest and execute the remainder.
+Consolidation carries accepted complete results plus the cache and checkpoints into one new bundle
+and **never overwrites a local checkpoint that is newer**.
 
-**Budget guard.** `SESSION_BUDGET_H = 11.0`, `RESERVE_H = 0.5`, checked **at run boundaries**, not
-epoch boundaries. On trip: stop, flush, print the remaining count and estimated sessions left, exit
-cleanly so the version saves. **Hitting Kaggle's 12 h wall interactively loses `/kaggle/working`
-entirely.**
+**Resume granularity is the epoch, not the run (`A13`).** The earlier "intra-run checkpointing costs
+more than it saves" held at ~35 s per run; the revised baselines carry a 120-epoch cap and that is no
+longer true. A checkpoint holds the model and best model, the optimizer, the scheduler, the RNG
+state, the epoch, the patience counter and the fit identity; loading uses `weights_only=True`.
+Training checks the deadline **at minibatch boundaries**, saves at every completed epoch, and replays
+only the partial epoch after the last boundary. On CPU, interrupted-then-resumed training matches
+uninterrupted training exactly. Two workers keep their pending set intact across a pause and
+propagate an alignment failure to the caller rather than absorbing it.
+
+**Budget guard.** One monotonic deadline spans the pilot, the tuning search and the grid — a guard
+that starts at the grid leaves the prelude outside the budget it claims to bound. Default ceiling
+**11.5 h with a 45-minute reserve**, checked at run and minibatch boundaries. On trip: stop, flush,
+print the remaining count and estimated sessions left, exit cleanly so the version saves. **Hitting
+Kaggle's 12 h wall interactively loses `/kaggle/working` entirely.**
+
+**The effective budget is shorter than the ceiling and only the user knows by how much (`A13`).** The
+12 h session and 30 h weekly limits are the **user's** figures; Kaggle's own meter is the authority.
+The operator enters remaining quota, and the effective budget is the smaller of that, the ceiling and
+the time this session has already spent. Python cannot rescue unsaved interactive output and cannot
+release a GPU allocation on its own — saving the version and stopping the session are manual steps.
+`USAGE.md` carries the procedure.
 
 **The guard measures the session, not the worker (`D54f`).** `BudgetGuard` sets its deadline where it
 is constructed, but the 12 h wall runs from cell 0 — so the prelude (Stage 2, 3b, 4 and the twelve
@@ -1422,7 +1696,23 @@ Aggregation writes `paper_numbers.json`, and every table and figure is generated
 rather than transcribed. **The grid's copy is at `notebooks/outputs/artifacts/paper_numbers.json`**
 (immutable evidence); the manuscript's is at **`paper/paper_numbers.json`**, which names the grid file
 by sha256 so the two cannot silently diverge (`D60f`, `D62a`). Repo-root `artifacts/` holds one stale
-2026-08-06 CPU smoke run and is **not** the results directory. **Numbers produced under different
+2026-08-06 CPU smoke run and is **not** the results directory.
+
+**A third copy exists and it is the one the manuscript reads (`D90`).**
+`paper/reanalysis_2026-09-09/paper_numbers.json` is the same 1,620 predictions recomputed under the
+corrected evaluation of A01, A05, A10 and A11. It records the **analysis code hash and the prediction
+code hash separately**, because they are now different vintages and collapsing them would claim the
+model changed when only the reader did. The predictions themselves are untouched — `bfb43f21…` over
+input `8270a84b…` — and `paper/reanalysis_2026-09-09/{tables,figures,panels}` are rendered from it by
+`python tools/build_report.py --out paper/reanalysis_2026-09-09`. `--check` on that directory is the
+drift guard and must exit 0 before any number is quoted.
+
+**Which of the three a number comes from is part of the number.** The grid copy is what the old
+protocol produced and is cited as history. The reanalysis copy is what those predictions say once
+they are aligned and aggregated correctly, and it is what `paper/manuscript.tex` interpolates through
+`reanalysis_2026-09-09/tables/manuscript_numbers.tex`. `paper/paper_numbers.json` is the pre-audit
+manuscript source and is retained, not deleted. Mixing two of them in one table is the failure §12
+exists to prevent, and it is now easier to commit than it was with two. **Numbers produced under different
 input-artifact hashes are not comparable and must not share a table.** A number that cannot be
 regenerated is a documented failure, not a footnote.
 
@@ -1439,8 +1729,12 @@ Table 4.
 
 ### 13.1 Structure
 
-IMRaD, 10–14 pages. Abstract 200–250 words and **must contain concrete numbers** — the β₁ value, the
-percentage decay, the recommended cadence. An abstract without numbers reads as a proposal.
+IMRaD, 10–14 pages. Abstract 200–250 words and **must contain concrete numbers** — but the numbers
+that exist (`A07`, `A15`): mean `R²_oos` per model against Naive-RW, the standard error **across
+origins**, the seed count, and the origin and block counts the average covers. **Not** a recommended
+cadence, which this design does not estimate, and not β₁ as a headline — §9.2 reports it as
+descriptive with its post-analysis MDE printed beside it. An abstract without numbers reads as a
+proposal; an abstract carrying a number the study cannot produce is worse.
 
 `1 Introduction` · `2 Related Work` (architectures; the channel-independence debate; crypto DL;
 evaluation protocols; preprocessing practice; gap synthesis) · `3 Methodology` (3.1 provenance and
@@ -1452,7 +1746,35 @@ clustered inference) · `4 Results` (4.1 data and efficiency · 4.1b effective d
 
 ### 13.2 Mandatory disclosures
 
-Each is a place a reviewer will otherwise find a hole:
+Each is a place a reviewer will otherwise find a hole.
+
+**The audit's own disclosures come first, because they bound how every item after them is read
+(`D90`).**
+
+- **which numbers are observations and which are only specified** — the 1,620 historical runs,
+  recomputed under corrected evaluation, are the evidence; the 2,130-run protocol is implemented and
+  **untrained**. Any sentence that blurs the two is the failure §3's contribution (3) names;
+- **that the study is not externally pre-registered** (`A06`) — post-audit protocol changes are
+  exploratory, and the MDE and equivalence margin are post-analysis quantities;
+- **that comparisons across `L` in the historical grid were scored on shifted target hours** until
+  A01's reader and evaluator were added, and that the corrected comparison is conditional on
+  availability of the full horizon for every arm in the pair;
+- **that clustered inference here is diagnostic** (`A03`) — origins share up to 79.2% of training
+  data and a multiplicity correction does not repair unmodelled dependence;
+- **that Clark–West is not applied to the K ladder as a nested pair** (`A04`), and why the historical
+  positive CW beside a negative `R²_oos` is partly the adjustment's own construction;
+- **that the historical baseline ranking is confounded with objective and budget** (`A09`) — DLinear
+  at its cap in 56 of 75 runs, PatchTST in 39 of 75, both on an all-channel objective — and that the
+  revised arms change all three;
+- **that the polars safety argument this project made for a year was false** (`A14`), and what
+  actually protects it;
+- **that no priority is claimed** (`A15`), with `docs/LITERATURE_SCOPE_2026-09-10.md` named as a
+  bounded reading log rather than a search that supports one;
+- **that "no out-of-sample skill" binds to the tested models, target, horizon, preprocessing, sample
+  and aggregation** (`A15`) — individual origins can carry positive skill while the mean is negative.
+
+The list below predates the audit. Every item still holds as a disclosure; those that also carry a
+*result* are historical numbers under §1's rule.
 
 - the **K=1 attention degeneracy** as a designed control (§6.2);
 - the **K=12 rung's deliberate redundancy** as a designed contrast (§5.2);
@@ -1522,13 +1844,15 @@ Each is a place a reviewer will otherwise find a hole:
   dominated by BTC's 2020–2026 rise pays a mostly-long position for the drift, not the forecast.
   Report the three numbers together or the first alone reads as skill.
 
-**Priority claims are hedged and documented.** §3's contribution (1) reads "first walk-forward
-evaluation of iTransformer on a crypto asset with explicit decay measurement". Written flat it is
-refutable by a single search hit, and §13.3 declares every reference-library entry unverified. Write
-**"to the best of our knowledge, the first …"** and add a one-paragraph search protocol to §2:
-databases queried, exact query strings, search date, inclusion criteria, hits screened. Then let the
-weight sit on the substantive contribution — explicit decay measurement with clustered inference under
-a pre-registered threshold — which stands regardless.
+**Priority claims are not made (`A15`).** This section used to instruct hedging contribution (1) as
+"to the best of our knowledge, the first …". That hedge is withdrawn along with the claim.
+`docs/LITERATURE_SCOPE_2026-09-10.md` is a **bounded reading log** — the databases actually queried,
+the strings, the date, what was screened — and it says so rather than presenting itself as a
+systematic review. Primary work on iTransformer, on hourly BTC forecasting and on walk-forward
+evaluation already exists. A "first" that rests on a search the reader cannot rerun is refutable by
+one hit, so the weight sits entirely on §3's rewritten contributions: an auditable evaluation, a
+design that separates information from coordinates, and an explicit boundary between what was
+observed and what was only specified.
 
 ### 13.3 Citation discipline
 
@@ -1627,9 +1951,29 @@ Three specifications, each of which moves every number in Table 8 (`D46`):
    blank fixes the lever that costs nothing and leaves open the one that decides whether the strategy
    makes money; the project's reference library anchors BTC effective spreads near 0.30%.
 
-Report Sharpe, Sortino, max drawdown, turnover and net P&L — **each with an interval**: a Ledoit–Wolf
-or Jobson–Korkie/Memmel test for the Sharpe difference against the naive strategy, and bootstrap
-intervals for MDD, which from ~180 observations is otherwise uninterpretable.
+**The simulated strategy is long/cash, every long day is a round trip, and the comparator is not
+buy-and-hold (`A11`).** Positions are issued at midnight UTC over 24 consecutive targets and the
+book is either long or flat. **A long day pays cost on both sides** — entry and exit, at the end of
+the sample and beside gaps included — because a daily partition that only charges one side is
+modelling a position nobody closes. Log wealth accrues `p × [r + log(1−c) − log(1+c)]` with
+`c = fee + slippage` per side; cash contributes zero. The comparator drawn beside it is
+**always-long with the same daily round trips**, not continuous buy-and-hold: charging the strategy
+for turnover the benchmark never pays is how a cost-aware result gets flattered.
+
+Report Sharpe, Sortino, max drawdown, turnover and net P&L. **Each with an interval where an interval
+is defensible, and no interval where it is not.** Sharpe and Sortino are computed from **simple**
+returns derived from log wealth; downside deviation is the RMS of the negative part against MAR = 0
+with **every period in the denominator**, not only the losing ones; maximum drawdown includes the
+initial capital. A Jobson–Korkie/Memmel test, a Ledoit–Wolf test or a bootstrap MDD interval is shown
+**only** where its assumptions hold on this sample — an unsupported interval printed beside a number
+reads as inference and is worse than a bare number honestly labelled.
+
+**What the economic section does not claim (`A11`).** Missing outcome windows stay missing, and
+evaluating only complete windows is selection on future availability. Nothing here is an executable
+backtest: no order book, no fills, no funding, no venue risk. A positive net figure under a negative
+`R²_oos` is not a contradiction — squared error and directional P&L are different objectives, and a
+sample dominated by BTC's 2020–2026 rise pays a mostly-long book for the drift rather than for the
+forecast.
 
 **The Deflated Sharpe Ratio, made computable (`D46`).** "DSR with N = the number of configurations
 tried" cannot be executed and would return ≈ 0 by construction if it could: `SR₀` requires **`V[SR]`,
@@ -1877,7 +2221,42 @@ Doing so corrected three filenames of its own: the "Intraday Functional PCA … 
 `verified` flags are deliberately **untouched**, because conflating the two retires the distinction
 §13.3 exists to enforce.
 
-**New contradictions found later take IDs D90+. Absorbing one silently is the exact failure this
+### D90 — the September 2026 research-workflow audit
+
+The fifteenth pass (2026-09-09/10) is the only one whose lens is **research validity** rather than
+implementation correctness, and it is the reason every pass before it could be green while the study
+was not. `docs/RESEARCH_WORKFLOW_AUDIT_2026-09-09.md` read the working tree; A01–A15 are its finding
+IDs and do **not** close or renumber anything above. **`docs/AUDIT_REMEDIATION_2026-09-09.md` is the
+long form** — finding by finding, with what each got and what it still needs empirically.
+`docs/DIVERGENCE_REGISTER.md` carries D90 as the register's own summary entry, which is shorter than
+this index and is not the place to look for the per-finding argument.
+
+| Finding | Defect | Resolution | § |
+|---|---|---|---|
+| A01 | Test blocks were assigned by input start, so a change of `L` changed which target hours were scored — `l048`/`itr`/`l192` were not compared on the same sample | Forecast origin is the first target bar; blocks assigned by issuance; evaluator intersects the target hours present for every run in a comparison | 9.1 |
+| A02 | `itro`/`itrr` move variate identity and PR together, so RQ1's direct contrast confounds information with coordinates | `repi`/`repw`/`repc`: identical K=8 information, invertible transforms only. PR-only causal claim withdrawn | 5.4, 10.2 |
+| A03 | Clustered SE, bootstrap, TOST, PT, Romano–Wolf and MCS were read as confirmatory on origins sharing 79.2% of training data | Every such test relabelled an exploratory diagnostic; J-test on CR1 with origin clusters and origin×block fixed effects; stride-5 triples reported with their spread | 9.2 |
+| A04 | Clark–West applied to the whole K ladder on the assumption it is nested | Nesting argued per pair; automatic for Naive-RW only, and CW is a diagnostic rather than the headline | 9.2 |
+| A05 | Per-seed losses pooled before averaging; ensemble-mean MSE substituted for mean of per-seed MSE | Mean squared error per step within seed, then across seeds, then RelMSE per block, then equal block and origin weight; evaluation calendar hashed into every paired contrast | 9.1 |
+| A06 | "Pre-registered" asserted with no dated external evidence; MDE derived from the observed test slope and presented as power | Claim withdrawn, post-audit protocol declared exploratory; MDE and equivalence margin labelled post-analysis; pilot is validation-only and its cache never calls test inference | 1, 3, 8.5 |
+| A07 | `D(i,b)` fires on a non-positive reference, so rising skill could register as decay | Defined only on a positive block-1 reference; undefined / no-crossing / crossed reported as three distinct outcomes; no optimal-cadence claim | 9.1 |
+| A08 | The fresh arm moved training, validation and selection together and carried one seed | `itrf` at five seeds plus `itrv`, which moves selection only; selection time, planned cutoff and actual last training target separated in metadata | 8.1, 10.2 |
+| A09 | iTransformer missing its final encoder LayerNorm and detaching nothing in `use_norm`; PatchTST port wrong in six places; baselines truncated at their epoch cap while the ladder was not | Parity against pinned upstream commits (max abs err 7.16e-7); target-only and all-channel split into separate arms; 120-epoch cap, patience 12, validation-selected LR | 6.1, 7 |
+| A10 | Direction and economic signals taken in scaler space, so `μ_g` entered the decision | `r = zσ_g + μ_g` before any sign or sum | 9.1 |
+| A11 | One-sided costs on a daily partition, buy-and-hold comparator, downside deviation over losing periods only, MDD excluding initial capital | Long/cash with both sides charged, always-long daily comparator, RMS over all periods against MAR = 0, MDD including capital; unsupported intervals removed | 13.5 |
+| A12 | Training-set size varied with gap density, on the same axis as model age | 11,500 windows without replacement, seed 1729, scaler fitted first; 72 spans checked, available 11,689–15,265 | 8.1 |
+| A13 | Completion, resume and remaining count each asked a different question; no epoch checkpoint; the budget guard did not span the prelude | One strict gate on code/input/config/schedule/schema/hashes, `meta` written last; epoch checkpoints with `weights_only=True`; one monotonic deadline, 11.5 h ceiling, 45-minute reserve, operator-entered quota | 10.5 |
+| A14 | The polars ban was justified by a claim the API refutes | `center=True` exists in polars; the protection is per-bar features and chronology tests, and the ban stands on a different argument | 2, 16 |
+| A15 | Manuscript incomplete; "first" and "no out-of-sample skill" unbounded; entry documents mixed vintages | Manuscript separates recomputed history from untrained protocol; priority claim dropped; bounded reading log at `docs/LITERATURE_SCOPE_2026-09-10.md`; README/USAGE point at the notebook and the 2,130-run manifest | 1, 3, 13.2 |
+
+**What remediation did not buy.** Implementation and tests are not observations. No GPU run of the
+revised protocol has happened, so no ranking, no decay result and no economic figure from it exists.
+Six claims stay unavailable after any rerun, because they need a different design rather than more
+seeds: a causal effect of PR alone, the absence of predictability in Bitcoin generally, an optimal
+retraining cadence, inference from independent origins, the cause of every gap, and an executable
+profitable strategy across the whole calendar.
+
+**New contradictions found later take IDs D91+. Absorbing one silently is the exact failure this
 register exists to prevent.**
 
 ---
@@ -1933,17 +2312,26 @@ invertedTransformer/
 ├── CLAUDE.md                       # this file — project law
 ├── README.md
 ├── USAGE.md                        # operational companion: commands, stages, schemas, expected numbers
-├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D62; §14 is the index
+├── docs/DIVERGENCE_REGISTER.md     # long-form evidence for D01–D90; §14 is the index
+├── docs/RESEARCH_WORKFLOW_AUDIT_2026-09-09.md  # the audit itself, A01–A15. Evidence, never edited
+├── docs/AUDIT_REMEDIATION_2026-09-09.md        # what each finding got, and what it still needs (D90)
+├── docs/AUDIT_REMEDIATION_CHECKPOINT.md        # resume state for the remediation work
+├── docs/LITERATURE_SCOPE_2026-09-10.md         # bounded reading log — NOT a systematic review (A15)
+├── docs/NOTEBOOK_MAP.md            # generated: phases, producing cells, reads/writes (D87)
 ├── docs/ORIGIN_WINDOW_BUDGET.md    # per-origin/per-block window accounting — D45's assertion target
 ├── docs/WALK_FORWARD_FOUNDATION.md # §8's protocol mapped element-by-element to verified citations
+├── .research/audit-repair-work/    # machine evidence: pytest_results, upstream_parity, window_budget
+│                                   # migration scripts here are APPLIED — never replay them
 ├── src/                            # importable package; module inventory in USAGE.md §2
 ├── tools/build_notebook.py         # src/ -> notebook; carries outputs forward (D54, D86, D87)
 ├── tools/notebook_to_src.py        # notebook -> src/; the return leg, verified byte-exact (D88)
 ├── tools/build_report.py           # generates paper/ FROM the artifacts on disk (D62a). CPU only
-├── notebooks/iTransformer.ipynb    # THE deliverable — self-contained, generated, editable both ways
+├── notebooks/iTransformer.ipynb    # THE implementation — 357 cells, primary surface (D90)
+├── notebooks/outputs/iTransformer_before_A01_A15.ipynb  # executed pre-remediation archive
 ├── notebooks/logs-iTransformer.txt # the Kaggle session console stream — D60's evidence base
-├── notebooks/outputs/artifacts/    # THE grid output (below)
+├── notebooks/outputs/artifacts/    # THE historical grid output, 1,620 runs (below)
 ├── paper/                          # manuscript + GENERATED deliverables (below)
+├── paper/reanalysis_2026-09-09/    # the corrected recomputation — what the manuscript reads (§12)
 ├── spot_klines_btc.py              # Stage 1 ingest (was mis-named `binance_spot_klines.py`, D11/D33)
 ├── data/raw/                       # IMMUTABLE. the four Stage 1 artifacts live HERE (D33)
 ├── data/processed/                 # features_1h.parquet, splits.json — the writable half
@@ -2089,9 +2477,11 @@ lazy scans. **pandas is permitted at exactly two places, both named** — (1) co
 pandas for `statsmodels`, `arch` or `wildboottest`, which accept nothing else, via a named function,
 not scattered `.to_pandas()` calls; and (2) **Stage 1 ingest**, `spot_klines_btc.py` (§2). Nowhere
 else. Training touches no DataFrame at all: pre-built GPU-resident tensors, index-slice batching, no
-`DataLoader`. This is a correctness argument, not only a speed one — polars' rolling API is
-backward-closed, so the `center=True` leak is **unrepresentable**; in pandas it is one keyword away.
-The source specification's §6.2 purge snippet is pandas and must be **re-expressed**, not copied.
+`DataLoader`. One data plane rather than two is the argument: lazy scans, explicit schemas, no silent
+index alignment on join or assignment. It is **not** the argument this file used to make — polars
+does express centred windows (`A14`, §2), and the protection against that leak class comes from
+per-bar features and the chronology tests. The source specification's §6.2 purge snippet is pandas
+and must be **re-expressed**, not copied.
 
 **Reproducibility.** Seed `random`, `numpy`, `torch`, `torch.cuda`; set `PYTHONHASHSEED`;
 `cudnn.deterministic = True` for final runs. Record git sha, **`code_sha256`** and input-artifact

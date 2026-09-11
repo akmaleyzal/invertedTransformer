@@ -173,7 +173,7 @@ class Origin:
 class FalsificationOrigin:
     """A model trained fresh at ``o_i + 90 days``, scored on blocks 4-6.
 
-    Root §8.1's pre-registered falsification arm, and **the only design in the
+    Root §8.1's documented falsification arm, and **the only design in the
     study that identifies decay directly**. If the aged-minus-fresh gap is zero
     while beta1 < 0, then beta1 is calendar, not age — the aged model is not
     decaying, the market simply got harder in months 4-6, and RQ2's headline
@@ -243,6 +243,26 @@ class FalsificationOrigin:
     @property
     def label(self) -> str:
         return f"{self.base.label}+{self.offset_days}d"
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationRefreshOrigin(FalsificationOrigin):
+    """Original training span, refreshed validation, same B4--B6 targets."""
+    @property
+    def train_start(self) -> datetime:
+        return self.base.train_start
+
+    @property
+    def train_sub_end(self) -> datetime:
+        return self.base.train_sub_end
+
+    @property
+    def val_start(self) -> datetime:
+        return self.base.train_sub_end + self._shift
+
+    @property
+    def label(self) -> str:
+        return f"{self.base.label}+validation{self.offset_days}d"
 
 
 #: Anything :func:`itransformer_btc.splits.build_origin_tensors` accepts. The
@@ -368,15 +388,7 @@ SOURCE_PROVENANCE: Final[tuple[Upstream, ...]] = (
         licence="MIT",
         accessed="2026-09-03",
         adapted=(
-            "d_model 512 -> 128, because attention here runs over N <= 12 variate "
-            "tokens rather than L timesteps and 512 over-parameterises ~14k "
-            "training windows (`D25`); loss on the target channel only, where the "
-            "reference defaults to all channels, which would make K itself vary "
-            "the number of supervised tasks (`D39`); lr halved every 4 epochs "
-            "rather than every epoch (`D47`); a runtime `capture` attribute for "
-            "the attention maps, deliberately not a config field so a captured "
-            "run stays bit-identical (`D62d`). Every other hyperparameter is "
-            "adopted unchanged and never tuned (`D38`)."
+            'Post-audit final encoder LayerNorm restored; target-only loss; study-sized encoder and declared schedules. Uniform arm applies the same attention dropout but freezes unused Q/K. Three invertible-representation controls disable instance norm; all other iTransformer arms retain it. Hyperparameter sensitivity is explicit and validation-only.'
         ),
         verified=True,
     ),
@@ -394,12 +406,7 @@ SOURCE_PROVENANCE: Final[tuple[Upstream, ...]] = (
         licence="Apache-2.0",
         accessed="2026-09-03",
         adapted=(
-            "The published all-channel objective and channel-shared weights are "
-            "kept deliberately: trained on the target channel alone this model "
-            "would be K=1 wearing a K=8 label (`D40`, `D56`). Its centred moving "
-            "average is retained as published and is confined to the 96-bar "
-            "lookback, so root §8.3's no-embargo argument is untouched (`D56`)."
-        ),
+            'Shared channel maps, target-only default and separate all-channel sensitivity. Target-only effective input K=1 is disclosed. Validation LR search and 120-epoch cap recorded; no claim of equivalent optimization across model families.'        ),
         verified=True,
     ),
     Upstream(
@@ -416,11 +423,7 @@ SOURCE_PROVENANCE: Final[tuple[Upstream, ...]] = (
         licence="Apache-2.0",
         accessed="2026-09-03",
         adapted=(
-            "Reuses this study's own EncoderLayer with iTransformer's d_model, "
-            "d_ff, e_layers, n_heads and dropout, so the two models differ in "
-            "what a token is and in nothing else --- the cleanest form of the "
-            "contrast, and it extends `D38`'s no-tuning posture to the baselines "
-            "instead of quietly exempting them. Patch 16 / stride 8 as published."
+            'Post-audit BatchNorm/residual-attention encoder with both projection and residual dropout, correct channel/patch flatten order and uniform positional initialization. Shared head; RevIN affine=False, no patch padding, head dropout=0. Target-only default and separate all-channel sensitivity; validation LR search and 120-epoch cap recorded.'
         ),
         verified=True,
     ),

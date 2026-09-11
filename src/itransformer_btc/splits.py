@@ -60,47 +60,37 @@ from itransformer_btc.config import (
 )
 from itransformer_btc.features import TARGET_INDEX, ladder_columns
 from itransformer_btc.segments import HOUR_MS
+import hashlib
 
 Semantics = Literal["contained", "origin"]
 
 
 def window_starts(
-    ts: np.ndarray,
-    start: datetime,
-    end: datetime,
-    semantics: Semantics,
-    span: int = WINDOW_SPAN,
+    ts: np.ndarray, start: datetime, end: datetime, semantics: Semantics,
+    span: int = WINDOW_SPAN, *, seq_len: int = SEQ_LEN,
 ) -> np.ndarray:
-    """Absolute row indices of valid window starts in ``[start, end)``.
+    """Input-start indices; test membership uses the FIRST TARGET timestamp (A01).
 
-    Args:
-        ts: Epoch-ms timestamps of the full feature frame, ascending.
-        start: Inclusive lower bound.
-        end: Exclusive upper bound.
-        semantics: ``"contained"`` requires the whole window inside the span —
-            training and validation, where the target may not cross the
-            boundary. ``"origin"`` requires only the *start* inside — test
-            blocks, where the lookback may reach back across it.
-        span: ``L + H``.
-
-    Returns:
-        Row indices, ascending; empty if the span admits no window.
+    A forecast at t consumes [t-L, t) and predicts [t, t+H). Training and
+    validation keep their complete windows inside their respective spans.
     """
-    lo = int(start.timestamp() * 1000)
-    hi = int(end.timestamp() * 1000)
-
-    first = np.arange(len(ts) - span + 1)
-    if len(first) == 0:
-        return np.empty(0, dtype=np.int64)
-
-    # Contiguity: the window covers `span` consecutive hours with no break.
+    if semantics not in ("contained", "origin") or span < 2:
+        raise ValueError("invalid window semantics or span")
+    if semantics == "origin" and not 0 < seq_len < span:
+        raise ValueError("origin semantics require 0 < seq_len < span")
+    ts = np.asarray(ts)
+    if ts.ndim != 1 or np.any(np.diff(ts) <= 0) or np.any(ts % HOUR_MS != 0):
+        raise ValueError("timestamps must be unique, increasing UTC hour boundaries")
+    lo, hi = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+    if hi <= lo:
+        raise ValueError("window end must follow start")
+    first = np.arange(max(0, len(ts) - span + 1), dtype=np.int64)
     contiguous = (ts[first + span - 1] - ts[first]) == (span - 1) * HOUR_MS
-
     if semantics == "contained":
         inside = (ts[first] >= lo) & (ts[first + span - 1] < hi)
     else:
-        inside = (ts[first] >= lo) & (ts[first] < hi)
-
+        issued = ts[first + seq_len]
+        inside = (issued >= lo) & (issued < hi)
     return first[contiguous & inside]
 
 
@@ -150,28 +140,12 @@ class Scaler:
 
 @dataclass(frozen=True, slots=True)
 class SplitTensors:
-    """One split's inputs, targets, and the timestamps they were issued at.
-
-    ``y`` and ``y_all`` are the same block of future bars read at two widths, and
-    both exist because the study now trains two kinds of model (`D56`). Root §6.2
-    / `D39` fixes the iTransformer loss on the **target channel only** at every
-    rung, so the ladder trains against ``y``. The channel-independent baselines —
-    DLinear, PatchTST — carry their published all-channel objective, and that is
-    the only thing making their ``K = 8`` label true: a channel-independent
-    forecast for one channel depends on that channel's history alone, so
-    supervision on all eight through shared weights is the sole route by which
-    the other seven reach the target's forecast at all. Trained against ``y``
-    they would be K=1 wearing a K=8 label — exactly the collapse `D40` exists to
-    prevent.
-
-    ``preds/*.parquet`` holds the target channel for **every** model regardless
-    (root §10.4), so nothing downstream needs to know which width was trained on.
-    """
+    """Inputs, target returns, all-channel targets and first-target timestamps. The default objective consumes y; all-channel sensitivity consumes y_all. Every output artifact predicts the return channel."""
 
     x: np.ndarray      # (n, L, K) float32, standardised
     y: np.ndarray      # (n, H)    float32, standardised target channel
     y_all: np.ndarray  # (n, H, K) float32, every channel's H-step target
-    ts: np.ndarray     # (n,)      int64, window start — for traceability
+    ts: np.ndarray     # (n,) int64, forecast origin = first target bar open (UTC)
 
     def __len__(self) -> int:
         return len(self.ts)
@@ -191,6 +165,8 @@ class OriginTensors:
     #: normal origin, ``(4, 5, 6)`` for the falsification arm — which is why the
     #: label is stored rather than recovered from position.
     block_labels: tuple[int, ...]
+    training_selection: dict | None = None
+    representation: dict | None = None
 
     @property
     def naive_rw_z(self) -> float:
@@ -226,7 +202,7 @@ def _gather(
         # reason nobody would think to look for.
         y=np.ascontiguousarray(targets[:, :, TARGET_INDEX]),
         y_all=targets,
-        ts=ts[starts],
+        ts=ts[starts + seq_len],
     )
 
 
@@ -237,6 +213,9 @@ def build_origin_tensors(
     seq_len: int = SEQ_LEN,
     pred_len: int = PRED_LEN,
     columns: tuple[str, ...] | None = None,
+    train_window_limit: int | None = None,
+    selection_seed: int = 1729,
+    representation: str = "identity",
 ) -> OriginTensors:
     """Build every split for one (origin, K) cell.
 
@@ -249,8 +228,8 @@ def build_origin_tensors(
             window's target reaches at or past ``val_start`` — the purge
             assertion (`D24`), checked here rather than trusted.
     """
-    # Named columns override the rung, so a matched-K arm can hold K fixed and
-    # move only the effective rank (`D70`). ``k`` still has to agree with the set:
+    # Named columns override the rung; the historical matched-K arm changes
+    # feature identity as well as PR. ``k`` still has to agree with the set:
     # it is what the model is built with, and a mismatch would be silent.
     columns = tuple(columns) if columns else ladder_columns(k)
     if len(columns) != k:
@@ -274,6 +253,44 @@ def build_origin_tensors(
 
     scaler = Scaler.fit(values[train_idx[0] : train_idx[-1] + span], columns)
     scaled = scaler.transform(values)
+    n_available = len(train_idx)
+    fit_rows = scaled[train_idx[0]:train_idx[-1] + span].astype(np.float64)
+    representation_meta = None
+    if representation != "identity":
+        if k != 8 or representation not in ("repr_identity", "whiten", "correlate"):
+            raise ValueError("representation controls require the same K=8 base columns")
+        covariance = np.cov(fit_rows[:, 1:], rowvar=False, ddof=0)
+        eig, vectors = np.linalg.eigh(covariance)
+        floor = max(float(eig.max()) * 1e-6, 1e-8)
+        transform = np.eye(k)
+        if representation != "repr_identity":
+            transform[1:, 1:] = (vectors * (1. / np.sqrt(np.maximum(eig, floor)))) @ vectors.T
+        if representation == "correlate":
+            corr = .95 * np.ones((k-1, k-1)) + .05 * np.eye(k-1)
+            ev, q = np.linalg.eigh(corr)
+            transform[1:, 1:] = transform[1:, 1:] @ ((q * np.sqrt(ev)) @ q.T)
+        if np.linalg.matrix_rank(transform) != k or np.linalg.cond(transform) > 1e6:
+            raise ValueError("representation is not safely invertible")
+        represented = fit_rows @ transform
+        eigenvalues = np.linalg.eigvalsh(np.corrcoef(represented, rowvar=False))
+        representation_meta = {
+            "name": representation, "matrix": transform.tolist(),
+            "inverse": np.linalg.inv(transform).tolist(),
+            "condition_number": float(np.linalg.cond(transform)),
+            "training_pr": float(eigenvalues.sum()**2 / (eigenvalues**2).sum()),
+            "fit_scope": "purged training rows only", "target_preserved": True,
+            "use_norm": False, "eigenvalue_floor": floor,
+        }
+        scaled = (scaled @ transform).astype(np.float32)
+    if train_window_limit is not None:
+        if train_window_limit < 1 or n_available < train_window_limit:
+            raise ValueError(f"{origin.label}: {n_available} training windows < required {train_window_limit}")
+        selected = np.random.default_rng(selection_seed).choice(n_available, train_window_limit, replace=False)
+        train_idx = train_idx[np.sort(selected)]
+    selection = {"available": n_available, "selected": len(train_idx),
+                 "limit": train_window_limit, "seed": selection_seed,
+                 "forecast_times_sha256": hashlib.sha256(ts[train_idx + seq_len].tobytes()).hexdigest(),
+                 "scaler_fit": "all purged training rows before subsampling"}
 
     blocks = origin.blocks()
     return OriginTensors(
@@ -283,9 +300,10 @@ def build_origin_tensors(
         train=_gather(scaled, train_idx, ts, seq_len, pred_len),
         val=_gather(scaled, val_idx, ts, seq_len, pred_len),
         test_blocks=tuple(
-            _gather(scaled, window_starts(ts, lo, hi, "origin", span),
+            _gather(scaled, window_starts(ts, lo, hi, "origin", span, seq_len=seq_len),
                     ts, seq_len, pred_len)
             for _, lo, hi in blocks
         ),
         block_labels=tuple(label for label, _, _ in blocks),
+        training_selection=selection, representation=representation_meta,
     )

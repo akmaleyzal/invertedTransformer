@@ -1,0 +1,28 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Main results at $H=24$, aggregated across all fifteen origins.}
+\label{tab:main}
+\begin{tabular}{lrrrcrr}
+\toprule
+Model & RelMSE & $R^2_{oos}$ & Seed std & In MCS & Origins & Seeds \\
+\midrule
+itr-K1 & 1.0203 & -0.0203 $\pm$ 0.0016 & 0.000967 & --- & 15 & 5 \\
+itr-K4 & 1.0184 & -0.0184 $\pm$ 0.0013 & 0.001709 & --- & 15 & 5 \\
+itr-K8 & 1.0177 & -0.0177 $\pm$ 0.0012 & 0.001418 & --- & 15 & 5 \\
+itr-K12 & 1.0182 & -0.0182 $\pm$ 0.0013 & 0.001464 & --- & 15 & 5 \\
+itru-K8 & 1.0174 & -0.0174 $\pm$ 0.0012 & 0.001380 & --- & 15 & 5 \\
+rdg-K1 & 1.0009 & -0.0009 $\pm$ 0.0006 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K4 & 1.0003 & -0.0003 $\pm$ 0.0001 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K8 & 1.0004 & -0.0004 $\pm$ 0.0001 & --- & 90\%, 75\% & 15 & 1 \\
+rdg-K12 & 1.0005 & -0.0005 $\pm$ 0.0003 & --- & 90\%, 75\% & 15 & 1 \\
+dlin-K8 & 1.0258 & -0.0258 $\pm$ 0.0009 & 0.000611 & --- & 15 & 5 \\
+ptst-K8 & 1.0160 & -0.0160 $\pm$ 0.0006 & 0.000668 & --- & 15 & 5 \\
+lstm-K8 & 1.0015 & -0.0015 $\pm$ 0.0005 & 0.000520 & 90\% & 15 & 5 \\
+npst-K1 & 2.0080 & -1.0080 $\pm$ 0.0046 & --- & --- & 15 & 1 \\
+nsea-K1 & 2.0483 & -1.0483 $\pm$ 0.0152 & --- & --- & 15 & 1 \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Exploratory reanalysis on common forecast times. Mean seed squared error is aggregated into block RelMSE with equal block and origin weights. Dispersion is across origins; it is not a dependence-corrected confidence interval. MCS membership is an independent-origin bootstrap diagnostic. These are local architecture adaptations with differing objectives and convergence histories, not controlled tests of architecture alone.
+\end{table}

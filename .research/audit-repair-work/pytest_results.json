@@ -1,0 +1,128 @@
+[
+  {
+    "file": "test_artifact_map.py",
+    "exit_code": 0,
+    "wall_seconds": 2.2,
+    "tail": [
+      "........                                                                 [100%]",
+      "8 passed in 0.08s"
+    ]
+  },
+  {
+    "file": "test_attention.py",
+    "exit_code": 0,
+    "wall_seconds": 12.07,
+    "tail": [
+      "...............                                                          [100%]",
+      "15 passed in 10.21s"
+    ]
+  },
+  {
+    "file": "test_audit_repairs.py",
+    "exit_code": 0,
+    "wall_seconds": 25.88,
+    "tail": [
+      ".................                                                        [100%]",
+      "17 passed in 23.84s"
+    ]
+  },
+  {
+    "file": "test_comparisons.py",
+    "exit_code": 0,
+    "wall_seconds": 4.67,
+    "tail": [
+      ".................                                                        [100%]",
+      "17 passed in 3.66s"
+    ]
+  },
+  {
+    "file": "test_data_plane.py",
+    "exit_code": 0,
+    "wall_seconds": 3.6,
+    "tail": [
+      "...................                                                      [100%]",
+      "19 passed in 2.93s"
+    ]
+  },
+  {
+    "file": "test_economics.py",
+    "exit_code": 0,
+    "wall_seconds": 1.68,
+    "tail": [
+      "................                                                         [100%]",
+      "16 passed in 0.92s"
+    ]
+  },
+  {
+    "file": "test_efficiency.py",
+    "exit_code": 0,
+    "wall_seconds": 21.76,
+    "tail": [
+      "........                                                                 [100%]",
+      "8 passed in 20.55s"
+    ]
+  },
+  {
+    "file": "test_experiment_plane.py",
+    "exit_code": 0,
+    "wall_seconds": 6.51,
+    "tail": [
+      ".......................................                                  [100%]",
+      "39 passed in 5.01s"
+    ]
+  },
+  {
+    "file": "test_model_plane.py",
+    "exit_code": 0,
+    "wall_seconds": 22.33,
+    "tail": [
+      ".................................                                        [100%]",
+      "33 passed in 20.52s"
+    ]
+  },
+  {
+    "file": "test_notebook_cells.py",
+    "exit_code": 0,
+    "wall_seconds": 1.75,
+    "tail": [
+      ".................                                                        [100%]",
+      "17 passed in 0.85s"
+    ]
+  },
+  {
+    "file": "test_notebook_sync.py",
+    "exit_code": 0,
+    "wall_seconds": 10.31,
+    "tail": [
+      "...................                                                      [100%]",
+      "19 passed in 8.94s"
+    ]
+  },
+  {
+    "file": "test_notebook_to_src.py",
+    "exit_code": 0,
+    "wall_seconds": 5.06,
+    "tail": [
+      "......                                                                   [100%]",
+      "6 passed in 4.39s"
+    ]
+  },
+  {
+    "file": "test_provenance.py",
+    "exit_code": 0,
+    "wall_seconds": 0.82,
+    "tail": [
+      "....................                                                     [100%]",
+      "20 passed in 0.14s"
+    ]
+  },
+  {
+    "file": "test_report.py",
+    "exit_code": 0,
+    "wall_seconds": 248.45,
+    "tail": [
+      ".............                                                            [100%]",
+      "13 passed in 246.54s (0:04:06)"
+    ]
+  }
+]

@@ -1,29 +1,13 @@
-"""Write ``src/itransformer_btc/`` back from the notebook's cells (`D88`).
+"""Export the primary notebooks/iTransformer.ipynb to its tested src projection.
 
-The forward direction has always existed: ``tools/build_notebook.py`` turns
-eighteen modules into 367 cells. This is the return leg, and it exists because
-root §1's deliverable made the notebook the artefact people actually open and
-edit, while ``src/`` stayed the only place a change could be made. Editing a
-cell and then re-typing it into a module is two copies kept in step by hand,
-which is `D54a` and `D69` in a new costume.
+Invoke through the notebook's final, locally enabled sync cell. The older
+build_notebook template must not overwrite notebook edits. Its flattening helpers
+are reused only to restore existing imports and verify an exact body round trip.
 
-**What this does not change.** ``src/`` remains what the tests import and what
-``code_sha256`` hashes, so it is still the vintage every ``meta/*.json`` names.
-The notebook is where you type; ``src/`` is the tested projection. Both
-directions are policed by the same byte-exact comparison, and this script
-refuses to write unless that comparison passes *after* the write.
-
-**The one thing you cannot do from a cell: add an import.** Module-level imports
-are stripped by the flattening and re-emitted once in the Library cell, which is
-generated *from* the modules (`D66`). A cell has no import lines to edit, so an
-import appearing in one is new text this script cannot place. It refuses,
-loudly, and names ``src/`` as the place to add it. Everything else -- a
-docstring, a constant, a function body, a whole new class -- flows back.
-
-Usage::
-
-    python tools/notebook_to_src.py notebooks/iTransformer.ipynb
-    python tools/notebook_to_src.py notebooks/iTransformer.ipynb --dry-run
+New imports belong in the notebook Library cell and module metadata
+itbtc.projection_imports. Remove obsolete package imports through
+projection_remove_imports. Successful export refreshes the artifact map, pinned
+package digest and ordered notebook program digest, invalidating stale outputs.
 """
 
 from __future__ import annotations
@@ -32,7 +16,9 @@ import argparse
 import ast
 import difflib
 import importlib.util
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -169,6 +155,20 @@ def _module_level_imports_in(body: str, module: str) -> list[str]:
 def sync(notebook_path: Path, dry_run: bool = False) -> int:
     generator = _load_generator()
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    # This map is derived from notebook metadata, never from the legacy template.
+    for cell in notebook["cells"]:
+        if cell.get("metadata", {}).get("itbtc", {}).get("step") == "artifact_map":
+            source = "".join(cell["source"])
+            node = next(n for n in ast.parse(source).body if isinstance(n, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "_ARTIFACT_MAP" for t in n.targets))
+            rows = []
+            for index, item in enumerate(notebook["cells"]):
+                tag = item.get("metadata", {}).get("itbtc", {})
+                if tag.get("role") == "step":
+                    rows.append((index, tag["step"], tag.get("writes", []), tag.get("reads", [])))
+            lines = source.splitlines(keepends=True)
+            lines[node.lineno-1:node.end_lineno] = ["_ARTIFACT_MAP = [\n" + "".join(f"    {row!r},\n" for row in rows) + "]\n"]
+            cell["source"] = "".join(lines).splitlines(keepends=True)
     grouped = cells_by_module(notebook)
 
     missing = [m for m in generator.MODULE_ORDER if m not in grouped]
@@ -176,7 +176,7 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
         print(
             f"refusing to write: the notebook has no cells for {missing}. A "
             f"module that lost its cells would be truncated to nothing here, "
-            f"which is silent and total. Regenerate the notebook first.",
+            f"which is silent and total. Restore the missing notebook cells from version history first.",
             file=sys.stderr,
         )
         return 1
@@ -184,8 +184,6 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
     changed: list[str] = []
     for module in generator.MODULE_ORDER:
         body = "".join(grouped[module])
-        if body == generator.flatten_module_body(module):
-            continue
 
         offending = _module_level_imports_in(body, module)
         if offending:
@@ -194,7 +192,8 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
                 f"imports {offending}. Imports live in the Library cell, which "
                 f"is generated *from* the modules (`D66`), so a cell has no "
                 f"import lines to edit and these are text this script cannot "
-                f"place. Add the dependency in src/ and rebuild the notebook.",
+                f"place. Use a function-local external import, or declare a "
+                f"package-only import in metadata.itbtc.projection_imports.",
                 file=sys.stderr,
             )
             return 1
@@ -202,6 +201,45 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
         target = generator.PACKAGE / module
         original = target.read_text(encoding="utf-8")
         rebuilt = rebuild_module(generator, module, body)
+        # Notebook metadata declares imports needed only by the exported package.
+        # In the notebook, sibling functions already share the kernel namespace.
+        extra = []
+        remove_imports = set()
+        for cell in notebook["cells"]:
+            tag = cell.get("metadata", {}).get("itbtc", {})
+            if tag.get("module") == module:
+                extra.extend(tag.get("projection_imports", []))
+                remove_imports.update(tag.get("projection_remove_imports", []))
+        if remove_imports:
+            lines = rebuilt.splitlines(keepends=True)
+            for node in reversed(ast.parse(rebuilt).body):
+                if isinstance(node, (ast.Import, ast.ImportFrom)) and ast.unparse(node) in remove_imports:
+                    del lines[node.lineno - 1:node.end_lineno]
+            rebuilt = "".join(lines)
+        tree = ast.parse(rebuilt)
+        existing = {ast.unparse(n) for n in tree.body
+                    if isinstance(n, (ast.Import, ast.ImportFrom))}
+        additions = []
+        for statement in extra:
+            parsed = ast.parse(statement).body
+            if len(parsed) != 1 or not isinstance(parsed[0], (ast.Import, ast.ImportFrom)):
+                raise ValueError(f"{module}: invalid projection import {statement!r}")
+            normal = ast.unparse(parsed[0])
+            if normal not in existing:
+                additions.append(normal + "\n")
+                existing.add(normal)
+        if additions:
+            # External imports must join the external block. Appending one after
+            # package imports would swallow a notebook separator during flattening.
+            end = max(n.end_lineno for n in tree.body
+                      if isinstance(n, (ast.Import, ast.ImportFrom))
+                      and not generator._intra_package_import(n))
+            lines = rebuilt.splitlines(keepends=True)
+            lines[end:end] = additions
+            rebuilt = "".join(lines)
+        ast.parse(rebuilt, filename=module)
+        if rebuilt == original:
+            continue
         if dry_run:
             changed.append(module)
             continue
@@ -212,6 +250,9 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
         # module that merely *looks* right is exactly the failure mode `D59`
         # cost a session to. Restore rather than leave it.
         if generator.flatten_module_body(module) != body:
+            mismatch = list(difflib.unified_diff(
+                body.splitlines(), generator.flatten_module_body(module).splitlines(),
+                fromfile="notebook", tofile="projection", n=2))
             target.write_text(original, encoding="utf-8", newline="\n")
             print(
                 f"refusing to write {module}: re-flattening what was written "
@@ -219,8 +260,31 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
                 f"is not sound here. The file has been restored unchanged.",
                 file=sys.stderr,
             )
+            print("\n".join(mismatch[:40]), file=sys.stderr)
             return 1
         changed.append(module)
+
+    if not dry_run:
+        # The pinned digest is export metadata, never an excuse to rebuild the
+        # user's notebook from the older presentation template (A13, A15).
+        digest = generator.package_digest()
+        for cell in notebook["cells"]:
+            if cell.get("metadata", {}).get("itbtc", {}).get("step") == "code_digest":
+                source = "".join(cell["source"])
+                source = re.sub(r"CODE_SHA256_OVERRIDE = ['\"][0-9a-f]{64}['\"]",
+                                f'CODE_SHA256_OVERRIDE = "{digest}"', source)
+                cell["source"] = source.splitlines(keepends=True)
+        program = json.dumps(["".join(c["source"]) for c in notebook["cells"]
+                              if c.get("cell_type") == "code"], ensure_ascii=False)
+        program_digest = hashlib.sha256(program.encode("utf-8")).hexdigest()
+        if notebook["metadata"].get("itbtc_exported_program_sha256") != program_digest:
+            for cell in notebook["cells"]:
+                if cell.get("cell_type") == "code":
+                    cell["outputs"] = []
+                    cell["execution_count"] = None
+        notebook["metadata"]["itbtc_exported_program_sha256"] = program_digest
+        notebook_path.write_text(json.dumps(notebook, indent=1, ensure_ascii=False) + "\n",
+                                 encoding="utf-8", newline="\n")
 
     if not changed:
         print("src/itransformer_btc/ already matches the notebook; nothing written")
@@ -232,6 +296,31 @@ def sync(notebook_path: Path, dry_run: bool = False) -> int:
             "now run: python tools/build_notebook.py --check\n"
             "and commit src/ and the notebook together -- they are one change."
         )
+    return 0
+
+
+def check_projection(notebook_path: Path) -> int:
+    """Validate the notebook and its projection without consulting old prose."""
+    generator = _load_generator()
+    notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
+    grouped = cells_by_module(notebook)
+    errors = [m for m in generator.MODULE_ORDER
+              if "".join(grouped.get(m, [])) != generator.flatten_module_body(m)]
+    code = ["".join(c["source"]) for c in notebook["cells"]
+            if c.get("cell_type") == "code"]
+    for source in code:
+        ast.parse(source, feature_version=(3, 11))
+    pinned = [s for s in code if re.search(r"^CODE_SHA256_OVERRIDE =", s, re.M)]
+    if len(pinned) != 1 or generator.package_digest() not in pinned[0]:
+        errors.append("pinned package digest")
+    program = hashlib.sha256(json.dumps(code, ensure_ascii=False).encode("utf-8")).hexdigest()
+    if notebook.get("metadata", {}).get("itbtc_exported_program_sha256") != program:
+        errors.append("ordered notebook program digest")
+    if errors:
+        print(f"Projection is stale: {errors}. Save the notebook, then use its final sync cell.",
+              file=sys.stderr)
+        return 1
+    print("Notebook source, ordered program digest and exported src projection agree")
     return 0
 
 

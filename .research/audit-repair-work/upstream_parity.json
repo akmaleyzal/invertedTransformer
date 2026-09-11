@@ -1,0 +1,82 @@
+{
+  "prediction_code_sha256": "60f6254da11c6300550b63af936e16709228e837dbd32b179de9973d85dfc99a",
+  "torch": "2.13.0+cpu",
+  "scope": "synthetic CPU forward parity for the declared configuration; not training or GPU parity",
+  "revisions": {
+    "thuml/iTransformer": "c2426e68ca13f74aaec08045c5c724d8ad328124",
+    "yuqinie98/PatchTST": "204c21efe0b39603ad6e2ca640ef5896646ab1a9"
+  },
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/thuml/iTransformer/c2426e68ca13f74aaec08045c5c724d8ad328124/layers/Embed.py",
+      "sha256": "2de7e5049a696d320a23a8bdb6e08e823cf7fa3f246a0a49555fcd729c5c8398"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/thuml/iTransformer/c2426e68ca13f74aaec08045c5c724d8ad328124/layers/SelfAttention_Family.py",
+      "sha256": "38ac67428d528b8e145e4944ca059b40629a8446c891142602d5aaadc38dfd9e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/thuml/iTransformer/c2426e68ca13f74aaec08045c5c724d8ad328124/layers/Transformer_EncDec.py",
+      "sha256": "985c31f4ae187b08afaa9663dc960a40544b2ec33ab55389ceab3930edc1ce02"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/thuml/iTransformer/c2426e68ca13f74aaec08045c5c724d8ad328124/model/iTransformer.py",
+      "sha256": "6f34777a5a12c253a293f79e7e1fd5b6f79ac100b443951e051e269e7e2542db"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yuqinie98/PatchTST/204c21efe0b39603ad6e2ca640ef5896646ab1a9/PatchTST_supervised/layers/PatchTST_layers.py",
+      "sha256": "21c06c70a90c60ee2a269b5c600c702834dea22cdfd72915e6b0f8b4a28db3f6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yuqinie98/PatchTST/204c21efe0b39603ad6e2ca640ef5896646ab1a9/PatchTST_supervised/layers/RevIN.py",
+      "sha256": "e64c0ccded9228b347134e7368420d3fb10f70c75145b5ff2d8bdd8c3af59df6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yuqinie98/PatchTST/204c21efe0b39603ad6e2ca640ef5896646ab1a9/PatchTST_supervised/layers/PatchTST_backbone.py",
+      "sha256": "df67173153787c2356bdfb6491159cd754332ef7382986efe879e1fbea8ebf26"
+    }
+  ],
+  "checks": [
+    {
+      "name": "iTransformer eval K=1",
+      "max_abs_error": 2.0116567611694336e-07,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "iTransformer eval K=4",
+      "max_abs_error": 4.76837158203125e-07,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "iTransformer eval K=8",
+      "max_abs_error": 3.5762786865234375e-07,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "iTransformer eval K=12",
+      "max_abs_error": 2.682209014892578e-07,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "PatchTST eval objective=target",
+      "max_abs_error": 0.0,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "PatchTST train objective=target",
+      "max_abs_error": 0.0,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "PatchTST eval objective=all",
+      "max_abs_error": 0.0,
+      "tolerance": 2e-05
+    },
+    {
+      "name": "PatchTST train objective=all",
+      "max_abs_error": 0.0,
+      "tolerance": 2e-05
+    }
+  ],
+  "probe_seed": 314159
+}

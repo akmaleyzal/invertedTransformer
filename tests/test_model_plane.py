@@ -187,7 +187,7 @@ def test_parameter_count_is_identical_at_every_rung() -> None:
     cfg = ITransformerConfig()
     counts = {k: ITransformer(cfg).n_parameters() for k in (1, 4, 8, 12)}
     assert len(set(counts.values())) == 1
-    assert next(iter(counts.values())) == 280_472
+    assert next(iter(counts.values())) == 280_728
 
 
 def test_k1_runs_and_is_not_a_bare_identity() -> None:
@@ -198,11 +198,14 @@ def test_k1_runs_and_is_not_a_bare_identity() -> None:
     assert torch.isfinite(out).all()
 
 
-def test_uniform_attention_arm_differs_without_changing_capacity() -> None:
-    """`D50` — the control must isolate what attention selects, not capacity."""
+def test_uniform_attention_has_equal_allocated_but_fewer_active_parameters() -> None:
+    """Audit A09/A14: test the declared objective and active architecture."""
     base = ITransformerConfig()
     uniform = ITransformerConfig(uniform_attention=True)
-    assert ITransformer(base).n_parameters() == ITransformer(uniform).n_parameters()
+    a_model, b_model = ITransformer(base), ITransformer(uniform)
+    assert sum(p.numel() for p in a_model.parameters()) == sum(p.numel() for p in b_model.parameters())
+    assert a_model.n_parameters() > b_model.n_parameters()
+    assert all(not p.requires_grad for layer in b_model.layers for p in (*layer.attention.q.parameters(), *layer.attention.k.parameters()))
 
     x = torch.randn(4, 96, 8)
     set_seed(42)
@@ -320,23 +323,14 @@ def test_baselines_forecast_the_target_channel() -> None:
 
 
 def test_channel_independent_baselines_are_channel_independent() -> None:
-    """DLinear and PatchTST must ignore the other channels **at prediction time**.
-
-    That is the architecture's claim, and it is what makes their K label mean
-    something different from the ladder's: the other seven variates reach the
-    target's forecast only through weights shared across channels and supervised
-    on all of them. Hence ``loss_target() == "all"`` — trained on the target
-    channel alone these would be K=1 wearing a K=8 label, which is `D40`'s
-    collapse and would quietly return the paper's central architectural
-    comparison to univariate-versus-multivariate.
-    """
+    """Target-only channel-independent baselines use only target history."""
     set_seed(42)
     x = torch.randn(4, SEQ_LEN, 8)
     disturbed = x.clone()
     disturbed[:, :, 1:] = torch.randn(4, SEQ_LEN, 7)
 
     for cfg in (DLinearConfig(), PatchTSTConfig()):
-        assert cfg.loss_target() == "all"
+        assert cfg.loss_target() == "target"
         assert cfg.channel_independent is True
         model = cfg.build().eval()
         with torch.no_grad():
@@ -439,15 +433,25 @@ def test_write_artifacts_records_the_selected_alpha(tmp_path) -> None:
 
 
 def _preds(path, timestamps: list[int], block: int = 1) -> None:
+    import json
+    stamps = np.repeat(np.array(timestamps, dtype=np.int64), 24)
     pl.DataFrame(
         {
-            "block": np.full(len(timestamps), block, dtype=np.int8),
-            "step": np.ones(len(timestamps), dtype=np.int16),
-            "timestamp": np.array(timestamps, dtype=np.int64),
-            "y_true": np.zeros(len(timestamps), dtype=np.float32),
-            "y_pred": np.zeros(len(timestamps), dtype=np.float32),
+            "block": np.full(len(stamps), block, dtype=np.int8),
+            "step": np.tile(np.arange(1, 25), len(timestamps)),
+            "timestamp": stamps, "forecast_origin": stamps,
+            "input_start": stamps - 96*3_600_000,
+            "target_timestamp": stamps + np.tile(np.arange(24), len(timestamps))*3_600_000,
+            "y_true": np.zeros(len(stamps), dtype=np.float32),
+            "y_pred": np.zeros(len(stamps), dtype=np.float32),
         }
     ).write_parquet(path)
+    metadata = path.parent.parent / "meta"
+    metadata.mkdir(exist_ok=True)
+    (metadata / (path.stem + ".json")).write_text(json.dumps({
+        "timestamp_semantics": "forecast_origin", "config": {"seq_len": 96},
+        "spec": {"pred_len": 24}, "origin": "1970-01",
+    }))
 
 
 def test_baseline_alignment_holds_and_has_teeth(tmp_path) -> None:

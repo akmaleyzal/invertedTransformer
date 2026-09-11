@@ -283,7 +283,7 @@ def _to_device(
 
 
 @torch.no_grad()
-def _mean_loss(model: nn.Module, x: Tensor, y: Tensor, batch: int = 512) -> float:
+def _mean_loss(model: nn.Module, x: Tensor, y: Tensor, batch: int = 512, target: str = "target") -> float:
     """Mean MSE over a split, batched to bound peak memory rather than for speed.
 
     The divisor is every element of one sample's target, so this is the mean over
@@ -296,7 +296,7 @@ def _mean_loss(model: nn.Module, x: Tensor, y: Tensor, batch: int = 512) -> floa
     total = 0.0
     for i in range(0, len(x), batch):
         total += nn.functional.mse_loss(
-            model(x[i : i + batch]), y[i : i + batch], reduction="sum"
+            (model.forecast_target(x[i : i + batch]) if target == "target" else model(x[i : i + batch])), y[i : i + batch], reduction="sum"
         ).item()
     return total / (len(x) * int(np.prod(y.shape[1:])))
 
@@ -322,119 +322,158 @@ def predict(model: Forecaster, x: Tensor, batch: int = 512) -> np.ndarray:
     )
 
 
+
+_TRAINING_CONTEXT = threading.local()
+
+
+class SessionBudgetExhausted(RuntimeError):
+    """A recoverable pause, not a failed experiment."""
+
+
+class TrainingSession:
+    """Per-worker checkpoint roots and a monotonic deadline."""
+    def __init__(self, out_root: Path, roots: list[Path], deadline: float):
+        self.state = (Path(out_root), [Path(r) for r in roots], deadline)
+
+    def __enter__(self):
+        self.previous = getattr(_TRAINING_CONTEXT, "state", None)
+        _TRAINING_CONTEXT.state = self.state
+        return self
+
+    def __exit__(self, *exc):
+        _TRAINING_CONTEXT.state = self.previous
+
+
 def train_one(
-    tensors: OriginTensors,
-    spec: RunSpec,
-    cfg: Architecture,
-    *,
-    device: torch.device | None = None,
-    batch_size: int = 32,
-    max_epochs: int | None = None,
-    patience: int | None = None,
-    lr: float | None = None,
-    lr_halve_every: int | None = None,
+    tensors: OriginTensors, spec: RunSpec, cfg: Architecture, *,
+    device: torch.device | None = None, max_epochs: int | None = None,
+    patience: int | None = None, lr: float | None = None,
+    lr_halve_every: int | None = None, batch_size: int = 32,
 ) -> tuple[nn.Module, TrainOutcome]:
-    """Train one (origin, K, seed) cell and return the best-validation model.
+    """Train on one device, checkpoint every epoch, stop before session expiry.
 
-    The learning rate halves every **four** epochs, not every epoch (`D47`):
-    per-epoch halving reaches ~4e-7 by epoch 9, which makes the 30-epoch budget
-    and the patience-5 early stop decorative — the model stops moving long
-    before either can bind.
-
-    ``epochs_run`` and the final training loss come back because root §6.2
-    requires them logged per rung: they are how a reader tells a flat 8->12 rung
-    from an under-trained one.
-
-    **One trainer serves every gradient model in the study**, iTransformer and
-    the §7 baselines alike (`D56`). The schedule, the patience and the early-stop
-    rule are root §6.2's, and duplicating them per model would be a second
-    definition of the training protocol — the same drift `D54d` names for the
-    artifact schema. The config supplies only what genuinely differs: the module
-    to build, and the width of the target its loss reads.
+    A checkpoint records optimizer/scheduler, best weights, epoch, patience and
+    device RNG. An interrupted epoch is redone from its last completed boundary.
+    Identity includes actual train indices, input/code/config and resolved schedule.
+    Only weights_only=True loads are accepted; no arbitrary Python object loading.
     """
     device = device or pick_device()
-
-    # The schedule comes from the config when it declares one, so an arm can widen
-    # it without a new trainer (`D62c`). ``hasattr`` rather than a Protocol member:
-    # ridge is a solve with no epochs at all, and DLinear and PatchTST take root
-    # §6.2's schedule unchanged, so requiring the method would add a stub to three
-    # classes to say "nothing special". Explicit arguments still win, which is what
-    # keeps ``stage5_pilot`` and the tests able to shorten a run.
-    training_schedule = cfg.schedule() if hasattr(cfg, "schedule") else TrainSchedule()
-    max_epochs = training_schedule.max_epochs if max_epochs is None else max_epochs
-    patience = training_schedule.patience if patience is None else patience
-    lr = training_schedule.lr if lr is None else lr
-    lr_halve_every = (
-        training_schedule.lr_halve_every if lr_halve_every is None else lr_halve_every
-    )
-
-    # Seeding and construction together, under one lock: both draw from the CPU
-    # generator, which every worker shares whatever device it owns (`D68`).
+    active = getattr(_TRAINING_CONTEXT, "state", None)
+    if active is not None and time.perf_counter() >= active[2]:
+        raise SessionBudgetExhausted(f"{spec.run_id}: session budget exhausted before fitting")
+    protocol = cfg.schedule() if hasattr(cfg, "schedule") else TrainSchedule()
+    max_epochs = protocol.max_epochs if max_epochs is None else max_epochs
+    patience = protocol.patience if patience is None else patience
+    lr = protocol.lr if lr is None else lr
+    lr_halve_every = protocol.lr_halve_every if lr_halve_every is None else lr_halve_every
+    if min(max_epochs, patience, lr_halve_every, batch_size) < 1 or lr <= 0:
+        raise ValueError("positive training schedule and batch size required")
+    if not len(tensors.train) or not len(tensors.val):
+        raise ValueError("training and validation must be nonempty")
     with SEED_LOCK:
         set_seed(spec.seed, device)
         model = cfg.build().to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=lr)
-    schedule = torch.optim.lr_scheduler.StepLR(
-        optimiser, step_size=lr_halve_every, gamma=0.5
-    )
-
-    # The whole split, resident. Index-slicing it is the entire batching
-    # strategy; shuffling permutes an index tensor on device, never the data.
+    schedule = torch.optim.lr_scheduler.StepLR(optimiser, step_size=lr_halve_every, gamma=.5)
     loss_target = cfg.loss_target()
     x_tr, y_tr = _to_device(tensors.train, device, target=loss_target)
     x_va, y_va = _to_device(tensors.val, device, target=loss_target)
-
-    best_val = float("inf")
-    best_state: dict[str, Tensor] | None = None
-    epochs_run = 0
-    train_loss = float("nan")
-    stale = 0
+    best_val, best_state, stale = float("inf"), None, 0
+    epochs_run, train_loss, prior_seconds = 0, float("nan"), 0.
     started = time.perf_counter()
+    context = getattr(_TRAINING_CONTEXT, "state", None)
+    checkpoint = None
+    identity = None
+    deadline = float("inf")
+    if context is not None:
+        out_root, roots, deadline = context
+        checkpoint = out_root / "checkpoints" / f"{spec.run_id}.pt"
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        identity = json.loads(json.dumps({
+            "spec": asdict(spec), "config": asdict(cfg), "code": code_sha256(),
+            "input": _input_sha256()[0], "torch": str(torch.__version__),
+            "device_type": device.type, "batch_size": batch_size,
+            "schedule": [max_epochs, patience, lr, lr_halve_every],
+            "train_times": hashlib.sha256(tensors.train.ts.tobytes()).hexdigest(),
+        }))
+        for root in dict.fromkeys([out_root, *roots]):
+            candidate = root / "checkpoints" / f"{spec.run_id}.pt"
+            if not candidate.exists():
+                continue
+            try:
+                saved = torch.load(candidate, map_location="cpu", weights_only=True)
+            except (OSError, RuntimeError, EOFError) as exc:
+                raise ValueError(f"{candidate}: unreadable training checkpoint") from exc
+            if saved.get("identity") != identity:
+                continue
+            model.load_state_dict(saved["model"])
+            optimiser.load_state_dict(saved["optimizer"])
+            schedule.load_state_dict(saved["scheduler"])
+            best_state, best_val = saved["best_state"], saved["best_val"]
+            epochs_run, stale = saved["epoch"], saved["stale"]
+            train_loss, prior_seconds = saved["train_loss"], saved["wall_time_s"]
+            if device.type == "cuda":
+                torch.cuda.set_rng_state(saved["rng"], device=device)
+            else:
+                torch.set_rng_state(saved["rng"])
+            break
 
-    for epoch in range(1, max_epochs + 1):
+    def save_boundary():
+        if checkpoint is None:
+            return
+        staging = checkpoint.with_suffix(".pt.tmp")
+        torch.save({
+            "identity": identity, "model": model.state_dict(),
+            "optimizer": optimiser.state_dict(), "scheduler": schedule.state_dict(),
+            "best_state": best_state, "best_val": best_val, "epoch": epochs_run,
+            "stale": stale, "train_loss": train_loss,
+            "wall_time_s": prior_seconds + time.perf_counter() - started,
+            "rng": torch.cuda.get_rng_state(device) if device.type == "cuda" else torch.get_rng_state(),
+        }, staging)
+        staging.replace(checkpoint)
+
+    # Epoch zero is recoverable even if the first epoch hits the deadline.
+    if epochs_run == 0:
+        save_boundary()
+    for epoch in range(epochs_run + 1, max_epochs + 1):
+        if stale >= patience:
+            break
+        if time.perf_counter() >= deadline:
+            raise SessionBudgetExhausted(f"{spec.run_id}: resume from epoch {epochs_run}")
         model.train()
         order = torch.randperm(len(x_tr), device=device)
-        running = 0.0
+        running = 0.
         for i in range(0, len(order), batch_size):
-            idx = order[i : i + batch_size]
+            if time.perf_counter() >= deadline:
+                raise SessionBudgetExhausted(f"{spec.run_id}: resume from epoch {epochs_run}")
+            idx = order[i:i+batch_size]
             optimiser.zero_grad(set_to_none=True)
-            # For the ladder this is MSE on the target channel only, at every
-            # rung (`D39`): `ITransformerConfig.loss_target` is the constant
-            # "target" and `ITransformer.forward` returns that channel alone, so
-            # it cannot drift to the all-channel loss the reference
-            # implementation defaults to — which would make K=12 a 12-task
-            # problem and K=1 a 1-task one, varying supervision with the study's
-            # own independent variable. A channel-independent baseline says
-            # "all" and gets the all-channel objective it is published with.
-            loss = nn.functional.mse_loss(model(x_tr[idx]), y_tr[idx])
+            fitted = model.forecast_target(x_tr[idx]) if loss_target == "target" else model(x_tr[idx])
+            loss = nn.functional.mse_loss(fitted, y_tr[idx])
+            if not torch.isfinite(loss):
+                raise ValueError(f"{spec.run_id}: non-finite training loss")
             loss.backward()
             optimiser.step()
-            running += loss.item() * len(idx)
+            running += loss.item()*len(idx)
         schedule.step()
-
         epochs_run = epoch
-        train_loss = running / len(x_tr)
-        val = _mean_loss(model, x_va, y_va)
-
+        train_loss = running/len(x_tr)
+        val = _mean_loss(model, x_va, y_va, target=loss_target)
+        if not np.isfinite(val):
+            raise ValueError(f"{spec.run_id}: non-finite validation loss")
         if val < best_val - 1e-9:
             best_val, stale = val, 0
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             stale += 1
-            if stale >= patience:
-                break
-
-    if best_state is not None:
-        model.load_state_dict(best_state)
-
+        save_boundary()
+    if best_state is None:
+        raise ValueError(f"{spec.run_id}: no finite validation checkpoint")
+    model.load_state_dict(best_state)
     return model, TrainOutcome(
-        run_id=spec.run_id,
-        epochs_run=epochs_run,
-        best_val_mse=best_val,
-        train_loss=train_loss,
-        wall_time_s=time.perf_counter() - started,
-        n_parameters=model.n_parameters(),
-        device=str(device),
+        run_id=spec.run_id, epochs_run=epochs_run, best_val_mse=best_val,
+        train_loss=train_loss, wall_time_s=prior_seconds + time.perf_counter()-started,
+        n_parameters=model.n_parameters(), device=str(device),
     )
 
 
@@ -505,27 +544,10 @@ def resolve_input_parquet(parquet: Path | str | None = None) -> Path:
 
 
 def _input_sha256(parquet: Path | str | None = None) -> tuple[str, str]:
-    """``(digest, provenance)`` for the parquet actually read.
-
-    The Stage 1 report sitting beside the artifact is preferred, because that
-    digest was written by the ingest script over the bytes it emitted and is the
-    figure root §4.1 pins. Where the report did not travel — an attached Kaggle
-    Dataset holding the parquet alone — the file is hashed directly, which yields
-    the same number by construction.
-
-    Returns ``("unknown", "unresolved")`` rather than raising: a run that cannot
-    name its input is a documented failure under §12, and failing the run instead
-    would lose 90 s of GPU time to a bookkeeping problem.
-    """
-    path = resolve_input_parquet(parquet)
-    report = path.with_name(f"{path.stem}_report.json")
+    """Hash the actual input bytes; a sibling report is not proof of identity."""
     try:
-        return json.loads(report.read_text())["artifact_sha256"][path.name], "report"
-    except Exception:
-        pass
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest(), "file-digest"
-    except Exception:
+        return hashlib.sha256(resolve_input_parquet(parquet).read_bytes()).hexdigest(), "file-digest"
+    except OSError:
         return "unknown", "unresolved"
 
 
@@ -538,22 +560,9 @@ def write_artifacts(
     device: torch.device,
     root: Path = ARTIFACTS,
     attention: "pl.DataFrame | None" = None,
+    requested_config: Architecture | None = None,
 ) -> tuple[Path, Path]:
-    """Write ``preds/{run_id}.parquet`` and ``meta/{run_id}.json``.
-
-    A run is complete **only when both files exist and ``status == "complete"``**
-    (root §10.5). Anything else is re-run from scratch; intra-run checkpointing
-    is deliberately omitted, since at ~30 s per run measured (`D57`) it costs far
-    more complexity than it saves.
-
-    **This function is the schema.** Root §12 admits no number into the
-    manuscript that does not resolve to a prediction file, a config hash and a
-    documented decision, and these two files are where all three live. Every
-    model in the study — the ladder, ridge, DLinear, PatchTST — writes through
-    here, typed against :class:`Forecaster` and :class:`Architecture` rather than
-    against one model, so there is exactly one place the contract can be read and
-    exactly one place it can be broken.
-    """
+    """Atomically publish predictions and best weights, then completion metadata with byte hashes. Remove this output root's partial checkpoint only after metadata is published. Prior attached outputs are read-only."""
     (root / "preds").mkdir(parents=True, exist_ok=True)
     (root / "meta").mkdir(parents=True, exist_ok=True)
 
@@ -573,6 +582,9 @@ def write_artifacts(
                     "block": np.full(n * h, b, dtype=np.int8),
                     "step": np.tile(np.arange(1, h + 1, dtype=np.int16), n),
                     "timestamp": np.repeat(split.ts, h),
+                    "forecast_origin": np.repeat(split.ts, h),
+                    "input_start": np.repeat(split.ts - cfg.seq_len * 3_600_000, h),
+                    "target_timestamp": (split.ts[:, None] + np.arange(h) * 3_600_000).reshape(-1),
                     "y_true": split.y.reshape(-1),
                     "y_pred": pred.reshape(-1),
                 }
@@ -586,6 +598,9 @@ def write_artifacts(
                 "block": pl.Int8,
                 "step": pl.Int16,
                 "timestamp": pl.Int64,
+                "forecast_origin": pl.Int64,
+                "input_start": pl.Int64,
+                "target_timestamp": pl.Int64,
                 "y_true": pl.Float32,
                 "y_pred": pl.Float32,
             }
@@ -594,7 +609,9 @@ def write_artifacts(
 
     preds_path = root / "preds" / f"{spec.run_id}.parquet"
     meta_path = root / "meta" / f"{spec.run_id}.json"
-    preds.write_parquet(preds_path)
+    staging_preds = preds_path.with_suffix(".parquet.tmp")
+    preds.write_parquet(staging_preds)
+    staging_preds.replace(preds_path)
 
     if attention is not None:
         # Figure 5's input (`D62d`). A third directory rather than a column on
@@ -606,12 +623,28 @@ def write_artifacts(
         (root / "attn").mkdir(parents=True, exist_ok=True)
         attention.write_parquet(root / "attn" / f"{spec.run_id}.parquet")
 
+    weights_path = root / "weights" / f"{spec.run_id}.pt"
+    weights_path.parent.mkdir(parents=True, exist_ok=True)
+    staging_weights = weights_path.with_suffix(".pt.tmp")
+    torch.save(model.state_dict(), staging_weights)
+    staging_weights.replace(weights_path)
     input_parquet = resolve_input_parquet()
     input_digest, input_provenance = _input_sha256(input_parquet)
     meta = {
         "run_id": spec.run_id,
+        "prediction_schema_version": 2,
+        "weights_sha256": hashlib.sha256(weights_path.read_bytes()).hexdigest(),
+        "torch_version": str(torch.__version__),
+        "predictions_sha256": hashlib.sha256(preds_path.read_bytes()).hexdigest(),
+        "timestamp_semantics": "forecast_origin",
+        "forecast_origin_definition": "first target bar open, UTC",
+        "evaluation_population": "surviving contiguous windows",
+        "selection_time_ms": int(tensors.origin.test_start.timestamp() * 1000),
+        "training_cutoff_ms": int(tensors.origin.train_sub_end.timestamp() * 1000),
+        "latest_training_target_ms": int(tensors.train.ts.max() + (cfg.pred_len-1)*3600000),
         "spec": asdict(spec),
         "config": asdict(cfg),
+        "requested_config": asdict(requested_config or cfg),
         # Recorded separately because a schedule override is a **method**, and
         # ``asdict`` sees fields only (`D62c`). ``LongScheduleConfig`` adds no
         # field, so its ``config`` block is byte-identical to the main arm's and
@@ -633,6 +666,9 @@ def write_artifacts(
         "input_sha256": input_digest,
         "input_sha256_source": input_provenance,
         "n_train": len(tensors.train),
+        "training_selection": tensors.training_selection,
+        "representation": tensors.representation,
+        "effective_input_channels": 1 if getattr(cfg, "channel_independent", False) and cfg.loss_target() == "target" else tensors.k,
         "n_val": len(tensors.val),
         "n_test_per_block": [len(s) for s in tensors.test_blocks],
         # Root §7 / `D31`: logged per origin so the drift tilt the Naive-RW
@@ -646,20 +682,59 @@ def write_artifacts(
         "train_loss": outcome.train_loss,
         "wall_time_s": outcome.wall_time_s,
         "n_parameters": outcome.n_parameters,
+        "n_allocated_parameters": sum(p.numel() for p in model.parameters()) if isinstance(model, nn.Module) else outcome.n_parameters,
+        "loss_target": cfg.loss_target() if hasattr(cfg, "loss_target") else "target",
+        "reached_epoch_cap": bool(outcome.epochs_run and hasattr(cfg, "schedule") and outcome.epochs_run >= cfg.schedule().max_epochs),
         "device": outcome.device,
         "status": "complete",
     }
-    meta_path.write_text(json.dumps(meta, indent=2))
+    staging_meta = meta_path.with_suffix(".json.tmp")
+    staging_meta.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    staging_meta.replace(meta_path)
+    (root / "checkpoints" / f"{spec.run_id}.pt").unlink(missing_ok=True)
     return preds_path, meta_path
 
 
-def is_complete(run_id: str, root: Path = ARTIFACTS) -> bool:
-    """Root §10.5's idempotence rule, as one function."""
+def is_complete(
+    run_id: str, root: Path = ARTIFACTS, *, strict: bool = False,
+    cfg: Architecture | None = None, columns: tuple[str, ...] | None = None,
+) -> bool:
+    """Read completion, or require the current request/code/input for resume.
+
+    A13: missing provenance fails closed on the execution path. Historical
+    readers may inspect complete artifacts without claiming they match today.
+    """
     preds = root / "preds" / f"{run_id}.parquet"
-    meta = root / "meta" / f"{run_id}.json"
-    if not (preds.exists() and meta.exists()):
+    meta_path = root / "meta" / f"{run_id}.json"
+    if not (preds.is_file() and meta_path.is_file()):
         return False
     try:
-        return json.loads(meta.read_text()).get("status") == "complete"
-    except Exception:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("status") != "complete":
+            return False
+        if not strict:
+            return True
+        digest, _ = _input_sha256()
+        if digest == "unknown" or meta.get("input_sha256") != digest:
+            return False
+        if meta.get("code_sha256") != code_sha256() or meta.get("run_id") != run_id:
+            return False
+        if cfg is None or meta.get("requested_config") != json.loads(json.dumps(asdict(cfg))):
+            return False
+        schedule = asdict(cfg.schedule()) if hasattr(cfg, "schedule") else None
+        if meta.get("schedule") != json.loads(json.dumps(schedule)):
+            return False
+        if columns is not None and meta.get("variates") != list(columns):
+            return False
+        required = {"block", "step", "timestamp", "forecast_origin", "input_start",
+                    "target_timestamp", "y_true", "y_pred"}
+        if meta.get("prediction_schema_version") != 2 or not required <= set(pl.read_parquet_schema(preds)):
+            return False
+        weights = root / "weights" / f"{run_id}.pt"
+        if not weights.is_file() or meta.get("weights_sha256") != hashlib.sha256(weights.read_bytes()).hexdigest():
+            return False
+        if meta.get("predictions_sha256") != hashlib.sha256(preds.read_bytes()).hexdigest():
+            return False
+        return True
+    except (OSError, ValueError, TypeError, pl.exceptions.PolarsError):
         return False

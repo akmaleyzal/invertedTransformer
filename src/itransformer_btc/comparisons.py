@@ -163,35 +163,12 @@ def pair_family(left: ModelKey, right: ModelKey) -> str:
 
 
 def nesting_order(left: ModelKey, right: ModelKey) -> tuple[ModelKey, ModelKey] | None:
-    """``(small, large)`` if one information set nests inside the other, else None.
+    """No automatic CW classification for this study's fitted procedures (A04).
 
-    **The orientation is not cosmetic and getting it wrong inverts the answer.**
-    Clark-West is
-    ``f = (y - y_small)^2 - (y - y_large)^2 + (y_small - y_large)^2``, and the
-    adjustment term is symmetric while the first two are not. Swapping the roles
-    therefore reports ``-(first two) + adjustment``, which is not a Clark-West
-    statistic at all. Against Naive-RW the error is loud in exactly the wrong
-    way: every model returns a large positive statistic and appears to beat the
-    baseline, while its own sample MSE is worse -- a contradiction a reader would
-    have to resolve by disbelieving one number or the other.
-
-    Root §9.2 names the nested pairs: K=1 vs K=8 under one architecture, any
-    model against Naive-RW, and Ridge-K1 against Ridge-K8. Cross-arm pairs are
-    **not** on that list and are treated as non-nested here even where the
-    information sets happen to nest, because the model classes differ and §9.2's
-    enumeration is the pre-registered one.
+    Nested feature sets do not establish nested neural function classes or the
+    sampling assumptions of CW. Comparisons use unadjusted forecast losses.
     """
-    model_left, k_left = left
-    model_right, k_right = right
-    if model_left == NAIVE[0]:
-        return (left, right)
-    if model_right == NAIVE[0]:
-        return (right, left)
-    if model_left != model_right:
-        return None
-    if model_left not in NESTS_ALONG_K or k_left == k_right:
-        return None
-    return (left, right) if k_left < k_right else (right, left)
+    return None
 
 
 def is_nested(left: ModelKey, right: ModelKey) -> bool:
@@ -209,22 +186,10 @@ def label(key: ModelKey) -> str:
 
 @dataclass(frozen=True, slots=True)
 class PredictionPanel:
-    """Seed-averaged forecasts for every model at every origin, aligned row-wise.
+    """Aligned forecast points with mean-seed losses as the estimand.
 
-    Every model in the study is scored on **identical** evaluated windows --
-    verified on the artifact: at origin 1, ``itr``, ``ptst`` and ``rdg`` each hold
-    88,992 rows over 3,708 timestamps, their timestamp sets are equal, and
-    ``max |y_true_itr - y_true_ptst|`` is exactly 0. `D45` makes that an
-    assertion rather than an assumption, because a differential across two
-    samples is not a differential, and :func:`build_panel` refuses a mismatch.
-
-    Forecasts are averaged **across seeds before** any differential is formed,
-    which is `D42`'s order of operations one level down from the ratio metrics it
-    was written for: average the primitive, then form the derived quantity. The
-    alternative -- differencing per seed and averaging statistics -- requires
-    pairing seed 42 at K=1 with seed 42 at K=8, which are independent training
-    runs of different models.
-    """
+    y_pred stores the ensemble for inspection only. Production loss comparisons
+    read seed_losses, then equally average block RelMSE and origin values."""
 
     keys: tuple[ModelKey, ...]
     origin_indices: tuple[int, ...]
@@ -237,6 +202,7 @@ class PredictionPanel:
     y_pred: dict[tuple[ModelKey, int], np.ndarray]
     #: Forecast steps per window, so a per-origin reduction can recover ``T``.
     pred_len: int
+    seed_losses: dict[tuple[ModelKey, int], np.ndarray] | None = None
 
 
 def _run_ids(
@@ -288,89 +254,64 @@ def available_keys(
 
 
 def build_panel(
-    keys: list[ModelKey],
-    roots: list[Path],
-    pred_len: int = PRED_LEN,
+    keys: list[ModelKey], roots: list[Path], pred_len: int = PRED_LEN,
     origin_indices: tuple[int, ...] | None = None,
+    *, windows: pl.DataFrame | None = None,
 ) -> PredictionPanel:
-    """Load, seed-average and align every model's forecasts.
+    """A01/A05: identical actual targets; seed-average losses are the estimand.
 
-    Args:
-        keys: Models to compare. :data:`NAIVE` may appear and needs no run.
-        roots: Artifact roots, working directory first.
-        pred_len: Horizon. Table 6 is the headline H=24.
-        origin_indices: Defaults to every origin in the walk-forward grid.
-
-    Raises:
-        FileNotFoundError: If a key has no run at some origin. A silently short
-            matrix would compare models over different origin sets, which is the
-            defect `D45` names one level up.
-        ValueError: If two models were evaluated on different windows.
+    Ensemble predictions are retained for inspection but are not substituted
+    for single-training-procedure loss. Naive loss provides scale-free contrasts.
     """
+    if not any(key != NAIVE for key in keys):
+        raise ValueError("a comparison panel needs a persisted forecast")
     indices = origin_indices or tuple(o.index for o in ORIGINS)
-    labels = tuple(o.label for o in ORIGINS if o.index in indices)
-
-    block: dict[int, np.ndarray] = {}
-    y_true: dict[int, np.ndarray] = {}
-    y_pred: dict[tuple[ModelKey, int], np.ndarray] = {}
-    signature: dict[int, tuple] = {}
-
-    for origin_index in indices:
+    block, y_true, y_pred, seed_losses = {}, {}, {}, {}
+    vintages = set()
+    for index in indices:
+        signature = None
+        naive_z = None
         for key in keys:
             if key == NAIVE:
                 continue
-            runs = _run_ids(key, origin_index, roots, pred_len)
+            runs = _run_ids(key, index, roots, pred_len)
             if not runs:
-                raise FileNotFoundError(
-                    f"{key} has no run at origin {origin_index} (H={pred_len}) in "
-                    f"{[str(r) for r in roots]}"
-                )
-            stacked: list[np.ndarray] = []
+                raise FileNotFoundError(f"{key} has no run at origin {index} (H={pred_len})")
+            stacked = []
             for run_id in runs:
-                frame = load_predictions(run_id, roots).sort(
-                    ["block", "timestamp", "step"]
-                )
-                sig = (
-                    tuple(frame.get_column("block").to_list()),
-                    tuple(frame.get_column("timestamp").to_list()),
-                )
-                if origin_index not in signature:
-                    signature[origin_index] = sig
-                    block[origin_index] = frame.get_column("block").to_numpy()
-                    y_true[origin_index] = (
-                        frame.get_column("y_true").to_numpy().astype(np.float64)
-                    )
-                elif sig != signature[origin_index]:
-                    raise ValueError(
-                        f"`D45`: {run_id} was evaluated on different windows than "
-                        f"the first model at origin {origin_index}; a differential "
-                        f"across two samples is not a differential"
-                    )
-                stacked.append(
-                    frame.get_column("y_pred").to_numpy().astype(np.float64)
-                )
-            y_pred[(key, origin_index)] = np.mean(stacked, axis=0)
-
-        if NAIVE in keys:
-            # Root §7 / `D31`. Constant in scaler space, and the constant is
-            # -mu_g/sigma_g rather than 0: zero there means r_hat = mu_g, the
-            # training-window mean hourly return, so the "EMH baseline" would
-            # silently be a constant-drift model. Read from a comparator's meta,
-            # which is where the grid logged it per origin.
-            donor = next(k for k in keys if k != NAIVE)
-            meta = load_meta(_run_ids(donor, origin_index, roots, pred_len)[0], roots)
-            y_pred[(NAIVE, origin_index)] = np.full(
-                len(y_true[origin_index]), float(meta["naive_rw_z"])
+                meta = load_meta(run_id, roots)
+                vintage = (meta.get("input_sha256"), meta.get("code_sha256"))
+                if any(not v or v == "unknown" for v in vintage):
+                    raise ValueError(f"{run_id}: missing analysis provenance")
+                vintages.add(vintage)
+                frame = load_predictions(run_id, roots)
+                if windows is not None:
+                    keep = windows.filter((pl.col("origin_index") == index) & (pl.col("pred_len") == pred_len))
+                    frame = frame.join(keep.select("block", "timestamp"), on=["block", "timestamp"], how="semi").sort(["block", "timestamp", "step"])
+                sig = frame.select("block", "timestamp", "step", "target_timestamp")
+                actual = frame["y_true"].to_numpy().astype(np.float64)
+                if signature is None:
+                    signature = sig
+                    block[index] = frame["block"].to_numpy()
+                    y_true[index] = actual
+                    naive_z = float(meta["naive_rw_z"])
+                elif not sig.equals(signature):
+                    raise ValueError(f"{run_id}: evaluated window sets differ at origin {index}")
+                elif not np.allclose(actual, y_true[index], rtol=1e-6, atol=1e-8):
+                    raise ValueError(f"{run_id}: target values or scaler differ")
+                stacked.append(frame["y_pred"].to_numpy().astype(np.float64))
+            y_pred[key, index] = np.mean(stacked, axis=0)
+            seed_losses[key, index] = np.mean(
+                np.square(y_true[index][None, :] - np.stack(stacked)), axis=0
             )
-
+        y_pred[NAIVE, index] = np.full(len(y_true[index]), naive_z)
+        seed_losses[NAIVE, index] = np.square(y_true[index] - naive_z)
+    if len(vintages) != 1:
+        raise ValueError("comparison panel mixes code or input vintages")
     return PredictionPanel(
-        keys=tuple(keys),
-        origin_indices=tuple(indices),
-        origins=labels,
-        block=block,
-        y_true=y_true,
-        y_pred=y_pred,
-        pred_len=pred_len,
+        keys=tuple(keys), origin_indices=tuple(indices),
+        origins=tuple(ORIGINS[i-1].label for i in indices), block=block,
+        y_true=y_true, y_pred=y_pred, pred_len=pred_len, seed_losses=seed_losses,
     )
 
 
@@ -385,60 +326,41 @@ def _per_window(values: np.ndarray, pred_len: int) -> np.ndarray:
     return values.reshape(-1, pred_len).mean(axis=1)
 
 
-def differential(
-    panel: PredictionPanel, left: ModelKey, right: ModelKey, origin_index: int
-) -> np.ndarray:
-    """Per-window loss differential for one pair at one origin, ``left - right``.
+def differential(panel: PredictionPanel, left: ModelKey, right: ModelKey,
+                 origin_index: int) -> np.ndarray:
+    """Per-forecast mean step loss: average losses across seeds BEFORE comparing.
 
-    Positive means ``right`` forecasts better. For a **nested** pair the
-    Clark-West adjustment ``+(y_left - y_right)^2`` is added back, which is the
-    whole content of `D29`: without it the larger model's extra estimation noise
-    biases the differential against the alternative the study exists to test.
-
-    Raises:
-        ValueError: If the pair nests and ``left`` is not the restricted model.
-            :func:`nesting_order` explains why silently accepting either order
-            would report a quantity that is not a Clark-West statistic; refusing
-            is cheaper than a table nobody can reconcile.
+    No CW adjustment: A04 does not establish the required model nesting.
     """
-    order = nesting_order(left, right)
-    if order is not None and order[0] != left:
-        raise ValueError(
-            f"{label(left)} vs {label(right)} nests the other way: Clark-West "
-            f"needs the restricted model first, so pass "
-            f"({label(order[0])}, {label(order[1])}). See nesting_order."
-        )
-    y = panel.y_true[origin_index]
-    a = panel.y_pred[(left, origin_index)]
-    b = panel.y_pred[(right, origin_index)]
-    d = np.square(y - a) - np.square(y - b)
-    if order is not None:
-        d = d + np.square(a - b)
-    return _per_window(d, panel.pred_len)
+    def loss(key: ModelKey) -> np.ndarray:
+        if panel.seed_losses is not None:
+            return panel.seed_losses[key, origin_index]
+        return np.square(panel.y_true[origin_index] - panel.y_pred[key, origin_index])
+    return _per_window(loss(left) - loss(right), panel.pred_len)
 
 
-def per_origin_differential(
-    panel: PredictionPanel, left: ModelKey, right: ModelKey
-) -> np.ndarray:
-    """``(G,)`` mean differential per origin -- the unit inference runs on."""
-    return np.array(
-        [
-            float(differential(panel, left, right, index).mean())
-            for index in panel.origin_indices
-        ]
-    )
+def per_origin_differential(panel: PredictionPanel, left: ModelKey,
+                            right: ModelKey) -> np.ndarray:
+    """Equal-weight block contrast, matching the report's aggregation (A05)."""
+    return per_origin_loss(panel, left) - per_origin_loss(panel, right)
 
 
 def per_origin_loss(panel: PredictionPanel, key: ModelKey) -> np.ndarray:
-    """``(G,)`` mean squared error per origin, for the Model Confidence Set."""
-    return np.array(
-        [
-            float(
-                np.square(panel.y_true[index] - panel.y_pred[(key, index)]).mean()
-            )
-            for index in panel.origin_indices
-        ]
-    )
+    """Equal-weight block RelMSE from seed-average step loss (A05)."""
+    means = []
+    for index in panel.origin_indices:
+        loss = (panel.seed_losses[key, index] if panel.seed_losses is not None else
+                np.square(panel.y_true[index] - panel.y_pred[key, index]))
+        values = []
+        for b in np.unique(panel.block[index]):
+            mask = panel.block[index] == b
+            denominator = (panel.seed_losses[NAIVE, index][mask].mean()
+                           if panel.seed_losses is not None else 1.0)
+            if denominator <= 0:
+                raise ValueError("Naive-RW block MSE must be positive")
+            values.append(loss[mask].mean() / denominator)
+        means.append(np.mean(values))
+    return np.asarray(means)
 
 
 # -- clustered inference over origins ----------------------------------------
@@ -670,7 +592,9 @@ def pair_matrix(
                 "left": label(left),
                 "right": label(right),
                 "nested": nested,
-                "statistic_name": "Clark-West" if nested else "DM-HLN",
+                "statistic_name": "unadjusted forecast-loss diagnostic",
+            "inference_status": "exploratory; cross-origin dependence unresolved",
+            "estimand": "mean seed loss, then equal block means",
                 "t_cluster": t,
                 "p_raw": (1 + count) / (1 + B),
                 "p_romano_wolf": float(p_adjusted[position]),

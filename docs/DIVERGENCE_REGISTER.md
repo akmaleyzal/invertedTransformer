@@ -2099,4 +2099,18 @@ first half only, for 52 entries. `SOURCE_PROVENANCE`'s `verified` flags in `conf
 untouched — flipping one means reading the paper, and conflating "I resolved its DOI" with "I read it"
 would retire the very distinction §13.3 exists to enforce.
 
-New contradictions found later take IDs **D90+**.
+
+
+## D90 — Research workflow A01–A15 remediation (2026-09-09/10)
+
+The [September audit](RESEARCH_WORKFLOW_AUDIT_2026-09-09.md) found that passing implementation tests and a single prediction vintage did not validate target timing, aggregation, inference or interpretation. Historical statements above are evidence of prior decisions, not instructions to restore superseded behavior.
+
+The primary implementation is now **notebooks/iTransformer.ipynb**. Direct notebook edits are preserved; `src/` is generated only by its last sync cell. The template writer is disabled. Current law is CLAUDE.md; source specifications point to it rather than maintaining a competing protocol.
+
+[The detailed remediation ledger](AUDIT_REMEDIATION_2026-09-09.md) maps each A01–A15 to implementation, checks and empirical requirements. It covers first-target timing/common calendars, seed-loss/block aggregation, clustered exploratory diagnostics, rejection of automatic CW nesting, post-test MDE labeling, block-1 decay, refresh and representation controls, official-code forward parity, baseline objectives/budgets, raw direction and conditional long/cash accounting, fixed training counts, and strict resumability with Kaggle session limits.
+
+The old 1,620 runs remain historical evidence. Corrected reanalysis lives separately under paper/reanalysis_2026-09-09. The 2,130-run revised protocol requires new Kaggle training and is not complete merely because its code and tests exist. No independent preregistration, causal PR-only identification, optimal cadence, exchange-gap cause, universal absence of predictability or executable-backtest result is asserted.
+
+Machine evidence is kept in .research/audit-repair-work; migration scripts are already applied and must not be replayed. TEMP/TMP use D: on this Windows workspace. The user requested that CLAUDE.md be updated last, after implementation and verification.
+
+New contradictions found later take IDs **D91+**.

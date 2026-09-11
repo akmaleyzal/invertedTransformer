@@ -8,8 +8,7 @@ taxonomy that makes K_eff interpretable.
 
 **No variate uses a rolling window.** Every one is a pure per-bar function of
 the current bar, except ``r``, which uses the current and previous close. That
-is a structural safety property rather than a style choice: with no rolling
-window anywhere, the ``center=True`` leak class is unrepresentable (root §5.3).
+is a structural safety property rather than a style choice: the implemented per-bar features use no centered windows; chronology tests enforce that choice. Polars itself supports center=True.
 
 **The ladder is cumulative and its order is load-bearing.** Column order is
 ladder order, so rung K is exactly the first K columns and ``r`` is channel 0 at
@@ -37,8 +36,7 @@ The F2 volatility estimators, each per-bar:
 
 Two departures worth stating where a reader meets the code. **No estimator is
 trailing-averaged** (`D13`): every variate is a pure per-bar function, which is
-what makes the ``center=True`` leakage class structurally unrepresentable and
-licenses root §8.3's no-embargo argument (`D15`). And Rogers-Satchell **is not
+a constraint enforced by these feature definitions and chronology tests. Polars itself supports centered rolling windows. And Rogers-Satchell **is not
 strictly positive** -- it vanishes on the 33 shadowless bars in this sample --
 so it is taken as ``log(RS + 1e-9)``, the floor chosen to land inside the
 measured support rather than as 33 out-of-support spikes; Parkinson and
@@ -125,7 +123,7 @@ _RS_STABILISER: Final = 1e-9
 #: panel: K and K_eff move together there, ``corr(K, K_eff) = 0.828``, so the two
 #: explanations are separated by a non-nested test rather than by contrast. These
 #: two rungs separate them **directly** — same K, same target, same everything
-#: else, and PR is the only thing that moves.
+#: else, and feature content and PR both move.
 #:
 #: - ``redundant`` loads F2 whole. All three volatility estimators carry about one
 #:   independent degree of freedom between them (root §5.1), and all three of F3
@@ -164,12 +162,12 @@ def ladder_columns(k: int) -> list[str]:
     """The variate names at rung ``k``.
 
     Raises:
-        ValueError: If ``k`` is not one of the pre-registered rungs. Rungs are
+        ValueError: If ``k`` is not one of the documented rungs. Rungs are
             fixed before any model runs (root §3); an ad-hoc K is a new
             experiment and must be declared as one.
     """
     if k not in (1, 4, 8, 12):
-        raise ValueError(f"K must be a pre-registered rung 1/4/8/12, got {k}")
+        raise ValueError(f"K must be a documented rung 1/4/8/12, got {k}")
     return list(VARIATE_ORDER[:k])
 
 

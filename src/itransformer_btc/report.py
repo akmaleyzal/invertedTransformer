@@ -103,6 +103,11 @@ from itransformer_btc.metrics import (
 )
 from itransformer_btc.segments import break_summary
 from itransformer_btc.runner import completed_run_ids
+from itransformer_btc.metrics import evaluation_windows, j_test, panel_beta1, minimum_detectable_beta1, decay, kaplan_meier, tost_equivalence
+from itransformer_btc.keff import keff_table
+from itransformer_btc.train import code_sha256
+from itransformer_btc.runner import manifest
+from itransformer_btc.metrics import TAU_HEADLINE, TAU_SENSITIVITY
 
 #: Every model Table 6 compares, in the order the table prints them. Twelve
 #: models is 66 unordered pairs --- which is precisely why `D35` replaced SPA and
@@ -453,29 +458,7 @@ def _dataset_section(bars: pl.DataFrame) -> dict:
 
 
 def _architecture_section(run_ids: list[str], roots: list[Path]) -> dict:
-    """Table 3 --- K, capacity and epochs-to-early-stop for every model.
-
-    §6.2 requires epochs-to-stop logged per rung, and the reason is exact: it is
-    how a reader tells a flat 8->12 rung from an under-trained one. It is also
-    what `D62c` rests on: the iTransformer arms early-stop far below their cap,
-    so the binding constraint is the learning-rate schedule and widening the cap
-    alone would be a no-op.
-
-    **`D78`: the cap is read from the arm's own schedule, and the count is
-    reported rather than asserted.** Two defects lived in the hardcoded 30. The
-    `itrl` arm runs to 60, so runs between 30 and 60 were being counted as capped
-    when they were not. And the claim "no iTransformer run reaches the cap" was
-    written as though permanent: on the 1,620-run grid five of 540 do, while
-    **DLinear reaches it in 56 of 75 runs and PatchTST in 39 of 75**. Those two
-    are budget-truncated, so any reading of the ordering that calls DLinear the
-    worst model is confounded with DLinear being the most truncated --- which is
-    why this number goes in the table instead of in a sentence.
-
-    Every baseline carries an explicit K (`D40`). For the channel-independent
-    pair that K means *trained on eight channels*, not *predicts the target from
-    eight channels*, and their ``best_val_mse`` is an all-channel figure that is
-    **not** comparable to the ladder's target-channel one (`D56`).
-    """
+    """Report actual allocated/active parameters, objectives, effective inputs, schedules and cap counts from each run's metadata. These are configuration diagnostics, not a proof of architecture parity or optimization convergence."""
     rows: dict[tuple[str, int, int], dict] = {}
     for run_id in run_ids:
         parts = parse_run_id(run_id)
@@ -484,6 +467,9 @@ def _architecture_section(run_ids: list[str], roots: list[Path]) -> dict:
         row = rows.setdefault(key, {
             "model": key[0], "k": key[1], "pred_len": key[2],
             "n_parameters": meta.get("n_parameters"),
+            "n_allocated_parameters": meta.get("n_allocated_parameters"),
+            "effective_input_channels": meta.get("effective_input_channels"),
+            "loss_target": meta.get("loss_target", "historical; inspect config"),
             "epochs": [], "n_runs": 0,
             "config": meta.get("config", {}),
             "schedule": meta.get("schedule"),
@@ -550,7 +536,7 @@ def _contrasts_section(seed_avg: pl.DataFrame) -> dict:
     """:data:`PAIRED_CONTRASTS`, computed (`D82`).
 
     Post-hoc and carrying no multiplicity control of its own --- root §9.2's
-    pre-registered machinery is what a confirmatory claim goes through, and this
+    documented machinery is what a confirmatory claim goes through, and this
     is here so the paper states its differences as differences instead of leaving
     a reader to subtract two marginal means and their marginal error bars.
     """
@@ -649,6 +635,80 @@ def _load_attention(artifacts: Path) -> pl.DataFrame | None:
 # -- the enriched paper_numbers.json ----------------------------------------
 
 
+
+def research_summary(seed_avg: pl.DataFrame, keff_tbl: pl.DataFrame, *,
+                     B: int = 9999, seed: int = 42) -> dict:
+    """Exploratory reanalysis; p-values assume independent origins.
+
+    Origins overlap in training and test calendars. These diagnostics are not
+    confirmatory evidence. MDE uses observed TEST slopes, not pre-test pilot data.
+    """
+    fresh_counts = sorted(seed_avg.filter(pl.col("model") == "itrf")["n_seeds"].unique().to_list())
+    main = seed_avg.filter((pl.col("model") == "itr") & (pl.col("pred_len") == PRED_LEN))
+    origin = main.group_by("origin", "k").agg(pl.col("mse").mean(), pl.col("rel_mse").mean(), pl.col("r2_oos").mean())
+    rung = origin.group_by("k").agg(
+        pl.col("mse").mean().alias("MSE"), pl.col("rel_mse").mean().alias("RelMSE"),
+        (pl.col("rel_mse").std()/pl.len().sqrt()).alias("SE_across_origins"),
+        pl.col("r2_oos").mean().alias("R2_oos"), pl.len().alias("n_origins"),
+    ).sort("k")
+    wide = {k: origin.filter(pl.col("k") == k).sort("origin")["rel_mse"].to_numpy() for k in K_LADDER}
+    d48, d812 = wide[4]-wide[8], wide[8]-wide[12]
+    margin = .25 * abs(float(d48.mean()))
+    race = main.join(keff_tbl.select("origin", "k", "pr_raw"), on=["origin", "k"])
+    groups = race["origin_index"].to_numpy()*100 + race["block"].to_numpy()
+    clusters = race["origin_index"].to_numpy()
+    y, k, pr = [race[n].to_numpy().astype(float) for n in ("rel_mse", "k", "pr_raw")]
+    t_ab, p_ab = j_test(y, k, pr, groups, clusters=clusters)
+    t_ba, p_ba = j_test(y, pr, k, groups, clusters=clusters)
+    amp = amplification(seed_avg)
+    beta = panel_beta1(amp, B=B, seed=seed)
+    sensitivity = []
+    for offset in range(5):
+        labels = [o.label for o in ORIGINS[offset::5]]
+        part = amp.filter(pl.col("origin").is_in(labels))
+        if part.height == len(labels)*6 and len(labels) >= 2:
+            sub = panel_beta1(part, B=B, seed=seed)
+            sensitivity.append({"origins": labels, "G": sub.n_clusters, "beta1": sub.beta1,
+                                "p_diagnostic": sub.headline_p})
+    dec = decay(seed_avg, k=8)
+    crossing = []
+    for tau in TAU_SENSITIVITY:
+        bs = dec.b_star(tau)
+        km = kaplan_meier(bs["b_star"].to_numpy(), bs["event"].to_numpy()) if bs.height else None
+        crossing.append({"tau": tau, "status": "descriptive" if bs.height else "undefined",
+                         "median_b_star": km.median if km else None, "ci_low": None, "ci_high": None,
+                         "events": int(bs["event"].sum()) if bs.height else 0,
+                         "censored": int((~bs["event"]).sum()) if bs.height else 0,
+                         "n_origins": bs.height})
+    return {
+        "analysis_schema_version": 2,
+        "inference_status": "exploratory; cross-origin dependence unresolved; no confirmatory rejection",
+        "evaluation_population": "common surviving forecast times per origin, horizon and block",
+        "estimand": "mean seed step-squared-error; block RelMSE; equal block and origin weights",
+        "rq1": {"rung_effects": rung.to_dicts(), "contrast_metric": "RelMSE", "delta_4_to_8": float(d48.mean()),
+                "delta_8_to_12": float(d812.mean()), "tost_margin": margin,
+                "tost": str(tost_equivalence(d812, margin)),
+                "j_test_k_augmented_by_keff": {"t": t_ab, "p": p_ab},
+                "j_test_keff_augmented_by_k": {"t": t_ba, "p": p_ba},
+                "covariance": "CR1 by origin; fixed effects by origin/block; t(G-1)",
+                "causal_keff_claim": False},
+        "rq2": {"beta1": beta.beta1, "t": beta.t_statistic, "cluster_se": beta.cluster_se,
+                "p_rademacher": beta.p_rademacher, "p_webb": beta.p_webb, "headline_p": beta.headline_p,
+                "G": beta.n_clusters, "N": beta.n_observations, "B": beta.B,
+                "minimum_detectable_beta1": minimum_detectable_beta1(beta.within_slopes),
+                "mde_source": "post-analysis TEST within-origin slopes; not prospective power",
+                "within_slopes": beta.within_slopes.tolist(), "stride5_sensitivity": sensitivity,
+                "consecutive_origin_overlap_pct": 79.2,
+                "age_definition": "time since selection/deployment; gradient training cutoff is three months earlier",
+                "fresh_intervention": "training and validation windows both moved; inspect fresh_seed_counts",
+                "fresh_seed_counts": fresh_counts},
+        "rq3": {"tau_headline": TAU_HEADLINE, "reference": "block 1 skill (exploratory post-audit definition)",
+                "b_star": crossing, "excluded_origins": list(dec.excluded_origins),
+                "optimal_cadence_estimated": False, "logrank_status": "withheld: paired and dependent origins",
+                "interval_status": "withheld: independent-subject confidence bands not justified"},
+    }
+
+
 def build_report(
     artifacts: Path,
     bars: pl.DataFrame,
@@ -704,7 +764,18 @@ def build_report(
             f"Repo-root artifacts/ is a stale smoke run (`D60f`)."
         )
 
-    raw = gather_grid(run_ids, roots)
+    # A declared new grid and the preserved historical grid are distinct studies.
+    historical = "manifest_run_ids" not in grid
+    required = set(grid.get("manifest_run_ids", [c.run_id for c in manifest(historical=True)]))
+    if not historical and required != {c.run_id for c in manifest()}:
+        raise ValueError("declared manifest differs from the current controlled-rerun protocol")
+    missing_runs = sorted(required - set(run_ids))
+    if missing_runs:
+        raise ValueError(f"report requires the complete declared manifest; missing {len(missing_runs)} runs, e.g. {missing_runs[:3]}")
+    run_ids = sorted(required)
+    windows = evaluation_windows(run_ids, roots)
+    raw = gather_grid(run_ids, roots, windows=windows)
+    log(f"report: common calendar has {windows.height} forecast times")
     seed_avg = seed_average(raw)
     log(f"report: {raw.height} run-block rows -> {seed_avg.height} seed-averaged cells")
 
@@ -729,7 +800,7 @@ def build_report(
         log(f"report: {label(key)} is in COMPARISON_KEYS but has no run --- "
             f"omitted from Table 4, Table 6 and the MCS, and named in "
             f"paper_numbers.json")
-    panel = build_panel(comparison_keys, roots)
+    panel = build_panel(comparison_keys, roots, windows=windows)
     pairs = pair_matrix(panel, B=bootstrap_b, seed=seed)
     mcs = mcs_table(panel, B=bootstrap_b, seed=seed)
     log(f"report: {pairs.height} pairs, MCS over {mcs.height} models")
@@ -767,7 +838,8 @@ def build_report(
         seed=seed,
     )
 
-    grid_r2 = {int(row["k"]): float(row["R2_oos"]) for row in grid["rq1"]["rung_effects"]}
+    analysis = research_summary(seed_avg, keff_table(features), B=bootstrap_b, seed=seed)
+    grid_r2 = {int(row["k"]): float(row["R2_oos"]) for row in analysis["rq1"]["rung_effects"]}
 
     per_rung_raw = (
         raw_scale.filter((pl.col("model") == "itr") & (pl.col("pred_len") == PRED_LEN))
@@ -843,9 +915,10 @@ def build_report(
         # answers, and re-deriving them here would create a second definition of
         # a number root §12 wants to have exactly one of.
         "keff": grid["keff"],
-        "rq1": grid["rq1"],
-        "rq2": grid["rq2"],
-        "rq3": grid["rq3"],
+        **analysis,
+        "analysis_code_sha256": code_sha256(),
+        "prediction_code_sha256": sorted({load_meta(r, roots)["code_sha256"] for r in run_ids}),
+        "publication_status": "exploratory corrected reanalysis; new experimental controls remain unrun",
         # Everything below is new; the grid computed none of it.
         "dataset": dataset,
         "architecture": architecture,
@@ -983,6 +1056,58 @@ def build_report(
         "contrasts": _contrasts_section(seed_avg),
     }
 
+    numbers["comparisons"]["inference_status"] = analysis["inference_status"]
+    numbers["directional_accuracy"]["note"] = "Raw returns after inverse scaling. PT p-values are diagnostics: non-overlap does not establish independence."
+    numbers["economics"]["note"] = "Conditional long/cash daily round trips; future availability selection prevents executable-backtest claims."
+    numbers["falsification"]["note"] = "Same actual targets, scale-free RelMSE; combined training/validation intervention, one fresh versus five aged seeds."
+    numbers["attention_amplification"]["note"] = "Same features; uniform branch also removes Q/K use and attention-weight dropout. Effective capacity is not matched."
+    numbers["coverage"]["note"] = "Conditional on surviving contiguous windows. Gap causes are unverified; coverage cannot recover missing outcomes. Equal-count training control has not run."
+    numbers["main_results"]["note"] = analysis["estimand"] + "; overlapping origins make marginal SEs descriptive."
+    numbers["training_protocol"] = "historical 1620-run grid" if historical else "post-audit 2130-run controlled rerun"
+    numbers["publication_status"] = "exploratory historical reanalysis" if historical else "completed post-audit exploratory grid; inspect controls and budget diagnostics"
+    numbers["manifest_run_ids"] = run_ids
+    new_tags = {"itrv": "validation_refresh", "repi": "representation_identity",
+                "repw": "representation_whiten", "repc": "representation_correlate",
+                "dlina": "dlinear_all_channel_sensitivity", "ptsta": "patchtst_all_channel_sensitivity"}
+    control_rows = seed_avg.filter(pl.col("model").is_in(list(new_tags)))
+    numbers["experimental_controls"] = {
+        "status": "not run in this historical vintage" if control_rows.is_empty() else "run",
+        "interpretation": "Representation effects preserve information but do not identify a PR-only causal effect. Refresh contrasts compare training/selection procedures.",
+        "seed_averaged_blocks": control_rows.to_dicts(),
+        "paired": [],
+    }
+    for left, right, question in (
+        ("itrv", "itr", "updated validation with original training, B4--B6"),
+        ("itrf", "itrv", "updated training with the same refreshed validation, B4--B6"),
+        ("repw", "repi", "whitening of identical information, all use_norm=False"),
+        ("repc", "repw", "invertible correlated coordinates, all use_norm=False"),
+        ("dlina", "dlin", "DLinear all-channel versus target-only objective"),
+        ("ptsta", "ptst", "PatchTST all-channel versus target-only objective"),
+    ):
+        if not {left, right}.issubset(set(seed_avg["model"].unique().to_list())):
+            continue
+        pair = seed_avg.filter(pl.col("block").is_in([4,5,6])) if left in ("itrv", "itrf") else seed_avg
+        numbers["experimental_controls"]["paired"].append({
+            **paired_contrast(pair, (left, 8), (right, 8)), "question": question})
+    metadata = [load_meta(run_id, roots) for run_id in run_ids]
+    selected_counts = [int(m["n_train"]) for m in metadata]
+    numbers["training_sample"] = {"min": min(selected_counts), "max": max(selected_counts),
+        "equal_count_achieved": len(set(selected_counts)) == 1,
+        "protocol_count": None if historical else 11500,
+        "scope": "surviving continuous training windows; no outcome imputation"}
+    if not historical and set(selected_counts) != {11500}:
+        raise ValueError("new grid violates its fixed training-window budget")
+    numbers["representation_diagnostics"] = [
+        {"run_id": m["run_id"], **m["representation"]} for m in metadata if m.get("representation")]
+    numbers["optimization_status"] = {
+        "capped_runs": sum(row["epochs_at_cap"] for row in architecture["cells"] if row["max_epochs"] > 0),
+        "source": "actual epochs versus recorded schedule; historical missing schedules use their documented 30-epoch cap",
+        "ranking_claim": "configuration comparison only; early stopping or a higher cap is not proof of optimizer convergence",
+    }
+    numbers["falsification"]["note"] = "Same actual B4--B6 targets, scale-free loss; see refresh-control decomposition and achieved seed counts."
+    numbers["falsification"]["fresh_seed_counts"] = analysis["rq2"]["fresh_seed_counts"]
+    numbers["attention_amplification"]["note"] = "Same features, Q/K inactive under uniform attention; active capacity differs. " + ("Historical dropout also differs." if historical else "Attention-weight dropout is shared in the new implementation.")
+    numbers["coverage"]["note"] = "Conditional on surviving continuous windows; gap causes unverified and missing outcomes unrecovered. See training_sample for achieved counts."
     return ReportInputs(
         numbers=numbers,
         seed_avg=seed_avg,
@@ -1021,7 +1146,7 @@ def _table1(numbers: dict) -> str:
         f"BTCUSDT spot 1\\,h, Binance REST. Window {data['window'][0][:10]} to "
         f"{data['window'][1][:10]}, end exclusive. "
         f"{data['bars_expected']:,} expected, {data['bars_actual']:,} actual, "
-        f"{data['missing_bars']} missing across {data['gap_blocks']} downtime "
+        f"{data['missing_bars']} missing across {data['gap_blocks']} missing-bar "
         f"blocks. Unusable bars: {measured['zero_volume_bars']} zero-volume, "
         f"{measured['flat_bars']} with $H=L$, {measured['zero_trade_bars']} "
         f"zero-trade --- and they are the \\emph{{same}} bars (`D51c'), so the "
@@ -1092,7 +1217,7 @@ def _table2b(numbers: dict) -> str:
         r"$\approx 0.97$ section 9.1 anticipated --- so the $K$-versus-$K_{eff}$ "
         r"horse race is \emph{more} identifiable than that section feared. "
         f"The Stage 3b gate measured {fmt(keff['gate_pr_k8_pre_first_origin'], 3)} "
-        f"at $K=8$ on the pre-first-origin span, below the pre-registered floor "
+        f"at $K=8$ on the pre-first-origin span, below the documented floor "
         f"of {fmt(keff['gate_floor'], 1)}; `D48''s prescribed action is "
         r"disclosure, not a re-cut, and the grid proceeded unchanged. $K=12$ "
         r"carries a \emph{lower} PR than $K=8$, so the redundancy that rung was "
@@ -1167,16 +1292,7 @@ def _table4(numbers: dict) -> str:
             fmt(row["n_origins"], 0),
             fmt(row["n_seeds"], 0),
         ])
-    note = (
-        "$R^2_{oos} = 1 - \\text{RelMSE}$ against Naive-RW, which forecasts a zero "
-        "raw log-return and is mapped into scaler space as $\\hat{y}_z = "
-        "-\\mu_g/\\sigma_g$ (`D31'). \\textbf{Every model is worse than Naive-RW at "
-        "every rung}; ridge is worse by roughly thirty times less than any deep "
-        "model. The $\\pm$ is the standard error \\emph{across origins}; the seed "
-        "column is Monte-Carlo noise on one fixed dataset and is a diagnostic, "
-        "never the error bar (`D30'). MCS is the Model Confidence Set (Hansen, "
-        "Lunde \\& Nason 2011) at the stated levels."
-    )
+    note = 'Exploratory reanalysis on common forecast times. Mean seed squared error is aggregated into block RelMSE with equal block and origin weights. Dispersion is across origins; it is not a dependence-corrected confidence interval. MCS membership is an independent-origin bootstrap diagnostic. These are local architecture adaptations with differing objectives and convergence histories, not controlled tests of architecture alone.'
     return tabular(
         "Main results at $H=24$, aggregated across all fifteen origins.",
         "tab:main",
@@ -1202,19 +1318,9 @@ def _table5(numbers: dict) -> str:
             fmt(row.get("n_origins"), 0),
         ])
     excluded = ", ".join(rq3["excluded_origins"])
-    note = (
-        "$b^{*}(i) = \\min\\{b : D(i,b) > \\tau\\}$, right-censored at six blocks. "
-        "\\textbf{The decay estimand is undefined under non-positive out-of-sample "
-        "skill}: $D(i,b)$ is a proportion of skill lost and there is no skill to "
-        "lose a proportion of. This is \\emph{not} the right-censored result "
-        "``no decay detected within 180 days'', which would assert an edge the "
-        "data does not contain (`D60b'). All fifteen origins are excluded on mean "
-        f"$R^2_{{oos}} \\leq 0$ and are named rather than dropped: {excluded}. "
-        "The log-rank test of H3 is unavailable because neither arm has a "
-        "surviving origin, so H3 is \\textbf{untestable}, not rejected."
-    )
+    note = 'Exploratory first-block reference: D(i,b)=(R2(i,1)-R2(i,b))/R2(i,1). The decay estimand is undefined for non-positive block-1 skill; this is not right-censored evidence. Positive-reference origins without a crossing are right-censored at six blocks. No optimal retraining cadence is estimated. Log-rank inference is withheld because the arms are paired and origins dependent; the confirmatory H3 claim is untestable with this procedure. Confidence intervals are withheld. Excluded origins: ' + ", ".join(rq3["excluded_origins"])
     return tabular(
-        "RQ3: retraining cadence at each pre-registered threshold.",
+        "RQ3: exploratory first-block skill threshold crossings.",
         "tab:decay",
         ["$\\tau$", "Status", "Median $b^{*}$", "CI", "Events", "Censored", "Origins"],
         rows,
@@ -1230,7 +1336,7 @@ def _table6(numbers: dict) -> str:
         rows.append([
             tex_escape(row["left"]),
             tex_escape(row["right"]),
-            "CW" if row["statistic_name"].startswith("Clark") else "DM",
+            "Loss",
             fmt(row["t_cluster"], 3),
             fmt(row["p_raw"], 4),
             fmt(row["p_romano_wolf"], 4),
@@ -1239,36 +1345,14 @@ def _table6(numbers: dict) -> str:
             fmt(row["T_min"], 0),
         ])
     note = (
-        "\\textbf{CW} is Clark--West (2007), used on every \\emph{nested} pair --- "
-        "the ladder is cumulative and Naive-RW is nested inside every model, and "
-        "there standard DM is not asymptotically $N(0,1)$ and is systematically "
-        "undersized against the alternative this study exists to establish "
-        "(`D29'). \\textbf{DM} is Diebold--Mariano with the "
-        "Harvey--Leybourne--Newbold correction, referred to $t(T-1)$, on a "
-        "rectangular long-run variance with lag $h-1 = 23$ --- never Bartlett, "
-        "which would shrink $\\hat\\gamma_{23}$ by about 92\\% and understate the "
-        "variance (`D34'). $t$ is clustered on the origin, $G = 15$. "
-        f"$p_{{RW}}$ is the Romano--Wolf (2005) stepdown across all "
-        f"{len(comparisons['pairs'])} pairs, $B = {comparisons['B']:,}$, floor "
-        f"${fmt(comparisons['p_floor'], 6)}$ (`D53d'). White's Reality Check and "
-        "Hansen's SPA are \\emph{not} used here: they test a one-against-many null "
-        "and say nothing about an all-pairs matrix (`D35'). $T$ is the smallest "
-        "per-cell sample; $h = 24$. "
-        "The post-hoc family column is $p_{RW}^{fam}$ and it is NOT the headline "
-        "(`D79'). It is the same stepdown run inside one claim family --- pairs "
-        "against Naive-RW, rungs of one model, or one $K$ across architectures "
-        "--- rather than across the Cartesian product. It exists because widening "
-        "the model list from twelve to fifteen took the matrix from 66 pairs to "
-        f"{len(comparisons['pairs'])} and the adjusted rejections from 31 to "
-        "zero while no effect moved: the two naive comparators carry the largest "
-        "$|t|$ in the table, and the shared bootstrap draw puts them into the "
-        "max-$|t|$ null every other pair is judged against. The families were "
-        "declared AFTER that was seen, so $p_{RW}$ over all pairs remains the "
-        "pre-registered and reported result and this column is disclosed beside "
-        "it rather than in place of it."
+        "Unadjusted mean-seed forecast-loss contrasts; no automatic Clark--West nesting. "
+        "Positive t means left is worse. Block RelMSE has equal block and origin weights. "
+        "All p-values and Romano--Wolf adjustments assume independent origins; training "
+        "and test calendars overlap, so these are exploratory diagnostics only. "
+        "Family adjustments are post-hoc. No confirmatory rejection is claimed."
     )
     return tabular(
-        "Pairwise forecast comparison with family-wise error control.",
+        "Exploratory forecast-loss diagnostics; independence assumptions unresolved.",
         "tab:dm",
         ["Left", "Right", "Stat.", "$t$", "$p_{raw}$", "$p_{RW}$",
          "Family", "$p_{RW}^{fam}$", "$T_{min}$"],
@@ -1330,23 +1414,9 @@ def _table8(numbers: dict) -> str:
             fmt(part.get_column("dsr").to_numpy().mean(), 4),
         ])
     rows.sort(key=lambda row: (row[0], row[1]))
-    note = (
-        "Position from the sign of the cumulative 24-step forecast on \\emph{raw, "
-        "drift-free} log-returns, opened at \\textbf{00:00 UTC} and held 24 hours, "
-        "non-overlapping --- the phase is fixed in advance because there are 24 "
-        "admissible alignments and each gives a different Sharpe (`D46'). Taker "
-        "fee 0.04\\% per side, plus the slippage shown. Sharpe and Sortino are "
-        "annualised at 365 periods; the DSR is computed per origin from the "
-        "\\emph{per-period} Sharpe, with $N$ the configurations evaluated on that "
-        "origin's own test span --- not the 837-run development total, which is "
-        "reported separately in Limitations and is a different quantity (`D46'). "
-        "$\\pm$ is the standard error across origins; the MDD interval is a "
-        "stationary bootstrap. The strategy is flat wherever no valid window "
-        "survives, and outages cluster on stress, so the reported drawdown is "
-        "optimistic by an amount the flat-day count bounds (`D45')."
-    )
+    note = 'Exploratory conditional long/cash simulation from inverse-scaled raw cumulative forecasts. Each observed daily trade opens at 00:00 UTC and closes after 24 hours, paying entry and exit costs including the terminal trade. Execution cost c is the stated fee plus slippage, applied to purchase and sale prices. No borrowing or shorts. Missing future target periods are excluded retrospectively: this is not an executable backtest and unavailable-day counts do not bound missing losses. The comparator makes always-long daily round trips. Sharpe/Sortino use simple returns, MAR=0, and a conditional 365-period annualisation. JK/DSR and MDD confidence intervals are withheld.'
     return tabular(
-        "Economic evaluation across the pre-registered slippage band.",
+        "Conditional long/cash simulation across the stated cost assumptions.",
         "tab:economics",
         ["Model", "Slip.", "Sharpe (ann.)", "Sortino", "MDD", "MDD CI",
          "Turnover", "Net return", "DSR"],
@@ -1416,39 +1486,7 @@ def _table9(numbers: dict) -> str:
                 fmt(paired.get("p_two_sided"), 4),
                 fmt(cell["n_origins"], 0),
             ])
-    note = (
-        "\\textbf{Exploratory, declared before running, and reported whatever "
-        "they show} (root §13.2). Not one of them is a rung of the $K$ ladder: "
-        "adding one "
-        "would make the rungs differ in something other than $K$, which is the "
-        "one thing the ladder holds fixed. \\emph{longsched} answers "
-        "``you under-trained'' --- and the epoch cap is not what binds an "
-        "iTransformer run, which is why this arm widens the learning-rate "
-        "schedule rather than the budget (`D62c'); Table 3 carries the measured "
-        "at-cap count per arm rather than a claim about it (`D78'). \\emph{capacity} answers ``you under-capacitised'' at $d_{ff} = "
-        "512$ (`D62b'). \\emph{attention} reproduces the main grid bit-for-bit "
-        "and is what licenses reading Figure 5's maps as maps of the model whose "
-        "numbers are reported (`D62d'). \\emph{orthogonal} and "
-        "\\emph{redundant} are the matched-$K$ pair (`D70'): same $K = 8$, same "
-        "target, same seeds, with the participation ratio the only thing that "
-        "moves --- 5.011 against 3.609, either side of the ladder's own K=8 rung "
-        "at 4.668. They test RQ1 \\textbf{by contrast} where the ladder can only "
-        "infer it through a panel at $corr(K, K_{eff}) = 0.828$."
-        + matched_note + " "
-        "\\emph{look048} and \\emph{look192} halve and double $L = 96$, the one "
-        "first-order hyperparameter root §6.2 never varied. \\emph{tuned} takes "
-        "the configuration origin 1's \\emph{validation} preferred, selected "
-        "where `D27' put the Stage 5 gate and never on a test block --- "
-        "\\textbf{including its learning rate}, which the arm selected and then "
-        "failed to apply until `D76'. $\\Delta$ is against the main grid at the "
-        "same rung and $\\pm$ is the standard error \\emph{across} origins "
-        "(`D30'); \\textbf{Paired} $\\Delta$RelMSE is the same comparison made "
-        "\\emph{pairwise} on the fifteen origins both arms were scored on, with "
-        "its two-sided $p$ from $t(G-1)$ (`D82'). The paired error is about half "
-        "the marginal one, so overlapping $\\pm$ columns say nothing about "
-        "whether two arms differ and the paired column is what the comparison "
-        "rests on. It is post-hoc and uncorrected for multiplicity."
-    )
+    note = "Exploratory contrasts on common forecast times, mean seed loss and equal block weights. Matched-K subsets change feature identity as well as PR. Uniform attention has inactive Q/K; allocated parameter count does not match effective capacity. Missing legacy forecasts remain absent. Independent-origin p-values are diagnostics only. " + ("Historical ports: iTransformer lacks final encoder norm; PatchTST uses the earlier encoder; uniform dropout differs." if numbers["training_protocol"].startswith("historical") else "Post-audit ports include final encoder norm and PatchTST BatchNorm/residual attention. Uniform attention uses the same weight-dropout path. See objective, effective-input and optimization diagnostics.")
     return tabular(
         "Exploratory arms, reported apart from RQ1--RQ3.",
         "tab:robustness",
@@ -1484,6 +1522,26 @@ def render_tables(numbers: dict, out_dir: Path) -> list[Path]:
         path = out_dir / name
         path.write_text(builder(numbers), encoding="utf-8")
         written.append(path)
+    headline = {(r["model_tag"], r["k"]): r for r in numbers["main_results"]["by_model"]}
+    macro_values = {
+        "StudyRuns": fmt(numbers["runs_complete"], 0),
+        "StudyOrigins": fmt(numbers["rq2"]["G"], 0),
+        "KOneRtwo": fmt(headline[("itr", 1)]["r2_oos"], 6),
+        "KEightRtwo": fmt(headline[("itr", 8)]["r2_oos"], 6),
+        "KEightSE": fmt(headline[("itr", 8)]["se_across_origins"], 6),
+        "RidgeRtwo": fmt(headline[("rdg", 4)]["r2_oos"], 6),
+        "RidgeSE": fmt(headline[("rdg", 4)]["se_across_origins"], 6),
+        "DecayExcluded": fmt(len(numbers["rq3"]["excluded_origins"]), 0),
+        "DecayDefined": fmt(next(r["n_origins"] for r in numbers["rq3"]["b_star"] if r["tau"] == numbers["rq3"]["tau_headline"]), 0),
+        "DecayMedian": fmt(next(r["median_b_star"] for r in numbers["rq3"]["b_star"] if r["tau"] == numbers["rq3"]["tau_headline"]), 0),
+        "BetaSlope": fmt(numbers["rq2"]["beta1"], 6),
+        "BetaSE": fmt(numbers["rq2"]["cluster_se"], 6),
+        "FreshGap": fmt(numbers["falsification"]["mean_gap_rel_mse"], 6),
+        "FreshGapSE": fmt(numbers["falsification"]["se_across_origins"], 6),
+    }
+    macros = ["% Generated by tools/build_report.py from this report's paper_numbers.json."]
+    macros += ["\\newcommand{\\" + name + "}{" + value + "}" for name, value in macro_values.items()]
+    (out_dir / "manuscript_numbers.tex").write_text("\n".join(macros) + "\n", encoding="utf-8")
     return written
 
 
@@ -1690,24 +1748,13 @@ def _figure1(inputs: ReportInputs, out_dir: Path) -> list[Path]:
 
 
 def _figure2(inputs: ReportInputs, out_dir: Path) -> list[Path]:
-    """Architecture and inverted tokenization, with the tensor shape at each step.
-
-    The shapes are read from the live :class:`ITransformerConfig`, not typed in,
-    so the figure cannot drift from the model the grid ran --- which is the whole
-    reason it is generated rather than drawn (see :func:`_figure1`).
-
-    Two things the caption must carry, and the figure therefore shows. The token
-    is a **variate over its whole lookback**, so attention runs over ``N <= 12``
-    tokens and not over ``L = 96`` timesteps --- which is why ``d_model`` is 128
-    rather than the reference 512 (`D25`), and why **no causal mask appears**:
-    the axis attention runs over is contemporaneous, and causality is enforced
-    upstream in the features and the windowing. And the loss is taken on the
-    **target channel only** (`D39`); under the reference implementation's
-    all-channel default K=12 becomes a 12-task problem and K=1 a 1-task one, so
-    auxiliary supervision would vary with the study's own independent variable.
-    """
+    """Draw the recorded iTransformer architecture for this prediction vintage."""
     plt = _pyplot()
-    config = ITransformerConfig()
+    recorded = next(row["config"] for row in inputs.numbers["architecture"]["cells"]
+                    if row["model"] == "itr" and row["k"] == 8 and row["pred_len"] == PRED_LEN)
+    options = {k: v for k, v in recorded.items() if k in ITransformerConfig.__dataclass_fields__}
+    options["final_norm"] = recorded.get("final_norm", False)
+    config = ITransformerConfig(**options)
     n = 8
     steps = [
         ("input window", f"(B, L={config.seq_len}, N={n})", "#e9ecef"),
@@ -1716,7 +1763,7 @@ def _figure2(inputs: ReportInputs, out_dir: Path) -> list[Path]:
          f"(B, N={n}, d={config.d_model})", "#5b8db8"),
         (f"Encoder x {config.e_layers}: MHA over the {n} VARIATE tokens, "
          f"{config.n_heads} heads\nLayerNorm, FFN({config.d_model} -> "
-         f"{config.d_ff} -> {config.d_model}), LayerNorm",
+         f"{config.d_ff} -> {config.d_model}), LayerNorm" + ("; final encoder norm" if config.final_norm else ""),
          f"(B, N={n}, d={config.d_model})", "#1f4e79"),
         (f"Projection: Linear({config.d_model} -> H={config.pred_len})",
          f"(B, N={n}, H={config.pred_len})", "#5b8db8"),
@@ -1813,7 +1860,7 @@ def _figure3(inputs: ReportInputs, out_dir: Path) -> list[Path]:
 
     mde = float(numbers["rq2"]["minimum_detectable_beta1"])
     ax.plot(blocks, intercept + mde * blocks, lw=1.6, ls="--", color="#333333",
-            label=f"MDE at 80% power = {mde:+.6f}")
+            label=f"post-test MDE diagnostic (nominal 80%) = {mde:+.6f}")
 
     ax.axhline(0.0, lw=0.8, color="#888888")
     ax.set_xlabel("test block $b$ (30 days each)")
@@ -2022,42 +2069,7 @@ def _figure6(inputs: ReportInputs, out_dir: Path) -> list[Path]:
 
 
 def _figure7(inputs: ReportInputs, out_dir: Path) -> list[Path]:
-    """Equity curves before costs and at all three pre-registered slippage levels.
-
-    **The series is a wealth multiple, not a cumulative log return.**
-    ``economics.equity_curves`` emits ``exp(cumsum(net))``, so it starts at 1.0
-    and break-even is the line at 1.0 --- the axis label said log return and the
-    reference line sat at 0.0, which is a mislabelled unit in the one figure the
-    economic claim rests on. A reader who took the label at face value would read
-    a 20% gain as a 1.2 log return, an order of magnitude out.
-
-    **Buy-and-hold is drawn, because it is the comparator the claim is stated
-    against.** Root §13.2 requires the economic result be reported beside it ---
-    +20.6% net against +29.0% --- and a figure that omits the number the headline
-    is measured against lets the strategy's own curve read as skill. It comes
-    from the same `economics.buy_and_hold` position the Table 8 ``hold_*``
-    columns use, so figure and table cannot disagree.
-
-    **The leftmost panel is before costs and is labelled so.** Root §13.5's band
-    is 0.02/0.05/0.10% per side; a zero-slippage panel is outside the
-    pre-registration and is shown because §13.4 asks for "before and after
-    costs", which is what makes the size of the cost band legible.
-
-    **Every curve stops at the shortest origin, and that truncation is the
-    figure's correctness** (`D83`). Origins do not carry the same number of
-    tradable days --- a holding period spanning an outage has no defined realised
-    return and is skipped (`D46`), so the count runs from 146 to 180. Averaging
-    each day over whatever origins still have data made the mean jump wherever an
-    origin ran out, and the largest of those jumps rendered as a **near-vertical
-    fall of about seven points at day 146** that a reader takes for a crash. It
-    was not a crash: it was the first origin leaving the average. Worse, the
-    origins that leave earliest are the ones with the most outages and outages
-    cluster on stress, so the untruncated tail was an average over the *easy*
-    origins and drifted optimistic exactly where it looked dramatic --- `D45`'s
-    future-conditioned exclusion, surfacing in the figure the economic claim
-    rests on. Truncating to the common horizon keeps the denominator at fifteen
-    for every plotted day.
-    """
+    """Conditional long/cash daily round-trip wealth and always-long daily comparator. Average over a fixed set of origins on the retained-observation index; this is not a calendar-executable backtest."""
     plt = _pyplot()
     equity = inputs.equity
     slippages = sorted(set(equity.get_column("slippage_per_side").to_list()))
@@ -2092,7 +2104,7 @@ def _figure7(inputs: ReportInputs, out_dir: Path) -> list[Path]:
             else f"slippage {100 * float(slippage):.2f}% per side"
         )
         axis.set_title(priced, fontsize=8.5)
-        axis.set_xlabel("trading day since origin", fontsize=8.5)
+        axis.set_xlabel("retained daily observation since origin", fontsize=8.5)
         axis.grid(alpha=0.25, lw=0.5)
     axes[0][0].set_ylabel("net equity multiple (1.0 = break-even)")
     # Framed and opaque: the curves reach the panel corners at every slippage

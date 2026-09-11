@@ -134,8 +134,12 @@ def test_falsification_is_reported_on_relmse(inputs):
     """
     falsification = inputs.numbers["falsification"]
     assert falsification["metric"] == "RelMSE"
-    assert abs(falsification["mean_gap_rel_mse"] - 0.000828) < 5e-6
+    # A01/A05: first-target timestamps, common actual calendars, mean seed loss.
+    assert falsification["mean_gap_rel_mse"] == pytest.approx(0.000963959435466677, abs=5e-8)
     assert falsification["n_origins"] == 15
+    assert falsification["fresh_seed_counts"] == [1]
+    assert inputs.numbers["experimental_controls"]["paired"] == []
+    assert inputs.numbers["optimization_status"]["capped_runs"] >= 56 + 39
 
 
 @requires_grid
@@ -223,17 +227,22 @@ def test_figure5_is_skipped_by_name_when_attention_was_never_persisted(inputs, t
 
 
 @requires_grid
-def test_generator_check_flag_agrees_with_the_committed_report():
-    """The drift guard `D54d` added for the notebook, on the second artifact.
-
-    Skipped rather than failed when ``paper/paper_numbers.json`` has not been
-    rendered yet: the guard is about drift, and there is no drift before a first
-    render.
-    """
-    if not (ROOT / "paper" / "paper_numbers.json").exists():
-        pytest.skip("no report rendered yet")
-    result = subprocess.run(
-        [sys.executable, str(GENERATOR), "--check", "--quiet"],
-        capture_output=True, text=True, cwd=ROOT,
-    )
-    assert result.returncode == 0, result.stdout or result.stderr
+def test_generator_check_detects_metric_drift(inputs, tmp_path, monkeypatch):
+    """Reuse the real-artifact aggregation; exercise the CLI's comparison twice."""
+    import importlib.util
+    import json
+    spec = importlib.util.spec_from_file_location("audit_report_cli", GENERATOR)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    monkeypatch.setattr(driver, "load_bars", lambda *a: None)
+    monkeypatch.setattr(driver, "usable_mask", lambda *a: inputs.seed_avg)
+    monkeypatch.setattr(driver, "build_features", lambda *a: inputs.seed_avg)
+    monkeypatch.setattr(driver, "build_report", lambda *a, **kw: inputs)
+    path = tmp_path / "paper_numbers.json"
+    numbers = json.loads(json.dumps(inputs.numbers, default=float))
+    path.write_text(json.dumps(numbers), encoding="utf-8")
+    args = ["--check", "--quiet", "--out", str(tmp_path)]
+    assert driver.main(args) == 0
+    numbers["main_results"]["by_model"][0]["r2_oos"] += 0.01
+    path.write_text(json.dumps(numbers), encoding="utf-8")
+    assert driver.main(args) == 1

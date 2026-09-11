@@ -1,0 +1,32 @@
+% GENERATED --- do not hand-edit.
+% Regenerate: python tools/build_report.py
+\begin{table}[!t]
+\centering
+\caption{Conditional long/cash simulation across the stated cost assumptions.}
+\label{tab:economics}
+\begin{tabular}{llrrrrrrr}
+\toprule
+Model & Slip. & Sharpe (ann.) & Sortino & MDD & MDD CI & Turnover & Net return & DSR \\
+\midrule
+dlin-K8 & 0.02\% & -0.228 $\pm$ 0.435 & -0.012 & 0.292 & -------- & 0.550 & -0.0018 & --- \\
+dlin-K8 & 0.05\% & -0.539 $\pm$ 0.437 & -0.478 & 0.310 & -------- & 0.550 & -0.0573 & --- \\
+dlin-K8 & 0.10\% & -1.057 $\pm$ 0.441 & -1.217 & 0.342 & -------- & 0.550 & -0.1429 & --- \\
+itr-K1 & 0.02\% & 0.102 $\pm$ 0.469 & 0.495 & 0.253 & -------- & 0.556 & 0.0837 & --- \\
+itr-K1 & 0.05\% & -0.216 $\pm$ 0.474 & 0.009 & 0.271 & -------- & 0.556 & 0.0227 & --- \\
+itr-K1 & 0.10\% & -0.747 $\pm$ 0.482 & -0.761 & 0.307 & -------- & 0.556 & -0.0715 & --- \\
+itr-K8 & 0.02\% & 0.055 $\pm$ 0.451 & 0.397 & 0.263 & -------- & 0.561 & 0.0743 & --- \\
+itr-K8 & 0.05\% & -0.263 $\pm$ 0.455 & -0.082 & 0.281 & -------- & 0.561 & 0.0131 & --- \\
+itr-K8 & 0.10\% & -0.791 $\pm$ 0.463 & -0.842 & 0.315 & -------- & 0.561 & -0.0812 & --- \\
+lstm-K8 & 0.02\% & --- $\pm$ --- & --- & 0.328 & -------- & 0.666 & -0.1294 & --- \\
+lstm-K8 & 0.05\% & --- $\pm$ --- & --- & 0.349 & -------- & 0.666 & -0.1818 & --- \\
+lstm-K8 & 0.10\% & --- $\pm$ --- & --- & 0.385 & -------- & 0.666 & -0.2593 & --- \\
+ptst-K8 & 0.02\% & -0.013 $\pm$ 0.435 & 0.329 & 0.272 & -------- & 0.542 & 0.0446 & --- \\
+ptst-K8 & 0.05\% & -0.323 $\pm$ 0.438 & -0.149 & 0.289 & -------- & 0.542 & -0.0130 & --- \\
+ptst-K8 & 0.10\% & -0.839 $\pm$ 0.443 & -0.906 & 0.320 & -------- & 0.542 & -0.1020 & --- \\
+rdg-K8 & 0.02\% & --- $\pm$ --- & --- & 0.245 & -------- & 0.506 & -0.0582 & --- \\
+rdg-K8 & 0.05\% & --- $\pm$ --- & --- & 0.260 & -------- & 0.506 & -0.0988 & --- \\
+rdg-K8 & 0.10\% & --- $\pm$ --- & --- & 0.286 & -------- & 0.506 & -0.1590 & --- \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}\par\footnotesize Exploratory conditional long/cash simulation from inverse-scaled raw cumulative forecasts. Each observed daily trade opens at 00:00 UTC and closes after 24 hours, paying entry and exit costs including the terminal trade. Execution cost c is the stated fee plus slippage, applied to purchase and sale prices. No borrowing or shorts. Missing future target periods are excluded retrospectively: this is not an executable backtest and unavailable-day counts do not bound missing losses. The comparator makes always-long daily round trips. Sharpe/Sortino use simple returns, MAR=0, and a conditional 365-period annualisation. JK/DSR and MDD confidence intervals are withheld.
+\end{table}

@@ -81,6 +81,7 @@ class ITransformerConfig:
     #: capacity story as with the information story RQ2 claims. This separates
     #: them, at runs Figure 5 needs anyway.
     uniform_attention: bool = False
+    final_norm: bool = True
 
     # -- the Architecture protocol (`D56`) ----------------------------------
     #
@@ -233,6 +234,9 @@ class VariateAttention(nn.Module):
         self.uniform = uniform
         self.q = nn.Linear(d_model, d_model)
         self.k = nn.Linear(d_model, d_model)
+        if uniform:
+            self.q.requires_grad_(False)
+            self.k.requires_grad_(False)
         self.v = nn.Linear(d_model, d_model)
         self.out = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
@@ -257,7 +261,10 @@ class VariateAttention(nn.Module):
             # Every variate attends equally to every variate. W_V, W_O and the
             # parameter count stay intact, so the arm isolates *what attention
             # selects* rather than how much capacity the model has.
-            context = v.mean(dim=2, keepdim=True).expand(-1, -1, n, -1)
+            weights = torch.full((b, self.n_heads, n, n), 1.0/n, device=x.device, dtype=x.dtype)
+            if self.capture:
+                self.last_weights = weights.detach().mean(dim=1)
+            context = self.dropout(weights) @ v
         else:
             q = self.q(x).view(shape).transpose(1, 2)
             k = self.k(x).view(shape).transpose(1, 2)
@@ -313,6 +320,7 @@ class ITransformer(nn.Module):
         self.target_index = target_index
         self.embedding = InvertedEmbedding(cfg.seq_len, cfg.d_model, cfg.dropout)
         self.layers = nn.ModuleList(EncoderLayer(cfg) for _ in range(cfg.e_layers))
+        self.final_norm = nn.LayerNorm(cfg.d_model) if cfg.final_norm else nn.Identity()
         self.projection = nn.Linear(cfg.d_model, cfg.pred_len)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -324,7 +332,7 @@ class ITransformer(nn.Module):
             # is itself a nonlinearity, which is why the F2 estimators
             # contribute *shape* and not *level*, the confound `D04` requires be
             # disclosed in Limitations whatever RQ1 returns.
-            mean = x.mean(dim=1, keepdim=True)
+            mean = x.mean(dim=1, keepdim=True).detach()
             x = x - mean
             std = torch.sqrt(x.var(dim=1, keepdim=True, unbiased=False) + 1e-5)
             x = x / std
@@ -332,7 +340,7 @@ class ITransformer(nn.Module):
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
-        out = self.projection(h).permute(0, 2, 1)  # (B, H, N)
+        out = self.projection(self.final_norm(h)).permute(0, 2, 1)  # (B, H, N)
 
         if self.cfg.use_norm:
             out = out * std[:, 0, :].unsqueeze(1) + mean[:, 0, :].unsqueeze(1)

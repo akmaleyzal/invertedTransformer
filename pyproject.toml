@@ -9,7 +9,7 @@ readme = "README.md"
 # and torch wheel availability on 3.14 was never verified. Kaggle's image is the
 # environment that actually matters for the grid, and it sits well below 3.14.
 # No upper bound — pinning one would fight the Kaggle image, which
-# notebooks/CLAUDE.md forbids.
+# CLAUDE.md forbids.
 requires-python = ">=3.11"
 
 # The data plane, and nothing else. polars is load-bearing for correctness, not
@@ -47,7 +47,7 @@ stats = [
 ]
 
 # Deliberately unpinned and NOT installed on Kaggle: the image ships its own
-# torch and notebooks/CLAUDE.md forbids pinning against the local venv. This
+# torch and CLAUDE.md forbids pinning against the local venv. This
 # extra exists so a local CPU smoke run is possible before anything is pushed.
 train = [
     "torch>=2.2",
@@ -56,7 +56,7 @@ train = [
 # Figures only, and behind an extra for the same reason every other dependency
 # is: each dependency's reason stays visible rather than ambient. The Kaggle
 # image ships matplotlib, and no figure is rendered inside a GPU session anyway
-# --- `tools/build_report.py` runs on CPU against the artifacts already on disk.
+# Reporting can run in Kaggle analysis-only mode against saved artifacts.
 plot = [
     "matplotlib>=3.8",
 ]
